@@ -1,0 +1,359 @@
+{
+  "_comment": "DemonPulse V8 \u2014 Default Filter Configuration. Edit thresholds, weights, and enabled flags freely. Do NOT change filter_class without updating the corresponding Python class.",
+  "version": "1.0",
+  "filters": [
+    {
+      "_section": "HARD BLOCK FILTERS \u2014 evaluated first. Any triggered filter forces PASS.",
+      "filter_id": "HB001",
+      "name": "Extreme Chaos Block",
+      "enabled": true,
+      "mode": "hard",
+      "weight": null,
+      "threshold": {
+        "chaos_rating": "EXTREME"
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Force PASS if simulation chaos rating reaches EXTREME. Race is too unpredictable.",
+      "filter_class": "simulation.filters.hard_block_filters.ExtremeChaosFilter"
+    },
+    {
+      "filter_id": "HB002",
+      "name": "Minimum Confidence Block",
+      "enabled": true,
+      "mode": "hard",
+      "weight": null,
+      "threshold": {
+        "min_confidence_rating": "LOW"
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Force PASS if simulation confidence is too low. Set to LOW to disable in practice.",
+      "filter_class": "simulation.filters.hard_block_filters.MinConfidenceFilter"
+    },
+    {
+      "filter_id": "HB003",
+      "name": "Invalid Data Block",
+      "enabled": true,
+      "mode": "hard",
+      "weight": null,
+      "threshold": {
+        "min_runners": 3
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Force PASS if race data is invalid: too few runners, bad odds, or insufficient simulation runs.",
+      "filter_class": "simulation.filters.hard_block_filters.InvalidDataFilter"
+    },
+    {
+      "filter_id": "HB004",
+      "name": "Structural Race Block",
+      "enabled": true,
+      "mode": "hard",
+      "weight": null,
+      "threshold": {
+        "min_separation_pct": 2.0
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Force PASS if no meaningful separation in simulation results \u2014 race is a genuine toss-up.",
+      "filter_class": "simulation.filters.hard_block_filters.StructuralRaceFilter"
+    },
+    {
+      "filter_id": "HB005",
+      "name": "Market Suspension Block",
+      "enabled": true,
+      "mode": "hard",
+      "weight": null,
+      "threshold": {
+        "min_total_implied": 0.5,
+        "max_total_implied": 1.65
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Force PASS if market appears suspended: total implied probability outside valid range (0.50\u20131.65). Low threshold allows small 3-4 runner fields while still catching suspended/manipulated markets.",
+      "filter_class": "simulation.filters.hard_block_filters.MarketSuspensionFilter"
+    },
+    {
+      "_section": "CORE DECISION FILTERS \u2014 primary scoring layer.",
+      "filter_id": "CD001",
+      "name": "Simulation Win Rate",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 1.0,
+      "threshold": {
+        "min_win_pct": 22.0,
+        "strong_win_pct": 35.0
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Top runner must win a minimum % of simulations. Strong win rate boosts confidence.",
+      "filter_class": "simulation.filters.core_decision_filters.SimWinRateFilter"
+    },
+    {
+      "filter_id": "CD002",
+      "name": "Early Speed Advantage",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.8,
+      "threshold": {
+        "min_early_speed_score": 6.0
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Does the top runner have early speed advantage?",
+      "filter_class": "simulation.filters.core_decision_filters.EarlySpeedFilter"
+    },
+    {
+      "filter_id": "CD003",
+      "name": "Positional Map Advantage",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.85,
+      "threshold": {},
+      "applies_to": [
+        "all"
+      ],
+      "description": "Does the top runner's race pattern suit the projected pace?",
+      "filter_class": "simulation.filters.core_decision_filters.MapAdvantageFilter"
+    },
+    {
+      "filter_id": "CD004",
+      "name": "Track/Distance Suitability",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.75,
+      "threshold": {
+        "min_suitability": 0.6,
+        "high_suitability": 0.8
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Is the top runner well-suited to this track and distance?",
+      "filter_class": "simulation.filters.core_decision_filters.TrackDistanceSuitabilityFilter"
+    },
+    {
+      "filter_id": "CD005",
+      "name": "Race Shape Suitability",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.8,
+      "threshold": {},
+      "applies_to": [
+        "all"
+      ],
+      "description": "Does the projected race shape structurally favour our selection?",
+      "filter_class": "simulation.filters.core_decision_filters.RaceShapeFilter"
+    },
+    {
+      "filter_id": "CD006",
+      "name": "Place Rate",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.6,
+      "threshold": {
+        "min_place_pct": 45.0,
+        "high_place_pct": 65.0
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Top runner place rate (top 3) across simulations.",
+      "filter_class": "simulation.filters.core_decision_filters.PlaceRateFilter"
+    },
+    {
+      "_section": "RISK FILTERS \u2014 reduce confidence or downgrade bet.",
+      "filter_id": "RK001",
+      "name": "Interference Risk (Greyhounds)",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.9,
+      "threshold": {
+        "interference_rate_threshold": 1.5
+      },
+      "applies_to": [
+        "greyhound"
+      ],
+      "description": "High interference events in greyhound simulations \u2014 risky race.",
+      "filter_class": "simulation.filters.risk_filters.InterferenceRiskFilter"
+    },
+    {
+      "filter_id": "RK002",
+      "name": "Wide Position Risk (Thoroughbreds)",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.75,
+      "threshold": {
+        "max_acceptable_barrier_fraction": 0.65
+      },
+      "applies_to": [
+        "thoroughbred"
+      ],
+      "description": "Top selection is wide-drawn or running wide \u2014 extra work.",
+      "filter_class": "simulation.filters.risk_filters.WidePositionRiskFilter"
+    },
+    {
+      "filter_id": "RK003",
+      "name": "Parked Risk (Harness)",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.9,
+      "threshold": {
+        "parked_confidence_delta": -0.1
+      },
+      "applies_to": [
+        "harness"
+      ],
+      "description": "Top runner is expected to be PARKED (wide without cover) \u2014 energy drain risk.",
+      "filter_class": "simulation.filters.risk_filters.ParkedRiskFilter"
+    },
+    {
+      "filter_id": "RK004",
+      "name": "Inconsistency Risk",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.7,
+      "threshold": {
+        "min_confidence_factor": 0.55
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Low confidence_factor indicates unreliable recent form.",
+      "filter_class": "simulation.filters.risk_filters.InconsistencyRiskFilter"
+    },
+    {
+      "filter_id": "RK005",
+      "name": "Market Drift Warning",
+      "enabled": true,
+      "mode": "informational",
+      "weight": 0.4,
+      "threshold": {
+        "drift_threshold": 0.2
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Market odds diverging significantly from simulation \u2014 informational only.",
+      "filter_class": "simulation.filters.risk_filters.MarketDriftFilter"
+    },
+    {
+      "filter_id": "RK006",
+      "name": "Collapse Risk",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.8,
+      "threshold": {
+        "collapse_leader_delta": -0.08
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "HIGH collapse risk with leader selection \u2014 fade risk elevated.",
+      "filter_class": "simulation.filters.risk_filters.CollapseRiskFilter"
+    },
+    {
+      "_section": "VALUE FILTERS \u2014 identify overlays and hidden runners.",
+      "filter_id": "VL001",
+      "name": "Simulation vs Market Value",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 1.0,
+      "threshold": {
+        "min_edge": 0.04,
+        "strong_edge": 0.1
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Sim win% vs market implied probability. Positive edge = overlay.",
+      "filter_class": "simulation.filters.value_filters.SimVsMarketFilter"
+    },
+    {
+      "filter_id": "VL002",
+      "name": "Hidden Value Detection",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.85,
+      "threshold": {},
+      "applies_to": [
+        "all"
+      ],
+      "description": "Detects runners flagged as hidden value by aggregator.",
+      "filter_class": "simulation.filters.value_filters.HiddenValueFilter"
+    },
+    {
+      "filter_id": "VL003",
+      "name": "False Favourite Detection",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.9,
+      "threshold": {
+        "false_fav_delta": -0.09
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Market favourite is overbet relative to simulation evidence.",
+      "filter_class": "simulation.filters.value_filters.FalseFavouriteFilter"
+    },
+    {
+      "filter_id": "VL004",
+      "name": "Underbet Runner",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.75,
+      "threshold": {
+        "min_odds_for_underbet": 6.0,
+        "min_win_pct_underbet": 20.0
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Detects large-odds runners with strong simulation performance \u2014 underbet.",
+      "filter_class": "simulation.filters.value_filters.UnderBetFilter"
+    },
+    {
+      "filter_id": "VL005",
+      "name": "Clean Run Value",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 0.65,
+      "threshold": {
+        "clean_run_rate_threshold": 0.8
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Top runner had clean runs in most simulations \u2014 market may not price this.",
+      "filter_class": "simulation.filters.value_filters.CleanRunValueFilter"
+    },
+    {
+      "_section": "OUTPUT FILTER \u2014 always runs last, converts confidence to decision.",
+      "filter_id": "OP001",
+      "name": "Output Decision",
+      "enabled": true,
+      "mode": "soft",
+      "weight": 1.0,
+      "threshold": {
+        "bet_threshold": 0.65,
+        "small_bet_threshold": 0.5,
+        "save_bet_threshold": 0.42,
+        "caution_threshold": 0.35
+      },
+      "applies_to": [
+        "all"
+      ],
+      "description": "Converts final confidence score to BET / SMALL_BET / SAVE_BET / CAUTION / PASS.",
+      "filter_class": "simulation.filters.output_filters.OutputDecisionFilter"
+    }
+  ]
+}
