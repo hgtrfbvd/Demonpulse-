@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: demonpulse-v8
+    env: python
+    pythonVersion: "3.11.0"
+    buildCommand: pip install -r requirements.txt && playwright install chromium --with-deps || true
+    startCommand: gunicorn app:app --workers 2 --timeout 120 --bind 0.0.0.0:$PORT
+    envVars:
+      # ── REQUIRED ───────────────────────────────────────────
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FLASK_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false
+
+      # ── ENVIRONMENT MODE ───────────────────────────────────
+      # Set to TEST for staging/dev. Default is LIVE.
+      - key: DP_ENV
+        value: LIVE
+
+      # ── TEST MODE ONLY (optional) ──────────────────────────
+      # If set, TEST mode uses a completely separate Supabase DB.
+      # If not set, TEST mode uses main DB with test_ table prefix.
+      # - key: SUPABASE_TEST_URL
+      #   sync: false
+      # - key: SUPABASE_TEST_KEY
+      #   sync: false
+
+      # ── SESSION ────────────────────────────────────────────
+      - key: SESSION_TIMEOUT_MIN
+        value: "480"

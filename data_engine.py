@@ -1,0 +1,709 @@
+"""
+data_engine.py - Data fetch, parse, normalise, store
+Responsibilities: fetch only. No scoring logic here.
+Feature coverage: A1-A4, B5-B8, G33-G37, I44-I48
+"""
+import os
+import time
+import logging
+import hashlib
+from datetime import date, datetime
+
+log = logging.getLogger(__name__)
+
+# State offsets to AEST Brisbane (UTC+10)
+STATE_OFFSETS = {
+    "NSW": -1, "VIC": -1, "TAS": -1,
+    "SA": -0.5, "WA": 2, "QLD": 0, "NZ": -2
+}
+
+# Race lifecycle states (feature 36)
+LIFECYCLE = ["fetched", "normalized", "scored", "packet_built",
+             "ai_reviewed", "bet_logged", "result_captured", "learned"]
+
+# ----------------------------------------------------------------
+# CANONICAL RACE UID (feature 2)
+# Format: date_code_track_racenum  e.g. 2026-04-01_GREYHOUND_horsham_9
+# ----------------------------------------------------------------
+def make_race_uid(race_date, code, track, race_num):
+    return f"{race_date}_{code}_{track}_{race_num}"
+
+# ----------------------------------------------------------------
+# FETCH - with rate limiting and fallback
+# ----------------------------------------------------------------
+def fetch_page(url, use_playwright=False, wait_ms=2000):
+    from cache import check_rate_limit
+    domain = url.split("/")[2] if "/" in url else url
+    if not check_rate_limit(domain, max_per_minute=30):
+        log.warning(f"Rate limited on {domain}, skipping {url}")
+        return ""
+    if use_playwright:
+        result = _fetch_playwright(url, wait_ms)
+        if result:
+            return result
+    return _fetch_static(url)
+
+def _fetch_playwright(url, wait_ms=2000):
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            page = browser.new_page(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            )
+            page.goto(url, timeout=30000)
+            page.wait_for_timeout(wait_ms)
+            content = page.content()
+            browser.close()
+            return content
+    except ImportError:
+        log.warning("Playwright not available")
+        return ""
+    except Exception as e:
+        log.error(f"Playwright failed for {url}: {e}")
+        return ""
+
+def _fetch_static(url):
+    try:
+        import requests
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        r = requests.get(url, headers=headers, timeout=20)
+        r.raise_for_status()
+        return r.text
+    except Exception as e:
+        log.error(f"Static fetch failed for {url}: {e}")
+        return ""
+
+def parse_html(html):
+    if not html:
+        return None
+    try:
+        from bs4 import BeautifulSoup
+        return BeautifulSoup(html, "html.parser")
+    except Exception as e:
+        log.error(f"HTML parse failed: {e}")
+        return None
+
+# ----------------------------------------------------------------
+# TIMEZONE
+# ----------------------------------------------------------------
+def to_aest(time_str, state):
+    if not time_str or ":" not in time_str:
+        return time_str
+    try:
+        parts = time_str.strip().split(":")
+        h, m = int(parts[0]), int(parts[1])
+        offset = STATE_OFFSETS.get(state, 0)
+        total = h * 60 + m + int(offset * 60)
+        total = total % (24 * 60)
+        return f"{total // 60:02d}:{total % 60:02d}"
+    except Exception:
+        return time_str
+
+# ----------------------------------------------------------------
+# STATE DETECTION
+# ----------------------------------------------------------------
+TRACK_STATES = {
+    "casino": "NSW", "gosford": "NSW", "wentworth-park": "NSW", "bulli": "NSW",
+    "maitland": "NSW", "gunnedah": "NSW", "grafton": "NSW", "richmond": "NSW",
+    "wagga": "NSW", "taree": "NSW", "dubbo": "NSW", "nowra": "NSW",
+    "goulburn": "NSW", "temora": "NSW", "the-gardens": "NSW", "broken-hill": "NSW",
+    "horsham": "VIC", "bendigo": "VIC", "ballarat": "VIC", "sandown": "VIC",
+    "meadows": "VIC", "shepparton": "VIC", "warragul": "VIC", "sale": "VIC",
+    "geelong": "VIC", "traralgon": "VIC", "cranbourne": "VIC", "warrnambool": "VIC",
+    "ladbrokes-q1-lakeside": "QLD", "ladbrokes-q-straight": "QLD",
+    "ladbrokes-q2-parklands": "QLD", "townsville": "QLD",
+    "capalaba": "QLD", "rockhampton": "QLD",
+    "angle-park": "SA", "mount-gambier": "SA",
+    "murray-bridge-straight": "SA", "gawler": "SA",
+    "cannington": "WA", "mandurah": "WA",
+    "launceston": "TAS", "hobart": "TAS",
+}
+
+def detect_state(track):
+    return TRACK_STATES.get(track.lower(), "QLD")
+
+# ----------------------------------------------------------------
+# FETCH MEETINGS
+# ----------------------------------------------------------------
+def fetch_meetings():
+    log.info("Fetching racecards...")
+    html = fetch_page("https://www.thedogs.com.au/racing/racecards")
+    soup = parse_html(html)
+    if not soup:
+        log.error("Racecards failed")
+        return []
+
+    meetings = []
+    seen = set()
+    for item in soup.select("a[href*='/racing/']"):
+        href = item.get("href", "")
+        parts = [p for p in href.strip("/").split("/") if p]
+        if len(parts) < 3 or parts[0] != "racing":
+            continue
+        track = parts[1]
+        mdate = parts[2]
+        if mdate != date.today().isoformat() or track in seen:
+            continue
+        seen.add(track)
+        state = detect_state(track)
+        meetings.append({
+            "track": track,
+            "date": mdate,
+            "state": state,
+            "url": f"https://www.thedogs.com.au/racing/{track}/{mdate}?trial=false"
+        })
+
+    log.info(f"Found {len(meetings)} meetings")
+    return meetings
+
+# ----------------------------------------------------------------
+# FETCH SCRATCHINGS
+# ----------------------------------------------------------------
+def fetch_scratchings():
+    log.info("Fetching scratchings...")
+    html = fetch_page("https://www.thedogs.com.au/racing/scratchings")
+    soup = parse_html(html)
+    if not soup:
+        return {}
+
+    scratchings = {}
+    for row in soup.select("tr"):
+        cells = row.select("td")
+        if len(cells) < 3:
+            continue
+        try:
+            track = cells[0].get_text(strip=True).lower().replace(" ", "-")
+            rnum = cells[1].get_text(strip=True)
+            boxes = cells[2].get_text(strip=True)
+            if not rnum.isdigit():
+                continue
+            uid = make_race_uid(date.today().isoformat(), "GREYHOUND", track, int(rnum))
+            if uid not in scratchings:
+                scratchings[uid] = []
+            for b in boxes.split(","):
+                b = b.strip()
+                if b.isdigit():
+                    scratchings[uid].append(int(b))
+        except Exception:
+            continue
+
+    log.info(f"Scratchings loaded for {len(scratchings)} races")
+    return scratchings
+
+# ----------------------------------------------------------------
+# FETCH RACE LIST FOR MEETING
+# ----------------------------------------------------------------
+def fetch_meeting_races(meeting):
+    track = meeting["track"]
+    state = meeting["state"]
+    html = fetch_page(meeting["url"])
+    soup = parse_html(html)
+    if not soup:
+        return []
+
+    races = []
+    seen = set()
+    for link in soup.select("a[href*='/racing/']"):
+        href = link.get("href", "")
+        parts = [p for p in href.strip("/").split("/") if p]
+        if len(parts) < 4 or not parts[3].isdigit():
+            continue
+        race_num = int(parts[3])
+        if race_num in seen:
+            continue
+        seen.add(race_num)
+        race_name = parts[4] if len(parts) > 4 else ""
+        cell_text = link.get_text(strip=True)
+        has_result = any(c.isdigit() for c in cell_text) and len(cell_text) < 10
+        race_uid = make_race_uid(date.today().isoformat(), "GREYHOUND", track, race_num)
+        races.append({
+            "race_uid": race_uid,
+            "track": track,
+            "state": state,
+            "date": date.today().isoformat(),
+            "race_num": race_num,
+            "race_name": race_name,
+            "code": "GREYHOUND",
+            "status": "completed" if has_result else "upcoming",
+            "expert_form_url": f"https://www.thedogs.com.au/racing/{track}/{date.today().isoformat()}/{race_num}/{race_name}/expert-form",
+            "url": f"https://www.thedogs.com.au/racing/{track}/{date.today().isoformat()}/{race_num}/{race_name}?trial=false",
+        })
+
+    races.sort(key=lambda x: x["race_num"])
+    return races
+
+# ----------------------------------------------------------------
+# FETCH EXPERT FORM
+# ----------------------------------------------------------------
+def fetch_expert_form(race, scratchings):
+    html = fetch_page(race["expert_form_url"])
+    soup = parse_html(html)
+    if not soup:
+        return None, []
+
+    # Extract jump time
+    jump_time = None
+    for tag in soup.find_all(["span", "div", "p", "td"]):
+        text = tag.get_text(strip=True)
+        if len(text) <= 8 and ":" in text:
+            parts = text.split(":")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1][:2].isdigit():
+                jump_time = to_aest(text[:5], race["state"])
+                break
+
+    # Extract grade and distance
+    grade, distance = "", ""
+    for tag in soup.select("h1, h2, h3, .race-title, .race-info"):
+        text = tag.get_text(strip=True)
+        if "grade" in text.lower() or "Grade" in text:
+            grade = text[:60]
+        for word in text.split():
+            if word.endswith("m") and word[:-1].isdigit():
+                distance = word
+                break
+
+    # Extract runners (raw data — feature A4)
+    scratched_boxes = scratchings.get(race["race_uid"], [])
+    runners_raw = []
+
+    for row in soup.select("tr"):
+        cells = row.select("td")
+        if len(cells) < 2:
+            continue
+        try:
+            box_text = cells[0].get_text(strip=True)
+            if not box_text.isdigit():
+                continue
+            box_num = int(box_text)
+            name = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            if not name or len(name) < 2:
+                continue
+            trainer = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+            best_time = None
+            weight = None
+            career = None
+
+            for cell in cells[3:]:
+                text = cell.get_text(strip=True)
+                if "." in text:
+                    try:
+                        val = float(text)
+                        if 20 < val < 35 and best_time is None:
+                            best_time = text
+                        elif 20 < val < 45 and weight is None:
+                            weight = val
+                    except ValueError:
+                        pass
+                if (":" in text and "-" in text) or text.count("-") >= 2:
+                    career = text[:40]
+
+            # Raw data hash for change detection (feature 37)
+            raw_hash = hashlib.md5(f"{name}{trainer}{best_time}{career}".encode()).hexdigest()[:8]
+
+            runners_raw.append({
+                "race_uid": race["race_uid"],
+                "race_id": None,
+                "box_num": box_num,
+                "name": name,
+                "trainer": trainer,
+                "weight": weight,
+                "best_time": best_time,
+                "career": career,
+                "scratched": box_num in scratched_boxes,
+                "scratch_timing": "late" if box_num in scratched_boxes else None,
+                "run_style": None,
+                "early_speed": None,
+                "raw_hash": raw_hash,
+                "source_confidence": "official",
+            })
+        except Exception:
+            continue
+
+    form_meta = {
+        "jump_time": jump_time,
+        "grade": grade,
+        "distance": distance,
+        "time_status": "VERIFIED" if jump_time else "PARTIAL"
+    }
+    return form_meta, runners_raw
+
+# ----------------------------------------------------------------
+# FETCH RESULT
+# ----------------------------------------------------------------
+def fetch_result(race):
+    html = fetch_page(race["url"])
+    soup = parse_html(html)
+    if not soup:
+        return None
+
+    positions = []
+    for row in soup.select("tr"):
+        cells = row.select("td")
+        if len(cells) < 3:
+            continue
+        try:
+            pos = cells[0].get_text(strip=True)
+            if pos not in ["1st", "2nd", "3rd", "1", "2", "3"]:
+                continue
+            name = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            price = None
+            win_time = None
+            for cell in cells:
+                text = cell.get_text(strip=True)
+                if text.startswith("$"):
+                    try:
+                        price = float(text.replace("$", ""))
+                    except ValueError:
+                        pass
+                if "." in text:
+                    try:
+                        val = float(text)
+                        if 20 < val < 35:
+                            win_time = text
+                    except ValueError:
+                        pass
+            positions.append({"pos": pos, "name": name, "price": price, "time": win_time})
+        except Exception:
+            continue
+
+    if not positions:
+        return None
+
+    return {
+        "race_uid": race["race_uid"],
+        "track": race["track"],
+        "race_num": race["race_num"],
+        "date": date.today().isoformat(),
+        "code": "GREYHOUND",
+        "winner": positions[0]["name"] if positions else None,
+        "win_price": positions[0]["price"] if positions else None,
+        "winning_time": positions[0]["time"] if positions else None,
+        "place_2": positions[1]["name"] if len(positions) > 1 else None,
+        "place_3": positions[2]["name"] if len(positions) > 2 else None,
+    }
+
+# ----------------------------------------------------------------
+# DATA COMPLETENESS SCORE (feature 5)
+# ----------------------------------------------------------------
+def score_completeness(race_meta, runners):
+    score = 0
+    checks = {
+        "jump_time": race_meta.get("jump_time") is not None,
+        "grade": bool(race_meta.get("grade")),
+        "distance": bool(race_meta.get("distance")),
+        "runners_present": len(runners) >= 4,
+        "best_times": sum(1 for r in runners if r.get("best_time")) >= len(runners) // 2,
+        "trainers": sum(1 for r in runners if r.get("trainer")) >= len(runners) // 2,
+        "career": sum(1 for r in runners if r.get("career")) >= len(runners) // 2,
+        "no_all_scratched": sum(1 for r in runners if not r.get("scratched")) >= 4,
+    }
+    score = sum(1 for v in checks.values() if v)
+    pct = round(score / len(checks) * 100)
+    if pct >= 75:
+        quality = "HIGH"
+    elif pct >= 50:
+        quality = "MODERATE"
+    else:
+        quality = "LOW"
+    return {"score": pct, "quality": quality, "checks": checks}
+
+# ----------------------------------------------------------------
+# CHANGE DETECTION (feature 37)
+# ----------------------------------------------------------------
+def compute_race_hash(race_meta, runners, scratchings_snapshot):
+    key = str(race_meta.get("jump_time")) + str(scratchings_snapshot) + str(len(runners))
+    return hashlib.md5(key.encode()).hexdigest()[:12]
+
+# ----------------------------------------------------------------
+# SUPABASE STORAGE
+# ----------------------------------------------------------------
+def upsert_race(race_data):
+    try:
+        from db import get_db
+        db = get_db()
+        payload = {
+            "race_uid": race_data["race_uid"],
+            "date": race_data["date"],
+            "track": race_data["track"],
+            "state": race_data.get("state", ""),
+            "race_num": race_data["race_num"],
+            "code": race_data.get("code", "GREYHOUND"),
+            "distance": race_data.get("distance", ""),
+            "grade": race_data.get("grade", ""),
+            "jump_time": race_data.get("jump_time"),
+            "time_status": race_data.get("time_status", "PARTIAL"),
+            "status": race_data.get("status", "upcoming"),
+            "source_url": race_data.get("url", ""),
+            "completeness_score": race_data.get("completeness_score", 0),
+            "completeness_quality": race_data.get("completeness_quality", "LOW"),
+            "race_hash": race_data.get("race_hash", ""),
+            "lifecycle_state": "fetched",
+            "fetched_at": datetime.utcnow().isoformat(),
+        }
+        res = db.table("today_races").upsert(payload, on_conflict="race_uid").execute()
+        return res.data[0]["id"] if res.data else None
+    except Exception as e:
+        log.error(f"Upsert race failed {race_data.get('race_uid')}: {e}")
+        return None
+
+def upsert_runners(race_id, race_uid, runners):
+    if not race_id or not runners:
+        return
+    try:
+        from db import get_db
+        db = get_db()
+        db.table("today_runners").delete().eq("race_uid", race_uid).execute()
+        for r in runners:
+            r["race_id"] = str(race_id)
+            r["race_uid"] = race_uid
+            r["date"] = date.today().isoformat()
+        db.table("today_runners").insert(runners).execute()
+    except Exception as e:
+        log.error(f"Upsert runners failed {race_uid}: {e}")
+
+def update_lifecycle(race_uid, state):
+    """Update race lifecycle state (feature 36)."""
+    if state not in LIFECYCLE:
+        return
+    try:
+        from db import get_db
+        db = get_db()
+        db.table("today_races").update({
+            "lifecycle_state": state,
+            f"{state}_at": datetime.utcnow().isoformat()
+        }).eq("race_uid", race_uid).execute()
+    except Exception as e:
+        log.error(f"Lifecycle update failed {race_uid} -> {state}: {e}")
+
+def save_result(result):
+    if not result:
+        return
+    try:
+        from db import get_db
+        db = get_db()
+        db.table("results_log").upsert(result, on_conflict="race_uid").execute()
+        db.table("today_races").update({
+            "status": "completed",
+            "lifecycle_state": "result_captured",
+            "result_captured_at": datetime.utcnow().isoformat()
+        }).eq("race_uid", result["race_uid"]).execute()
+        log.info(f"Result: {result['track']} R{result['race_num']} - {result.get('winner')}")
+    except Exception as e:
+        log.error(f"Save result failed: {e}")
+
+def auto_settle_bets(result):
+    """Auto-settle pending bets when result arrives."""
+    if not result or not result.get("winner"):
+        return
+    try:
+        from db import get_db
+        db = get_db()
+        pending = db.table("bet_log").select("*").eq("race_uid", result["race_uid"]).eq("result", "PENDING").execute().data or []
+        for bet in pending:
+            is_win = bet.get("runner", "").lower() == result["winner"].lower()
+            res = "WIN" if is_win else "LOSS"
+            stake = bet.get("stake") or 0
+            odds = bet.get("odds") or 2
+            pl = round(stake * (odds - 1), 2) if is_win else round(-stake, 2)
+            db.table("bet_log").update({
+                "result": res, "pl": pl,
+                "error_tag": None if is_win else "VARIANCE",
+                "settled_at": datetime.utcnow().isoformat()
+            }).eq("id", bet["id"]).execute()
+            log.info(f"Auto-settled: {bet.get('runner')} {res} PL={pl}")
+    except Exception as e:
+        log.error(f"Auto-settle failed: {e}")
+
+def log_source_call(url, method, status, rows=0, grv=False):
+    try:
+        from db import get_db
+        db = get_db()
+        db.table("source_log").insert({
+            "date": date.today().isoformat(),
+            "url": url,
+            "method": method,
+            "status": status,
+            "grv_detected": grv,
+            "rows_returned": rows,
+            "created_at": datetime.utcnow().isoformat()
+        }).execute()
+    except Exception:
+        pass
+
+# ----------------------------------------------------------------
+# SOURCE HEALTH (feature 8)
+# ----------------------------------------------------------------
+_source_health = {}
+
+def mark_source_healthy(source):
+    _source_health[source] = {"status": "HEALTHY", "last_ok": time.time()}
+
+def mark_source_failed(source):
+    prev = _source_health.get(source, {})
+    fails = prev.get("consecutive_fails", 0) + 1
+    _source_health[source] = {
+        "status": "DEGRADED" if fails >= 3 else "WARNING",
+        "consecutive_fails": fails,
+        "last_fail": time.time()
+    }
+
+def get_source_health():
+    return _source_health.copy()
+
+# ----------------------------------------------------------------
+# FULL SWEEP
+# ----------------------------------------------------------------
+def full_sweep():
+    log.info("=== FULL SWEEP START ===")
+    start = time.time()
+    meetings = fetch_meetings()
+    if not meetings:
+        log.warning("No meetings found")
+        return {"ok": False, "error": "No meetings"}
+
+    scratchings = fetch_scratchings()
+    total_races = total_runners = 0
+
+    for meeting in meetings:
+        log.info(f"Processing {meeting['track']}...")
+        races = fetch_meeting_races(meeting)
+
+        for race in races:
+            try:
+                if race["status"] == "upcoming":
+                    form_meta, runners = fetch_expert_form(race, scratchings)
+                    if form_meta:
+                        race.update(form_meta)
+                    completeness = score_completeness(race, runners)
+                    race["completeness_score"] = completeness["score"]
+                    race["completeness_quality"] = completeness["quality"]
+                    race["race_hash"] = compute_race_hash(race, runners, scratchings.get(race["race_uid"], []))
+                    race_id = upsert_race(race)
+                    if race_id and runners:
+                        upsert_runners(race_id, race["race_uid"], runners)
+                        total_runners += len(runners)
+                else:
+                    result = fetch_result(race)
+                    if result:
+                        save_result(result)
+                        auto_settle_bets(result)
+                    upsert_race(race)
+
+                total_races += 1
+                mark_source_healthy("thedogs.com.au")
+                time.sleep(0.4)
+            except Exception as e:
+                log.error(f"Race processing failed {race.get('race_uid')}: {e}")
+                mark_source_failed("thedogs.com.au")
+
+    elapsed = round(time.time() - start, 1)
+    log.info(f"=== SWEEP COMPLETE: {total_races} races, {total_runners} runners in {elapsed}s ===")
+    return {"ok": True, "races": total_races, "runners": total_runners, "elapsed": elapsed}
+
+# ----------------------------------------------------------------
+# ROLLING REFRESH
+# ----------------------------------------------------------------
+def rolling_refresh():
+    log.info("Rolling refresh...")
+    scratchings = fetch_scratchings()
+
+    try:
+        from db import get_db
+        db = get_db()
+        upcoming = db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("status", "upcoming").eq("code", "GREYHOUND").execute().data or []
+    except Exception:
+        return {"ok": False}
+
+    results_captured = 0
+    for race in upcoming:
+        try:
+            race_obj = {
+                "race_uid": race["race_uid"],
+                "track": race["track"],
+                "state": race.get("state", "QLD"),
+                "date": date.today().isoformat(),
+                "race_num": race["race_num"],
+                "race_name": race.get("source_url", "").rstrip("/").split("/")[-1],
+                "url": race.get("source_url", f"https://www.thedogs.com.au/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/?trial=false"),
+                "expert_form_url": f"https://www.thedogs.com.au/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/expert-form",
+            }
+
+            # Check if result now exists
+            result = fetch_result(race_obj)
+            if result:
+                save_result(result)
+                auto_settle_bets(result)
+                results_captured += 1
+                continue
+
+            # Check for late scratchings (feature 13)
+            new_scratches = scratchings.get(race["race_uid"], [])
+            if new_scratches:
+                try:
+                    from db import get_db
+                    db = get_db()
+                    db.table("today_runners").update({
+                        "scratched": True,
+                        "scratch_timing": "late"
+                    }).eq("race_uid", race["race_uid"]).in_("box_num", new_scratches).execute()
+
+                    # Invalidate cached recommendation if scratching changes structure
+                    from cache import cache_clear
+                    cache_clear(race["race_uid"])
+                    log.info(f"Late scratch detected: {race['track']} R{race['race_num']} boxes {new_scratches}")
+                except Exception:
+                    pass
+
+            time.sleep(0.3)
+        except Exception as e:
+            log.error(f"Rolling refresh error {race.get('race_uid')}: {e}")
+
+    return {"ok": True, "results_captured": results_captured}
+
+# ----------------------------------------------------------------
+# READ HELPERS
+# ----------------------------------------------------------------
+def get_next_race(anchor_time=None):
+    try:
+        from db import get_db
+        db = get_db()
+        races = db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("status", "upcoming").eq("code", "GREYHOUND").order("jump_time").execute().data or []
+        if not races:
+            return None
+        if anchor_time:
+            for r in races:
+                if r.get("jump_time") and r["jump_time"] > anchor_time:
+                    return r
+        return races[0]
+    except Exception as e:
+        log.error(f"Get next race: {e}")
+        return None
+
+def get_board(limit=10):
+    try:
+        from db import get_db
+        db = get_db()
+        return db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("status", "upcoming").eq("code", "GREYHOUND").order("jump_time").limit(limit).execute().data or []
+    except Exception:
+        return []
+
+def get_race_with_runners(track, race_num):
+    try:
+        from db import get_db
+        db = get_db()
+        races = db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("track", track).eq("race_num", race_num).execute().data or []
+        if not races:
+            return None, []
+        race = races[0]
+        runners = db.table("today_runners").select("*").eq("race_uid", race["race_uid"]).eq("scratched", False).order("box_num").execute().data or []
+        return race, runners
+    except Exception as e:
+        log.error(f"Get race with runners: {e}")
+        return None, []
+
+if __name__ == "__main__":
+    full_sweep()
