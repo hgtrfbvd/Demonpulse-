@@ -410,27 +410,34 @@ def api_users_sessions(user_id):
 def api_races_upcoming():
     from auth import get_current_user
     user = get_current_user()
-    if not user: return jsonify({"error":"Unauthorized"}), 401
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
     try:
         from db import get_db, safe_query, T
         from signals import get_signal_or_demo
+
         races = safe_query(
             lambda: get_db().table(T("today_races")).select("*")
                     .eq("date", date.today().isoformat())
-                    .order("jump_time").limit(30).execute().data, []
+                    .order("jump_time").limit(30).execute().data,
+            []
         ) or []
+
         enriched = []
         for i, r in enumerate(races):
-            sig = get_signal_or_demo(r.get("race_uid",""), i)
-            # Compute Unix timestamp from jump_time string ("HH:MM") for countdown timer
-            jump_ts = _compute_jump_ts(r.get("jump_time",""))
-            enriched.append({**r, "signal_data": sig, "jump_ts": jump_ts})
+            sig = get_signal_or_demo(r.get("race_uid"), i)
+            jump_ts = _compute_jump_ts(r.get("jump_time"))
+            enriched.append({
+                **r,
+                "signal_data": sig,
+                "jump_ts": jump_ts
+            })
+
         return jsonify(enriched)
+
     except Exception as e:
         log.error(f"Upcoming races error: {e}")
-        # LIVE: return empty; TEST: return demo
-        if env.is_test:
-            return jsonify(_demo_races())
         return jsonify([])
 
 @app.route("/api/races/<race_uid>/analysis")
