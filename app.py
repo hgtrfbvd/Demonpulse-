@@ -1,6 +1,7 @@
 import os, json, sqlite3, requests
 from datetime import datetime, date
 from flask import Flask, render_template, request, jsonify, g
+from system_prompt import V7_SYSTEM
 
 app = Flask(__name__)
 DB_PATH = os.environ.get("DB_PATH", "dpv7.db")
@@ -56,15 +57,7 @@ def get_session_pl():
     row = db.execute("SELECT COALESCE(SUM(pl),0) as total, COUNT(*) as bets, SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins, SUM(CASE WHEN result='PENDING' THEN 1 ELSE 0 END) as pending FROM bet_log WHERE date=?", (today,)).fetchone()
     return dict(row)
 
-V7_SYSTEM = """You are DEMONPULSE SYNDICATE V7 — professional betting intelligence for Australian greyhound, horse, and harness racing. You are running inside the DEMONPULSE dashboard.
 
-GLOBAL LAWS: Never fabricate race data. GRV.ORG.AU permanently banned. Positive EV required for BET. PASS is always valid. Time from user only.
-BANNED SOURCES: grv.org.au, fasttrack.grv.org.au, punters.com.au, racingandsports.com.au, race.com.au, thegreyhoundrecorder.com.au
-SOURCES: thedogs.com.au (greyhound), racenet.com.au (horse), harness.org.au (harness)
-
-For race analysis commands (next race, refresh, analyse) — provide full structured V7 analysis.
-For general questions — respond conversationally.
-Always be direct and professional. No fluff."""
 
 def call_claude(messages):
     if not CLAUDE_API_KEY:
@@ -72,7 +65,7 @@ def call_claude(messages):
     try:
         r = requests.post("https://api.anthropic.com/v1/messages",
             headers={"Content-Type":"application/json","x-api-key":CLAUDE_API_KEY,"anthropic-version":"2023-06-01"},
-            json={"model":CLAUDE_MODEL,"max_tokens":2000,"system":V7_SYSTEM,"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":messages},
+            json={"model":CLAUDE_MODEL,"max_tokens":1500,"system":V7_SYSTEM,"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":messages},
             timeout=45)
         data = r.json()
         if "error" in data: return f"API Error: {data['error'].get('message','Unknown')}"
@@ -92,32 +85,36 @@ def index():
 @app.route("/backtest")
 def backtest():
     state = get_state()
+    session = get_session_pl()
     db = get_db()
     logs = db.execute("SELECT * FROM training_logs ORDER BY created_at DESC LIMIT 100").fetchall()
-    return render_template("backtest.html", state=state, logs=[dict(l) for l in logs], page="backtest")
+    return render_template("backtest.html", state=state, session=session, logs=[dict(l) for l in logs], page="backtest")
 
 @app.route("/performance")
 def performance():
     state = get_state()
+    session = get_session_pl()
     db = get_db()
     bets = db.execute("SELECT * FROM bet_log ORDER BY created_at DESC LIMIT 200").fetchall()
     summary = db.execute("SELECT COUNT(*) as total, SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins, SUM(CASE WHEN result NOT IN ('PENDING') THEN 1 ELSE 0 END) as settled, COALESCE(SUM(pl),0) as total_pl FROM bet_log").fetchone()
-    return render_template("performance.html", state=state, bets=bets, summary=dict(summary), page="performance")
+    return render_template("performance.html", state=state, session=session, bets=bets, summary=dict(summary), page="performance")
 
 @app.route("/data")
 def data_control():
     state = get_state()
+    session = get_session_pl()
     db = get_db()
     races = db.execute("SELECT * FROM races ORDER BY created_at DESC LIMIT 50").fetchall()
     total = db.execute("SELECT COUNT(*) as c FROM races").fetchone()["c"]
-    return render_template("data_control.html", state=state, races=races, total=total, page="data")
+    return render_template("data_control.html", state=state, session=session, races=races, total=total, page="data")
 
 @app.route("/quality")
 def data_quality():
     state = get_state()
+    session = get_session_pl()
     db = get_db()
     stats = db.execute("SELECT COUNT(*) as total, SUM(CASE WHEN early_speed IS NOT NULL AND best_time IS NOT NULL AND career IS NOT NULL THEN 1 ELSE 0 END) as high_q, SUM(CASE WHEN early_speed IS NOT NULL OR best_time IS NOT NULL THEN 1 ELSE 0 END) as med_q FROM runners").fetchone()
-    return render_template("data_quality.html", state=state, stats=dict(stats), page="quality")
+    return render_template("data_quality.html", state=state, session=session, stats=dict(stats), page="quality")
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
@@ -127,7 +124,7 @@ def chat():
     if not user_msg: return jsonify({"response":"Empty message.","ok":False})
     state = get_state()
     db = get_db()
-    history = db.execute("SELECT role, content FROM chat_history WHERE session_id=? ORDER BY id DESC LIMIT 20", (session_id,)).fetchall()
+    history = db.execute("SELECT role, content FROM chat_history WHERE session_id=? ORDER BY id DESC LIMIT 8", (session_id,)).fetchall()
     messages = [{"role":h["role"],"content":h["content"]} for h in reversed(history)]
     ctx = f"{'ANCHOR_TIME: '+state.get('time_anchor','')+' AEST. ' if state.get('time_anchor') else ''}Code: {state.get('active_code','GREYHOUND')}. Bankroll: ${state.get('bankroll',0):.0f}. Bank mode: {state.get('bank_mode','STANDARD')}."
     messages.append({"role":"user","content":f"{ctx}\n{user_msg}"})
