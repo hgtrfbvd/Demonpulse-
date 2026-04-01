@@ -100,14 +100,18 @@ def call_claude(messages, model=None, max_tokens=700):
 # ─────────────────────────────────────────────────────────────────
 # SPA — serve React frontend
 # ─────────────────────────────────────────────────────────────────
-# ── SPA ROUTING — serves React index.html for all frontend paths ──────────────
-def _serve_spa():
-    """Single named view function for all SPA routes — avoids lambda-per-route."""
+@app.route("/")
+@app.route("/home")
+@app.route("/live")
+@app.route("/betting")
+@app.route("/reports")
+@app.route("/simulator")
+@app.route("/ai-learning")
+@app.route("/settings")
+@app.route("/audit")
+@app.route("/users")
+def serve_spa():
     return send_from_directory(app.static_folder, "index.html")
-
-_SPA_ROUTES = ["/","/home","/live","/betting","/reports","/simulator","/ai-learning","/settings","/audit","/users"]
-for _route in _SPA_ROUTES:
-    app.add_url_rule(_route, endpoint=f"spa_{_route.strip('/') or 'root'}", view_func=_serve_spa)
 
 
 # ─────────────────────────────────────────────────────────────────
