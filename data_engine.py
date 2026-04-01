@@ -131,7 +131,11 @@ def detect_state(track):
 # ----------------------------------------------------------------
 def fetch_meetings():
     log.info("Fetching racecards...")
-    html = fetch_page("https://www.thedogs.com.au/racing/racecards")
+    html = fetch_page(
+        "https://www.thedogs.com.au/racing/racecards",
+        use_playwright=True,
+        wait_ms=3000
+    )
     soup = parse_html(html)
     if not soup:
         log.error("Racecards failed")
@@ -162,6 +166,23 @@ def fetch_meetings():
 
 # ----------------------------------------------------------------
 # FETCH SCRATCHINGS
+# ----------------------------------------------------------------
+def fetch_scratchings():
+    log.info("Fetching scratchings...")
+    html = fetch_page(
+        "https://www.thedogs.com.au/racing/scratchings",
+        use_playwright=True,
+        wait_ms=3000
+    )
+    soup = parse_html(html)
+    if not soup:
+        return {}
+
+    scratchings = {}
+    for row in soup.select("tr"):
+        cells = row.select("td")
+        if len(cells) < 3:
+            continue
 # ----------------------------------------------------------------
 def fetch_scratchings():
     log.info("Fetching scratchings...")
