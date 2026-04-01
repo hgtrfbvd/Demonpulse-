@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DEMONPULSE V7 — {% block title %}Dashboard{% endblock %}</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<link rel="icon" href="/static/img/logo.png">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="tb-logo">
+      <img src="/static/img/logo.png" alt="DEMONPULSE">
+      <div class="tb-brand">
+        <div class="tb-title">DEMONPULSE</div>
+        <div class="tb-sub">SYNDICATE V7</div>
+      </div>
+    </div>
+
+    <div class="tb-stat">
+      <div class="tb-stat-val neu" id="tb-bank">${{ "%.0f"|format(state.bankroll or 0) }}</div>
+      <div class="tb-stat-lbl">BANKROLL</div>
+    </div>
+    <div class="tb-stat">
+      <div class="tb-stat-val {% if (session.total or 0) >= 0 %}pos{% else %}neg{% endif %}" id="tb-pl">{{ "+$%.2f"|format(session.total) if (session.total or 0) >= 0 else "-$%.2f"|format((session.total or 0)|abs) }}</div>
+      <div class="tb-stat-lbl">SESSION P/L</div>
+    </div>
+    <div class="tb-stat">
+      <div class="tb-stat-val neu">{{ session.bets or 0 }}</div>
+      <div class="tb-stat-lbl">BETS TODAY</div>
+    </div>
+    <div class="tb-stat">
+      <div class="tb-stat-val neu">{% if session.bets and session.bets > 0 %}{{ "%.0f"|format((session.wins or 0) / session.bets * 100) }}%{% else %}—{% endif %}</div>
+      <div class="tb-stat-lbl">STRIKE</div>
+    </div>
+
+    <div class="tb-spacer"></div>
+
+    <div class="flex flex-center flex-gap">
+      <div class="tb-dot {{ state.sys_state|lower if state.sys_state else 'stable' }}"></div>
+      <span class="tiny text-mid">{{ state.sys_state or 'STABLE' }}</span>
+    </div>
+
+    <div class="tb-time">
+      <label>AEST TIME</label>
+      <input type="text" id="time-anchor" placeholder="HH:MM" value="{{ state.time_anchor or '' }}" onchange="setTime(this.value)">
+    </div>
+
+    <div class="tb-code" onclick="cycleCode()" title="Click to change code">
+      {{ state.active_code or 'GREYHOUND' }}
+    </div>
+  </header>
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="sb-nav">
+      <div class="sb-label">NAVIGATION</div>
+      <a href="/" class="nav-item {% if page=='home' %}active{% endif %}"><span class="ico">🎯</span> LIVE EXECUTION</a>
+      <a href="/backtest" class="nav-item {% if page=='backtest' %}active{% endif %}"><span class="ico">🔬</span> BACKTEST / AI</a>
+      <a href="/performance" class="nav-item {% if page=='performance' %}active{% endif %}"><span class="ico">📈</span> PERFORMANCE</a>
+      <a href="/data" class="nav-item {% if page=='data' %}active{% endif %}"><span class="ico">📋</span> DATA CONTROL</a>
+      <a href="/quality" class="nav-item {% if page=='quality' %}active{% endif %}"><span class="ico">🔍</span> DATA QUALITY</a>
+
+      <div class="sb-label" style="margin-top:12px;">SETTINGS</div>
+      <div class="nav-item" onclick="showBankModal()"><span class="ico">💰</span> SET BANKROLL</div>
+      <div class="nav-item" onclick="toggleMode()"><span class="ico">⚙️</span> BANK MODE: <span id="sb-mode" style="color:var(--red3);margin-left:4px;">{{ state.bank_mode or 'STANDARD' }}</span></div>
+    </div>
+
+    <!-- BANKROLL WIDGET -->
+    <div class="bw">
+      <div class="bw-title">SESSION STATUS</div>
+      <div class="bw-row"><span class="bw-lbl">Bankroll</span><span class="bw-val" id="bw-bank">${{ "%.2f"|format(state.bankroll or 0) }}</span></div>
+      <div class="bw-row"><span class="bw-lbl">P/L Today</span><span class="bw-val {% if (session.total or 0) >= 0 %}pos{% else %}neg{% endif %}" id="bw-pl">{{ "+$%.2f"|format(session.total) if (session.total or 0) >= 0 else "-$%.2f"|format((session.total or 0)|abs) }}</span></div>
+      <div class="bw-row"><span class="bw-lbl">Bets</span><span class="bw-val">{{ session.bets or 0 }}</span></div>
+      <div class="bw-row"><span class="bw-lbl">Pending</span><span class="bw-val" style="color:var(--amb);">{{ session.pending or 0 }}</span></div>
+      <div class="bw-row"><span class="bw-lbl">Bank Mode</span><span class="bw-val" style="color:var(--red3);">{{ state.bank_mode or 'STANDARD' }}</span></div>
+      <button class="kill-btn" onclick="killSwitch()">⛔ KILL SWITCH</button>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+
+</div>
+
+<!-- BANK MODAL -->
+<div id="bank-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;display:none;align-items:center;justify-content:center;">
+  <div style="background:var(--bg2);border:1px solid var(--red);border-radius:6px;padding:24px;width:320px;box-shadow:0 0 30px var(--glow);">
+    <div class="page-title" style="margin-bottom:16px;">SET BANKROLL</div>
+    <div style="color:var(--mid);font-size:10px;margin-bottom:8px;">AMOUNT ($)</div>
+    <input type="number" id="bank-input" class="dp-input" placeholder="1000.00" style="margin-bottom:14px;">
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-red" style="flex:1;" onclick="saveBankroll()">CONFIRM</button>
+      <button class="btn btn-ghost" style="flex:1;" onclick="hideBankModal()">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SESSION_ID = 'dpv7_' + (localStorage.getItem('dpv7_sid') || (() => { const id = Date.now().toString(36); localStorage.setItem('dpv7_sid', id); return id; })());
+
+function setTime(val) {
+  fetch('/api/state', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({time_anchor: val}) });
+}
+
+function cycleCode() {
+  const codes = ['GREYHOUND','HORSE','HARNESS'];
+  const el = document.querySelector('.tb-code');
+  const cur = el.textContent.trim();
+  const next = codes[(codes.indexOf(cur) + 1) % codes.length];
+  el.textContent = next;
+  fetch('/api/state', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({active_code: next}) });
+}
+
+function toggleMode() {
+  const modes = ['SAFE','STANDARD','AGGRESSIVE'];
+  const el = document.getElementById('sb-mode');
+  const cur = el.textContent.trim();
+  const next = modes[(modes.indexOf(cur) + 1) % modes.length];
+  el.textContent = next;
+  fetch('/api/state', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({bank_mode: next}) });
+}
+
+function showBankModal() {
+  const m = document.getElementById('bank-modal');
+  m.style.display = 'flex';
+}
+function hideBankModal() {
+  document.getElementById('bank-modal').style.display = 'none';
+}
+function saveBankroll() {
+  const val = parseFloat(document.getElementById('bank-input').value);
+  if (!val || val <= 0) return;
+  fetch('/api/bankroll/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({bankroll: val}) })
+    .then(() => location.reload());
+}
+
+function killSwitch() {
+  if (confirm('KILL SWITCH: Stop all betting and lock session?')) {
+    fetch('/api/state', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({posture:'PROTECTIVE', sys_state:'WARNING'}) })
+      .then(() => location.reload());
+  }
+}
+
+// Refresh P/L every 30s
+setInterval(() => {
+  fetch('/api/session/pl').then(r => r.json()).then(d => {
+    const pl = d.total || 0;
+    const plEl = document.getElementById('tb-pl');
+    if (plEl) {
+      plEl.textContent = (pl >= 0 ? '+$' : '-$') + Math.abs(pl).toFixed(2);
+      plEl.className = 'tb-stat-val ' + (pl >= 0 ? 'pos' : 'neg');
+    }
+  });
+}, 30000);
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

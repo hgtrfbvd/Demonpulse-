@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Data Quality{% endblock %}
+{% block content %}
+
+<div class="page-hdr">
+  <div><div class="page-title">DATA QUALITY</div><div class="page-sub">FIELD COMPLETENESS & DATA HEALTH</div></div>
+</div>
+
+{% set total = stats.total or 0 %}
+{% set high = stats.high_q or 0 %}
+{% set med = stats.med_q or 0 %}
+{% set low = total - med %}
+{% set pct_high = (high / total * 100) if total > 0 else 0 %}
+{% set pct_med = ((med - high) / total * 100) if total > 0 else 0 %}
+{% set pct_low = (low / total * 100) if total > 0 else 0 %}
+
+<div class="grid-3 gap-2">
+  <div class="card"><div class="card-title">TOTAL RUNNERS</div><div style="font-size:36px;font-weight:bold;color:var(--txt);">{{ total }}</div></div>
+  <div class="card"><div class="card-title">HIGH QUALITY</div>
+    <div style="font-size:36px;font-weight:bold;color:var(--grn);">{{ "%.0f"|format(pct_high) }}%</div>
+    <div class="qbar-wrap"><div class="qbar qbar-hi" style="width:{{ pct_high }}%"></div></div>
+  </div>
+  <div class="card"><div class="card-title">LOW QUALITY</div>
+    <div style="font-size:36px;font-weight:bold;color:var(--red3);">{{ "%.0f"|format(pct_low) }}%</div>
+    <div class="qbar-wrap"><div class="qbar qbar-lo" style="width:{{ pct_low }}%"></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">QUALITY BREAKDOWN</div>
+  <div class="snap-grid">
+    <div class="snap-item">
+      <div class="snap-lbl">HIGH (ALL FIELDS)</div>
+      <div class="snap-val text-grn">{{ high }}</div>
+      <div class="qbar-wrap" style="margin-top:6px;"><div class="qbar qbar-hi" style="width:{{ pct_high }}%"></div></div>
+      <div class="tiny text-dim" style="margin-top:3px;">{{ "%.1f"|format(pct_high) }}% of total</div>
+    </div>
+    <div class="snap-item">
+      <div class="snap-lbl">MEDIUM (PARTIAL)</div>
+      <div class="snap-val text-amb">{{ med - high }}</div>
+      <div class="qbar-wrap" style="margin-top:6px;"><div class="qbar qbar-med" style="width:{{ pct_med }}%"></div></div>
+      <div class="tiny text-dim" style="margin-top:3px;">{{ "%.1f"|format(pct_med) }}% of total</div>
+    </div>
+    <div class="snap-item">
+      <div class="snap-lbl">LOW (MISSING DATA)</div>
+      <div class="snap-val text-red">{{ low }}</div>
+      <div class="qbar-wrap" style="margin-top:6px;"><div class="qbar qbar-lo" style="width:{{ pct_low }}%"></div></div>
+      <div class="tiny text-dim" style="margin-top:3px;">{{ "%.1f"|format(pct_low) }}% of total</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">MISSING FIELDS CHECK</div>
+  <div class="snap-grid">
+    {% for field, label in [('early_speed','EARLY SPEED'), ('best_time','BEST TIME'), ('career','CAREER FORM'), ('run_style','RUN STYLE'), ('trainer','TRAINER'), ('weight','WEIGHT')] %}
+    <div class="snap-item">
+      <div class="snap-lbl">{{ label }}</div>
+      <div class="snap-val" id="field-{{ field }}">—</div>
+      <div class="tiny text-dim">checking...</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">QUALITY CHART</div>
+  <canvas id="qualityChart" height="80"></canvas>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+new Chart(document.getElementById('qualityChart'), {
+  type: 'bar',
+  data: {
+    labels: ['HIGH QUALITY', 'MEDIUM QUALITY', 'LOW QUALITY'],
+    datasets: [{ data: [{{ pct_high|round(1) }}, {{ pct_med|round(1) }}, {{ pct_low|round(1) }}], backgroundColor: ['rgba(0,204,68,0.5)', 'rgba(255,170,0,0.5)', 'rgba(204,0,0,0.5)'], borderColor: ['#00cc44','#ffaa00','#cc0000'], borderWidth: 1 }]
+  },
+  options: { responsive:true, plugins:{legend:{display:false}}, scales:{ x:{ticks:{color:'#555',font:{size:9}},grid:{color:'#1e1e1e'}}, y:{ticks:{color:'#555',font:{size:9},callback:v=>v+'%'},grid:{color:'#1e1e1e'}} } }
+});
+</script>
+{% endblock %}

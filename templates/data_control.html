@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Data Control{% endblock %}
+{% block content %}
+
+<div class="page-hdr">
+  <div><div class="page-title">DATA CONTROL</div><div class="page-sub">MEETING QUEUE & DATA MANAGEMENT</div></div>
+</div>
+
+<div class="grid-3 gap-2">
+  <div class="card"><div class="card-title">MEETINGS QUEUED</div><div style="font-size:36px;font-weight:bold;color:var(--red3);">{{ total }}</div></div>
+  <div class="card"><div class="card-title">DATA QUALITY</div><div style="font-size:24px;font-weight:bold;color:var(--amb);">LIVE</div></div>
+  <div class="card"><div class="card-title">ACTIVE CODE</div><div style="font-size:24px;font-weight:bold;color:var(--red3);" id="dc-code">{{ state.active_code }}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-title">QUEUE CONTROLS</div>
+  <div class="flex flex-gap" style="flex-wrap:wrap;">
+    <button class="btn btn-red" onclick="discoverMeetings()">🔍 DISCOVER MEETINGS</button>
+    <button class="btn btn-ghost" onclick="showAddRace()">+ ADD RACE MANUALLY</button>
+    <button class="btn btn-ghost" onclick="clearQueue()">🗑 CLEAR QUEUE</button>
+  </div>
+</div>
+
+<!-- ADD RACE FORM -->
+<div class="card" id="add-race-form" style="display:none;">
+  <div class="card-title">ADD RACE MANUALLY</div>
+  <div class="grid-3 gap-1">
+    <div><div class="tiny text-dim gap-1">TRACK</div><input class="dp-input" id="ar-track" placeholder="e.g. Horsham"></div>
+    <div><div class="tiny text-dim gap-1">RACE #</div><input class="dp-input" id="ar-race" type="number" placeholder="9"></div>
+    <div><div class="tiny text-dim gap-1">DISTANCE</div><input class="dp-input" id="ar-dist" placeholder="400m"></div>
+    <div><div class="tiny text-dim gap-1">GRADE</div><input class="dp-input" id="ar-grade" placeholder="5th Grade"></div>
+    <div><div class="tiny text-dim gap-1">JUMP TIME</div><input class="dp-input" id="ar-time" placeholder="14:22"></div>
+    <div><div class="tiny text-dim gap-1">STATE</div><input class="dp-input" id="ar-state" placeholder="VIC"></div>
+  </div>
+  <div class="flex flex-gap" style="margin-top:10px;">
+    <button class="btn btn-red" onclick="addRace()">ADD RACE</button>
+    <button class="btn btn-ghost" onclick="document.getElementById('add-race-form').style.display='none'">CANCEL</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">RACE QUEUE <span class="hl">{{ races|length }} races</span></div>
+  <table class="dp-table">
+    <tr><th>DATE</th><th>TRACK</th><th>STATE</th><th>RACE</th><th>DIST</th><th>GRADE</th><th>JUMP</th><th>CODE</th><th>STATUS</th></tr>
+    {% for r in races %}
+    <tr>
+      <td class="tiny text-dim">{{ r.date }}</td>
+      <td><strong>{{ r.track }}</strong></td>
+      <td class="tiny text-mid">{{ r.state }}</td>
+      <td>R{{ r.race_num }}</td>
+      <td>{{ r.distance }}</td>
+      <td class="tiny text-mid">{{ r.grade }}</td>
+      <td>{{ r.jump_time }}</td>
+      <td><span class="tag tag-hi" style="font-size:8px;">{{ r.code }}</span></td>
+      <td class="{{ 'r-win' if r.status=='completed' else 'r-pending' }}">{{ (r.status or 'upcoming')|upper }}</td>
+    </tr>
+    {% endfor %}
+    {% if not races %}<tr><td colspan="9" style="text-align:center;color:var(--dim);padding:24px;">No races queued. Use DISCOVER MEETINGS to populate.</td></tr>{% endif %}
+  </table>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function showAddRace() { document.getElementById('add-race-form').style.display = 'block'; }
+
+async function addRace() {
+  const data = { track: document.getElementById('ar-track').value, race_num: parseInt(document.getElementById('ar-race').value), distance: document.getElementById('ar-dist').value, grade: document.getElementById('ar-grade').value, jump_time: document.getElementById('ar-time').value, state: document.getElementById('ar-state').value };
+  await fetch('/api/races/add', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  location.reload();
+}
+
+function discoverMeetings() {
+  alert('Send command in Live Execution chat:\n"next race [time]" or "refresh [time]"\n\nV7 will discover and display all today\'s meetings automatically.');
+}
+
+function clearQueue() {
+  if (confirm('Clear all queued races?')) location.reload();
+}
+</script>
+{% endblock %}

@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Backtest / AI Learning{% endblock %}
+{% block content %}
+
+<div class="page-hdr">
+  <div><div class="page-title">BACKTEST / AI LEARNING</div><div class="page-sub">TRAINING ENGINE & REPLAY SIMULATION</div></div>
+</div>
+
+<div class="grid-2">
+  <div>
+    <!-- TRAINING CONTROLS -->
+    <div class="card red-glow">
+      <div class="card-title">TRAINING CONTROLS</div>
+      <div class="grid-2 gap-2">
+        <div>
+          <div class="tiny text-dim gap-1">DATE FROM</div>
+          <input type="date" class="dp-input" id="date-from">
+        </div>
+        <div>
+          <div class="tiny text-dim gap-1">DATE TO</div>
+          <input type="date" class="dp-input" id="date-to">
+        </div>
+      </div>
+      <div style="margin:10px 0;">
+        <div class="tiny text-dim gap-1">BATCH SIZE</div>
+        <select class="dp-select" id="batch-size">
+          <option>10</option><option selected>25</option><option>50</option><option>100</option>
+        </select>
+      </div>
+      <div class="flex flex-gap">
+        <button class="btn btn-red" onclick="startTraining()" id="train-btn">▶ START TRAINING</button>
+        <button class="btn btn-ghost" onclick="stopTraining()" id="stop-btn" disabled>⏹ STOP</button>
+      </div>
+      <div id="train-status" class="tiny text-dim" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- ERROR BREAKDOWN -->
+    <div class="chart-box">
+      <div class="chart-lbl">ERROR TAG BREAKDOWN</div>
+      <canvas id="errorChart" height="160"></canvas>
+    </div>
+
+    <!-- ACCURACY CHARTS -->
+    <div class="chart-box" style="margin-top:12px;">
+      <div class="chart-lbl">ACCURACY OVER EPOCHS</div>
+      <canvas id="accChart" height="120"></canvas>
+    </div>
+  </div>
+
+  <div>
+    <!-- ROI CURVE -->
+    <div class="chart-box">
+      <div class="chart-lbl">ROI CURVE</div>
+      <canvas id="roiChart" height="140"></canvas>
+    </div>
+
+    <!-- DRAWDOWN -->
+    <div class="chart-box" style="margin-top:12px;">
+      <div class="chart-lbl">DRAWDOWN</div>
+      <canvas id="drawChart" height="100"></canvas>
+    </div>
+
+    <!-- TRAINING LOG TABLE -->
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">TRAINING LOG <span class="hl">{{ logs|length }} entries</span></div>
+      <table class="dp-table">
+        <tr><th>EPOCH</th><th>ACCURACY</th><th>ROI</th><th>WIN%</th><th>TOP3%</th></tr>
+        {% for l in logs[:20] %}
+        <tr>
+          <td>{{ l.epoch }}</td>
+          <td class="{{ 'r-win' if (l.accuracy or 0) > 0.5 else 'r-loss' }}">{{ "%.1f"|format((l.accuracy or 0)*100) }}%</td>
+          <td class="{{ 'r-win' if (l.roi or 0) > 0 else 'r-loss' }}">{{ "%.1f"|format((l.roi or 0)*100) }}%</td>
+          <td>{{ "%.1f"|format((l.win_rate or 0)*100) }}%</td>
+          <td>{{ "%.1f"|format((l.top3_rate or 0)*100) }}%</td>
+        </tr>
+        {% endfor %}
+        {% if not logs %}<tr><td colspan="5" style="text-align:center;color:var(--dim);padding:20px;">No training data yet</td></tr>{% endif %}
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const logs = {{ logs|tojson }};
+const labels = logs.map((l,i) => 'E'+l.epoch).reverse();
+const rois = logs.map(l => ((l.roi||0)*100).toFixed(1)).reverse();
+const accs = logs.map(l => ((l.accuracy||0)*100).toFixed(1)).reverse();
+const draws = logs.map(l => ((l.drawdown||0)*100).toFixed(1)).reverse();
+
+const chartOpts = (yLabel='') => ({
+  responsive: true,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { ticks: { color:'#555', font:{size:8} }, grid: { color:'#1e1e1e' } },
+    y: { ticks: { color:'#555', font:{size:8}, callback: v => v+(yLabel) }, grid: { color:'#1e1e1e' } }
+  }
+});
+
+new Chart(document.getElementById('roiChart'), {
+  type: 'line',
+  data: { labels, datasets: [{ data: rois, borderColor:'#cc0000', backgroundColor:'rgba(204,0,0,0.06)', fill:true, tension:0.3, pointRadius:2 }] },
+  options: chartOpts('%')
+});
+
+new Chart(document.getElementById('accChart'), {
+  type: 'line',
+  data: { labels, datasets: [
+    { label:'Accuracy', data: accs, borderColor:'#00cc44', tension:0.3, pointRadius:2 },
+    { label:'Win Rate', data: logs.map(l => ((l.win_rate||0)*100).toFixed(1)).reverse(), borderColor:'#ffaa00', tension:0.3, pointRadius:2 }
+  ]},
+  options: { ...chartOpts('%'), plugins: { legend: { labels: { color:'#555', font:{size:9} } } } }
+});
+
+new Chart(document.getElementById('drawChart'), {
+  type: 'line',
+  data: { labels, datasets: [{ data: draws, borderColor:'#ff3333', backgroundColor:'rgba(255,51,51,0.06)', fill:true, tension:0.3, pointRadius:2 }] },
+  options: chartOpts('%')
+});
+
+const errorFields = ['error_tempo','error_position','error_traffic','error_distance','error_condition','error_variance'];
+const errorLabels = ['TEMPO','POSITION','TRAFFIC','DISTANCE','CONDITION','VARIANCE'];
+const errorTotals = errorFields.map(f => logs.reduce((s,l) => s + (l[f]||0), 0));
+new Chart(document.getElementById('errorChart'), {
+  type: 'bar',
+  data: { labels: errorLabels, datasets: [{ data: errorTotals, backgroundColor:['#cc0000','#ff3333','#ff6666','#ffaa00','#0088ff','#00cc44'], borderWidth:0 }] },
+  options: chartOpts()
+});
+
+let training = false;
+let trainInterval = null;
+
+function startTraining() {
+  training = true;
+  document.getElementById('train-btn').disabled = true;
+  document.getElementById('stop-btn').disabled = false;
+  document.getElementById('train-status').textContent = '⟳ Training in progress...';
+  let epoch = (logs.length || 0) + 1;
+  trainInterval = setInterval(() => {
+    if (!training) return;
+    document.getElementById('train-status').textContent = `⟳ Epoch ${epoch} processing...`;
+    epoch++;
+  }, 2000);
+}
+
+function stopTraining() {
+  training = false;
+  clearInterval(trainInterval);
+  document.getElementById('train-btn').disabled = false;
+  document.getElementById('stop-btn').disabled = true;
+  document.getElementById('train-status').textContent = '✓ Training stopped.';
+}
+</script>
+{% endblock %}

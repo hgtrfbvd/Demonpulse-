@@ -1,0 +1,291 @@
+{% extends "base.html" %}
+{% block title %}Live Execution{% endblock %}
+{% block content %}
+
+<div class="page-hdr">
+  <div><div class="page-title">LIVE EXECUTION</div><div class="page-sub">REAL-TIME RACE ANALYSIS & DECISION ENGINE</div></div>
+  <div class="flex flex-gap">
+    <button class="btn btn-ghost btn-sm" onclick="refreshBoard()">⟳ REFRESH BOARD</button>
+    <button class="btn btn-red btn-sm" onclick="runCommand('next race')">NEXT RACE</button>
+  </div>
+</div>
+
+<div class="grid-2">
+  <!-- LEFT COLUMN -->
+  <div>
+
+    <!-- BET NOW PANEL -->
+    <div class="bet-panel" id="bet-panel">
+      <div class="bet-header">
+        <div class="bet-race">
+          <span class="bet-tag">TRACK: <strong id="bp-track">—</strong></span>
+          <span class="bet-tag">RACE: <strong id="bp-race">—</strong></span>
+          <span class="bet-tag">DIST: <strong id="bp-dist">—</strong></span>
+          <span class="bet-tag">JUMP: <strong id="bp-time">—</strong></span>
+        </div>
+        <div class="decision-badge PASS" id="bp-decision">AWAITING</div>
+      </div>
+      <div class="bet-grid">
+        <div><div class="bf-lbl">SELECTION</div><div class="bf-val red" id="bp-runner">—</div><div class="bf-sub" id="bp-box">—</div></div>
+        <div><div class="bf-lbl">ODDS</div><div class="bf-val" id="bp-odds">—</div><div class="bf-sub" id="bp-bet-type">—</div></div>
+        <div><div class="bf-lbl">STAKE</div><div class="bf-val amb" id="bp-stake">—</div><div class="bf-sub">KELLY ADJUSTED</div></div>
+        <div><div class="bf-lbl">EV</div><div class="bf-val grn" id="bp-ev">—</div><div class="bf-sub" id="bp-ev-status">—</div></div>
+        <div><div class="bf-lbl">CONFIDENCE</div><div class="bf-val" id="bp-conf-flames">—</div><div class="bf-sub" id="bp-conf">—</div></div>
+        <div><div class="bf-lbl">EDGE</div><div class="bf-val" id="bp-edge">—</div><div class="bf-sub" id="bp-edge-status">—</div></div>
+      </div>
+      <div class="tags" id="bp-tags"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;" id="bp-actions" style="display:none;">
+        <button class="btn btn-grn btn-sm" onclick="logCurrentBet()">+ LOG BET</button>
+        <button class="btn btn-ghost btn-sm" onclick="clearBetPanel()">CLEAR</button>
+      </div>
+    </div>
+
+    <!-- RACE SNAPSHOT -->
+    <div class="card" id="race-snapshot">
+      <div class="card-title">RACE SNAPSHOT <span class="hl" id="snap-race">—</span></div>
+      <div class="snap-grid">
+        <div class="snap-item"><div class="snap-lbl">LIKELY LEADER</div><div class="snap-val" id="snap-leader">—</div></div>
+        <div class="snap-item"><div class="snap-lbl">TEMPO</div><div class="snap-val" id="snap-tempo">—</div></div>
+        <div class="snap-item"><div class="snap-lbl">PRESSURE</div><div class="snap-val" id="snap-pressure">—</div></div>
+        <div class="snap-item"><div class="snap-lbl">BEST CLOSER</div><div class="snap-val" id="snap-closer">—</div></div>
+        <div class="snap-item"><div class="snap-lbl">FADE RISKS</div><div class="snap-val" id="snap-fade">—</div></div>
+        <div class="snap-item"><div class="snap-lbl">RACE SHAPE</div><div class="snap-val" id="snap-shape">—</div></div>
+      </div>
+    </div>
+
+    <!-- SIMULATION -->
+    <div class="card">
+      <div class="card-title">RACE SIMULATION <span id="sim-status" class="hl">READY</span></div>
+      <div class="sim-controls">
+        <button class="btn btn-red btn-sm" onclick="startSim()">▶ RUN SIM</button>
+        <button class="btn btn-ghost btn-sm" onclick="resetSim()">↺ RESET</button>
+        <span class="tiny text-mid" id="sim-phase">Phase: —</span>
+      </div>
+      <div class="sim-track" id="sim-track">
+        <div class="track-line" style="left:15%"><div class="track-lbl" style="left:15%">JUMP</div></div>
+        <div class="track-line" style="left:35%"><div class="track-lbl" style="left:35%">200m</div></div>
+        <div class="track-line" style="left:60%"><div class="track-lbl" style="left:60%">TURN</div></div>
+        <div class="track-line" style="left:82%"><div class="track-lbl" style="left:82%">RUN</div></div>
+        <div style="position:absolute;right:0;top:0;bottom:0;width:3px;background:var(--red);opacity:0.6;"></div>
+        <div id="sim-runners"></div>
+      </div>
+      <div class="sim-info">
+        <div class="si-item"><div class="si-lbl">LEADER</div><div class="si-val" id="sim-leader">—</div></div>
+        <div class="si-item"><div class="si-lbl">PACE</div><div class="si-val" id="sim-pace">—</div></div>
+        <div class="si-item"><div class="si-lbl">PREDICTED WIN</div><div class="si-val text-red" id="sim-pick">—</div></div>
+      </div>
+    </div>
+
+    <!-- PENDING BETS -->
+    {% if pending %}
+    <div class="card">
+      <div class="card-title">PENDING BETS <span class="hl">{{ pending|length }}</span></div>
+      <table class="dp-table">
+        <tr><th>TRACK</th><th>R</th><th>RUNNER</th><th>TYPE</th><th>ODDS</th><th>STAKE</th><th>RESULT</th></tr>
+        {% for b in pending %}
+        <tr>
+          <td>{{ b.track }}</td><td>R{{ b.race_num }}</td>
+          <td>{{ b.runner }} <span class="tiny text-mid">Box {{ b.box_num }}</span></td>
+          <td>{{ b.bet_type }}</td><td>${{ b.odds }}</td><td>${{ b.stake }}</td>
+          <td>
+            <button class="btn btn-grn btn-sm" onclick="settleBet({{ b.id }},'WIN')">WIN</button>
+            <button class="btn btn-ghost btn-sm" onclick="settleBet({{ b.id }},'PLACE')">PLC</button>
+            <button class="btn btn-sm" style="background:var(--red);color:#fff;" onclick="settleBet({{ b.id }},'LOSS')">LOSS</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- RIGHT COLUMN — CHAT -->
+  <div>
+    <div class="card" style="height:calc(100vh - 160px);display:flex;flex-direction:column;padding:0;">
+      <div class="card-title" style="padding:12px 14px;border-bottom:1px solid var(--bdr);margin:0;">
+        V7 INTELLIGENCE — CHAT
+        <div class="flex flex-gap">
+          <button class="btn btn-ghost btn-sm" onclick="clearChat()">CLEAR</button>
+          <button class="btn btn-ghost btn-sm" onclick="runCommand('help')">HELP</button>
+        </div>
+      </div>
+      <div class="chat-msgs" id="chat-msgs">
+        <div class="msg assistant">🔥 DEMONPULSE SYNDICATE V7 — ONLINE<br><br>Type any V7 command or ask a question.<br><br>Quick commands:<br>• next race [time]<br>• refresh [time]<br>• analyse [track] R[N]<br>• next 3 [time]<br>• picks today [time]<br>• status</div>
+      </div>
+      <div id="typing-indicator" class="chat-typing" style="display:none;">⟳ V7 is analysing...</div>
+      <div class="chat-input-row">
+        <input type="text" class="chat-input" id="chat-input" placeholder="next race 14:30  |  analyse Horsham R9  |  refresh 14:30" onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="btn btn-red" onclick="sendChat()">RUN</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RECENT BETS -->
+{% if recent %}
+<div class="card" style="margin-top:14px;">
+  <div class="card-title">RECENT RESULTS</div>
+  <table class="dp-table">
+    <tr><th>TIME</th><th>TRACK</th><th>R</th><th>RUNNER</th><th>TYPE</th><th>ODDS</th><th>STAKE</th><th>RESULT</th><th>P/L</th></tr>
+    {% for b in recent %}
+    <tr>
+      <td class="tiny text-dim">{{ b.created_at[:16] if b.created_at else '—' }}</td>
+      <td>{{ b.track }}</td><td>R{{ b.race_num }}</td>
+      <td>{{ b.runner }}</td><td>{{ b.bet_type }}</td>
+      <td>${{ b.odds }}</td><td>${{ b.stake }}</td>
+      <td class="r-{{ b.result|lower if b.result else 'pending' }}">{{ b.result }}</td>
+      <td class="{{ 'r-win' if (b.pl or 0) > 0 else 'r-loss' if (b.pl or 0) < 0 else '' }}">
+        {{ ('+$' if (b.pl or 0) >= 0 else '-$') + '%.2f'|format((b.pl or 0)|abs) }}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/simulation.js"></script>
+<script>
+let currentAnalysis = null;
+
+// ── CHAT ──────────────────────────────────────────────────────
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  appendMsg('user', msg);
+  document.getElementById('typing-indicator').style.display = 'block';
+  scrollChat();
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, session_id: SESSION_ID})
+    });
+    const d = await r.json();
+    document.getElementById('typing-indicator').style.display = 'none';
+    appendMsg('assistant', d.response || 'No response');
+    parseAnalysisFromResponse(d.response || '');
+  } catch(e) {
+    document.getElementById('typing-indicator').style.display = 'none';
+    appendMsg('assistant', '⚠️ Connection error: ' + e.message);
+  }
+}
+
+function appendMsg(role, content) {
+  const msgs = document.getElementById('chat-msgs');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  msgs.appendChild(div);
+  scrollChat();
+}
+
+function scrollChat() {
+  const msgs = document.getElementById('chat-msgs');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function clearChat() {
+  await fetch('/api/chat/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({session_id: SESSION_ID})});
+  document.getElementById('chat-msgs').innerHTML = '<div class="msg assistant">Chat cleared. Ready for commands.</div>';
+}
+
+function runCommand(cmd) {
+  const input = document.getElementById('chat-input');
+  const time = document.getElementById('time-anchor').value;
+  input.value = cmd + (time ? ' ' + time : '');
+  sendChat();
+}
+
+// ── PARSE ANALYSIS FROM RESPONSE ─────────────────────────────
+function parseAnalysisFromResponse(text) {
+  if (!text) return;
+  const t = text.toUpperCase();
+  const getVal = (patterns, def='—') => {
+    for (const p of patterns) {
+      const m = text.match(new RegExp(p + '[:\\s]+([^\\n|]+)', 'i'));
+      if (m) return m[1].trim().replace(/\*\*/g, '');
+    }
+    return def;
+  };
+  const decision = t.includes('DECISION: BET') || t.includes('✅ BET') ? 'BET' :
+                   t.includes('DECISION: SESSION') || t.includes('⚡ SESSION') ? 'SESSION' :
+                   t.includes('DECISION: PASS') || t.includes('❌ PASS') ? 'PASS' : null;
+  if (!decision) return;
+
+  document.getElementById('bp-decision').textContent = decision;
+  document.getElementById('bp-decision').className = 'decision-badge ' + decision;
+  document.getElementById('bp-track').textContent = getVal(['TRACK','track']);
+  document.getElementById('bp-race').textContent = getVal(['RACE','R(?=\\d)']);
+  document.getElementById('bp-dist').textContent = getVal(['DISTANCE','DIST']);
+  document.getElementById('bp-time').textContent = getVal(['JUMP','TIME','jump']);
+  document.getElementById('bp-runner').textContent = getVal(['RUNNER','SELECTION','Runner','Selection']);
+  document.getElementById('bp-box').textContent = 'Box ' + getVal(['BOX','Box']);
+  document.getElementById('bp-odds').textContent = '$' + getVal(['ODDS','Odds']);
+  document.getElementById('bp-bet-type').textContent = getVal(['TYPE','BET TYPE','Type']);
+  document.getElementById('bp-stake').textContent = '$' + getVal(['STAKE','Stake']);
+  document.getElementById('bp-ev').textContent = getVal(['EV','Expected Value']);
+  document.getElementById('bp-conf').textContent = getVal(['CONFIDENCE','Confidence']);
+  document.getElementById('bp-edge').textContent = getVal(['EDGE TYPE','EDGE','Edge']);
+
+  const tags = document.getElementById('bp-tags');
+  tags.innerHTML = '';
+  if (decision === 'BET') tags.innerHTML += '<span class="tag tag-hi">HIGH CONFIDENCE</span>';
+  if (t.includes('OVERLAY')) tags.innerHTML += '<span class="tag tag-val">VALUE</span>';
+  if (t.includes('HIGH RISK') || t.includes('CHAOS')) tags.innerHTML += '<span class="tag tag-risk">RISK</span>';
+  if (decision === 'PASS') tags.innerHTML += '<span class="tag tag-no">NO BET</span>';
+
+  document.getElementById('bp-actions').style.display = decision !== 'PASS' ? 'flex' : 'none';
+
+  // Update snapshot
+  document.getElementById('snap-race').textContent = getVal(['TRACK']) + ' ' + getVal(['RACE','R(?=\\d)']);
+  document.getElementById('snap-shape').textContent = getVal(['RACE SHAPE','Race Shape','SHAPE']);
+
+  currentAnalysis = { track: getVal(['TRACK']), race_num: getVal(['RACE','R(?=\\d)']).replace(/\D/g,''), runner: getVal(['RUNNER','SELECTION']), box_num: getVal(['BOX']), bet_type: getVal(['TYPE','BET TYPE']), odds: parseFloat(getVal(['ODDS'])||0), stake: parseFloat(getVal(['STAKE'])||0), ev: getVal(['EV']), confidence: getVal(['CONFIDENCE']) };
+}
+
+// ── BET LOGGING ───────────────────────────────────────────────
+async function logCurrentBet() {
+  if (!currentAnalysis) return;
+  await fetch('/api/bet/log', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({...currentAnalysis, session_id: SESSION_ID})
+  });
+  appendMsg('assistant', `✅ Bet logged: ${currentAnalysis.runner} — ${currentAnalysis.bet_type} @$${currentAnalysis.odds} Stake: $${currentAnalysis.stake}`);
+  location.reload();
+}
+
+async function settleBet(id, result) {
+  const r = await fetch('/api/bet/settle', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id, result})
+  });
+  const d = await r.json();
+  if (d.ok) location.reload();
+}
+
+function clearBetPanel() {
+  currentAnalysis = null;
+  ['bp-track','bp-race','bp-dist','bp-time','bp-runner','bp-box','bp-odds','bp-bet-type','bp-stake','bp-ev','bp-conf','bp-edge'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '—';
+  });
+  document.getElementById('bp-decision').textContent = 'AWAITING';
+  document.getElementById('bp-decision').className = 'decision-badge PASS';
+  document.getElementById('bp-tags').innerHTML = '';
+  document.getElementById('bp-actions').style.display = 'none';
+}
+
+function refreshBoard() {
+  const time = document.getElementById('time-anchor').value;
+  if (!time) { alert('Enter current AEST time first'); return; }
+  runCommand('refresh ' + time);
+}
+</script>
+{% endblock %}

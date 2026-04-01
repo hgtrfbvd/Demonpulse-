@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Performance{% endblock %}
+{% block content %}
+
+<div class="page-hdr">
+  <div><div class="page-title">PERFORMANCE</div><div class="page-sub">ROI ANALYTICS & SESSION TRACKING</div></div>
+</div>
+
+{% set settled = summary.settled or 0 %}
+{% set wins = summary.wins or 0 %}
+{% set total_pl = summary.total_pl or 0 %}
+{% set roi = (total_pl / (settled * 10) * 100) if settled > 0 else 0 %}
+{% set strike = (wins / settled * 100) if settled > 0 else 0 %}
+
+<div class="perf-grid">
+  <div class="perf-card">
+    <div class="perf-val {{ 'text-grn' if total_pl >= 0 else 'text-red' }}">{{ ('+$' if total_pl >= 0 else '-$') + '%.2f'|format(total_pl|abs) }}</div>
+    <div class="perf-lbl">TOTAL P/L</div>
+  </div>
+  <div class="perf-card">
+    <div class="perf-val">{{ "%.1f"|format(roi) }}%</div>
+    <div class="perf-lbl">ROI</div>
+  </div>
+  <div class="perf-card">
+    <div class="perf-val {{ 'text-grn' if strike >= 30 else 'text-amb' if strike >= 20 else 'text-red' }}">{{ "%.1f"|format(strike) }}%</div>
+    <div class="perf-lbl">STRIKE RATE</div>
+  </div>
+  <div class="perf-card">
+    <div class="perf-val">{{ summary.total or 0 }}</div>
+    <div class="perf-lbl">TOTAL BETS</div>
+  </div>
+  <div class="perf-card">
+    <div class="perf-val text-grn">{{ wins }}</div>
+    <div class="perf-lbl">WINS</div>
+  </div>
+  <div class="perf-card">
+    <div class="perf-val">{{ settled }}</div>
+    <div class="perf-lbl">SETTLED</div>
+  </div>
+</div>
+
+<div class="charts-grid">
+  <div class="chart-box" style="grid-column:1/-1;">
+    <div class="chart-lbl">CUMULATIVE P/L CURVE</div>
+    <canvas id="plChart" height="80"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="chart-lbl">WIN RATE BY CONFIDENCE</div>
+    <canvas id="confChart" height="120"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="chart-lbl">BET TYPE BREAKDOWN</div>
+    <canvas id="typeChart" height="120"></canvas>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <div class="card-title">BET HISTORY</div>
+  <table class="dp-table">
+    <tr><th>DATE</th><th>TRACK</th><th>R</th><th>RUNNER</th><th>TYPE</th><th>ODDS</th><th>STAKE</th><th>EV</th><th>CONF</th><th>RESULT</th><th>P/L</th></tr>
+    {% for b in bets %}
+    <tr>
+      <td class="tiny text-dim">{{ b.date or '—' }}</td>
+      <td>{{ b.track or '—' }}</td>
+      <td>{{ b.race_num or '—' }}</td>
+      <td>{{ b.runner or '—' }}</td>
+      <td>{{ b.bet_type or '—' }}</td>
+      <td>${{ "%.2f"|format(b.odds or 0) }}</td>
+      <td>${{ "%.2f"|format(b.stake or 0) }}</td>
+      <td class="text-grn">{{ b.ev or '—' }}</td>
+      <td class="tiny">{{ b.confidence or '—' }}</td>
+      <td class="r-{{ (b.result or 'pending')|lower }}">{{ b.result or 'PENDING' }}</td>
+      <td class="{{ 'r-win' if (b.pl or 0) > 0 else 'r-loss' if (b.pl or 0) < 0 else '' }}">
+        {{ ('+$' if (b.pl or 0) >= 0 else '-$') + '%.2f'|format((b.pl or 0)|abs) }}
+      </td>
+    </tr>
+    {% endfor %}
+    {% if not bets %}<tr><td colspan="11" style="text-align:center;color:var(--dim);padding:24px;">No bets recorded yet</td></tr>{% endif %}
+  </table>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+fetch('/api/performance/chart').then(r => r.json()).then(data => {
+  const labels = data.map(d => d.date);
+  const pls = data.map(d => d.pl);
+  new Chart(document.getElementById('plChart'), {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Cumulative P/L', data: pls, borderColor: pls[pls.length-1] >= 0 ? '#00cc44' : '#cc0000', backgroundColor: pls[pls.length-1] >= 0 ? 'rgba(0,204,68,0.08)' : 'rgba(204,0,0,0.08)', fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#cc0000' }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#555', font: { size: 9 } }, grid: { color: '#1e1e1e' } }, y: { ticks: { color: '#555', font: { size: 9 }, callback: v => '$'+v }, grid: { color: '#1e1e1e' } } } }
+  });
+});
+
+const bets = {{ bets|tojson }};
+const confMap = {}, typeMap = {};
+bets.forEach(b => {
+  if (b.result && b.result !== 'PENDING') {
+    const c = b.confidence || 'UNKNOWN';
+    if (!confMap[c]) confMap[c] = {wins:0,total:0};
+    confMap[c].total++;
+    if (b.result === 'WIN') confMap[c].wins++;
+    const t = b.bet_type || 'UNKNOWN';
+    if (!typeMap[t]) typeMap[t] = 0;
+    typeMap[t]++;
+  }
+});
+new Chart(document.getElementById('confChart'), {
+  type: 'bar',
+  data: { labels: Object.keys(confMap), datasets: [{ label: 'Strike %', data: Object.values(confMap).map(v => v.total ? Math.round(v.wins/v.total*100) : 0), backgroundColor: 'rgba(204,0,0,0.5)', borderColor: '#cc0000', borderWidth: 1 }] },
+  options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#555', font: { size: 9 } }, grid: { color: '#1e1e1e' } }, y: { ticks: { color: '#555', font: { size: 9 }, callback: v => v+'%' }, grid: { color: '#1e1e1e' } } } }
+});
+new Chart(document.getElementById('typeChart'), {
+  type: 'doughnut',
+  data: { labels: Object.keys(typeMap), datasets: [{ data: Object.values(typeMap), backgroundColor: ['#cc0000','#00cc44','#ffaa00','#0088ff'], borderWidth: 0 }] },
+  options: { responsive: true, plugins: { legend: { labels: { color: '#777', font: { size: 9 } } } } }
+});
+</script>
+{% endblock %}
