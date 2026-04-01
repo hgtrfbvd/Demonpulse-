@@ -573,9 +573,7 @@ def mark_source_failed(source):
     }
 
 def get_source_health():
-    return _source_health.copy()
-
-# ----------------------------------------------------------------
+    # ----------------------------------------------------------------
 # FULL SWEEP
 # ----------------------------------------------------------------
 def full_sweep():
@@ -584,7 +582,7 @@ def full_sweep():
     meetings = fetch_meetings()
     if not meetings:
         log.warning("No meetings found")
-        return {"ok": False, "error": "No meetings"}
+        return {"ok": True, "races": 0, "runners": 0, "elapsed": 0, "warning": "No meetings found"}
 
     scratchings = fetch_scratchings()
     total_races = total_runners = 0
