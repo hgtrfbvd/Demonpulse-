@@ -409,9 +409,7 @@ def api_users_sessions(user_id):
 @app.route("/api/races/upcoming")
 def api_races_upcoming():
     from auth import get_current_user
-    user = get_current_user()
-    if not user:
-        return jsonify({"error": "Unauthorized"}), 401
+    user = get_current_user()  # allow None (no auth block)
 
     try:
         from db import get_db, safe_query, T
@@ -461,19 +459,17 @@ def api_race_analysis(race_uid):
         scored = score_race(race, runners, race.get("track", ""))
         sig = get_signal(race_uid) or generate_signal(scored)
 
-        # Item 5: include previously stored scored_races row so callers
-        # (learning engine, simulator context) get the persisted score
         stored_score = safe_query(
             lambda: get_db().table("scored_races").select("*")
                     .eq("race_uid", race_uid).single().execute().data
         )
 
         return jsonify({
-            "race":         race,
-            "runners":      runners,
-            "scored":       scored,
-            "signal":       sig,
-            "stored_score": stored_score,   # Item 5: read path for scored_races
+            "race": race,
+            "runners": runners,
+            "scored": scored,
+            "signal": sig,
+            "stored_score": stored_score,
         })
     except Exception as e:
         log.error(f"Race analysis error: {e}")
