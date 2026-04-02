@@ -626,8 +626,11 @@ def fetch_meetings():
 
     today = date.today().isoformat()
     links = _extract_racing_links(soup)
+
     meetings = []
-    seen = set()
+    seen_tracks = set()
+    candidate_dates = {}
+    candidate_tracks = {}
 
     log.info(f"Racecards link scan found {len(links)} /racing/ links")
 
@@ -636,25 +639,81 @@ def fetch_meetings():
         if not parsed:
             continue
 
-        track = parsed["track"]
-        mdate = parsed["date"]
+        track = (parsed.get("track") or "").strip().lower()
+        race_date = parsed.get("date")
 
-        if mdate != today or track in seen:
+        if not track or not race_date:
             continue
 
-        seen.add(track)
+        candidate_dates[race_date] = candidate_dates.get(race_date, 0) + 1
+        candidate_tracks[track] = candidate_tracks.get(track, 0) + 1
+
+        if race_date != today:
+            continue
+
+        if track in seen_tracks:
+            continue
+
+        seen_tracks.add(track)
         meetings.append(
             {
                 "track": track,
-                "date": mdate,
+                "date": race_date,
                 "state": detect_state(track),
-                "url": f"{BASE_URL}/racing/{track}/{mdate}?trial=false",
+                "url": f"{BASE_URL}/racing/{track}/{race_date}?trial=false",
             }
         )
 
-    log.info(f"Found {len(meetings)} meetings")
-    return meetings
+    if meetings:
+        log.info(f"Found {len(meetings)} meetings for today={today}")
+        return meetings
 
+    # Fallback 1:
+    # If page has race links but none match today's date, log strongest seen dates
+    if candidate_dates:
+        sorted_dates = sorted(candidate_dates.items(), key=lambda x: x[1], reverse=True)
+        log.warning(f"No meetings matched today={today}. Top dates seen: {sorted_dates[:5]}")
+
+    # Fallback 2:
+    # Look for track/date patterns anywhere in raw HTML, not just in anchor hrefs
+    html_matches = re.findall(
+        r"/racing/([a-z0-9\-]+)/(\d{4}-\d{2}-\d{2})",
+        html or "",
+        flags=re.IGNORECASE,
+    )
+
+    for track, race_date in html_matches:
+        track = (track or "").strip().lower()
+        if race_date != today:
+            continue
+        if not track or track in seen_tracks:
+            continue
+
+        seen_tracks.add(track)
+        meetings.append(
+            {
+                "track": track,
+                "date": race_date,
+                "state": detect_state(track),
+                "url": f"{BASE_URL}/racing/{track}/{race_date}?trial=false",
+            }
+        )
+
+    if meetings:
+        log.info(f"Fallback HTML scan found {len(meetings)} meetings for today={today}")
+        return meetings
+
+    # Fallback 3:
+    # If we still have nothing, dump diagnostics so we stop guessing
+    try:
+        page_text = soup.get_text(" ", strip=True)[:1500]
+        log.warning(f"Racecards diagnostics: today={today}, candidate_tracks={list(candidate_tracks)[:20]}")
+        log.warning(f"Racecards diagnostics text preview: {page_text}")
+    except Exception:
+        pass
+
+    log.error("Racecards parsed but no meetings were extracted")
+    return []
 
 # ----------------------------------------------------------------
 # FETCH SCRATCHINGS
