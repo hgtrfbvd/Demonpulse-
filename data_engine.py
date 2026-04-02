@@ -450,7 +450,6 @@ def compute_race_hash(race_meta, runners, scratchings_snapshot):
     ])
 
     return hashlib.md5(key.encode()).hexdigest()[:12]
-
 # ----------------------------------------------------------------
 # SUPABASE STORAGE
 # ----------------------------------------------------------------
@@ -458,12 +457,14 @@ def upsert_race(race_data):
     try:
         from db import get_db, T
         db = get_db()
+
         payload = {
             "race_uid": race_data["race_uid"],
             "date": race_data["date"],
             "track": race_data["track"],
             "state": race_data.get("state", ""),
             "race_num": race_data["race_num"],
+            "race_name": race_data.get("race_name", ""),
             "code": race_data.get("code", "GREYHOUND"),
             "distance": race_data.get("distance", ""),
             "grade": race_data.get("grade", ""),
@@ -471,14 +472,30 @@ def upsert_race(race_data):
             "time_status": race_data.get("time_status", "PARTIAL"),
             "status": race_data.get("status", "upcoming"),
             "source_url": race_data.get("url", ""),
+            "expert_form_url": race_data.get("expert_form_url", ""),
             "completeness_score": race_data.get("completeness_score", 0),
             "completeness_quality": race_data.get("completeness_quality", "LOW"),
             "race_hash": race_data.get("race_hash", ""),
             "lifecycle_state": race_data.get("lifecycle_state", "fetched"),
+            "last_verified_at": datetime.utcnow().isoformat() if race_data.get("time_status") == "VERIFIED" else None,
             "fetched_at": datetime.utcnow().isoformat(),
         }
+
         res = db.table(T("today_races")).upsert(payload, on_conflict="race_uid").execute()
-        return res.data[0]["id"] if getattr(res, "data", None) else None
+
+        if getattr(res, "data", None):
+            return res.data[0]["id"]
+
+        row = (
+            db.table(T("today_races"))
+            .select("id")
+            .eq("race_uid", race_data["race_uid"])
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return row[0]["id"] if row else None
     except Exception as e:
         log.error(f"Upsert race failed {race_data.get('race_uid')}: {e}")
         return None
@@ -487,20 +504,42 @@ def upsert_race(race_data):
 def upsert_runners(race_id, race_uid, runners):
     if not race_id or not runners:
         return
+
     try:
         from db import get_db, T
         db = get_db()
+
         db.table(T("today_runners")).delete().eq("race_uid", race_uid).execute()
+
         payload = []
         for r in runners:
-            row = dict(r)
-            row["race_id"] = str(race_id)
-            row["race_uid"] = race_uid
-            row["date"] = date.today().isoformat()
-            payload.append(row)
+            payload.append({
+                "race_id": race_id,
+                "race_uid": race_uid,
+                "date": date.today().isoformat(),
+                "box_num": r.get("box_num"),
+                "name": r.get("name"),
+                "runner_name": r.get("name"),
+                "trainer": r.get("trainer"),
+                "weight": r.get("weight"),
+                "best_time": r.get("best_time"),
+                "career": r.get("career"),
+                "price": r.get("price"),
+                "rating": r.get("rating"),
+                "run_style": r.get("run_style"),
+                "early_speed": r.get("early_speed"),
+                "scratched": bool(r.get("scratched", False)),
+                "scratch_timing": r.get("scratch_timing"),
+                "raw_hash": r.get("raw_hash"),
+                "source_confidence": r.get("source_confidence"),
+            })
+
         db.table(T("today_runners")).insert(payload).execute()
     except Exception as e:
         log.error(f"Upsert runners failed {race_uid}: {e}")
+
+
+def update_lifecycle(race_uid, state):
 
 
 def update_lifecycle(race_uid, state):
@@ -573,17 +612,21 @@ def auto_settle_bets(result):
         log.error(f"Auto-settle failed: {e}")
 
 
-def log_source_call(url, method, status, rows=0, grv=False):
+def log_source_call(url, method, status, rows=0, grv=False, source=None, response_code=None, error_message=None, duration_ms=None):
     try:
         from db import get_db, T
         db = get_db()
         db.table(T("source_log")).insert({
             "date": date.today().isoformat(),
+            "source": source,
             "url": url,
             "method": method,
             "status": status,
+            "response_code": response_code,
             "grv_detected": grv,
             "rows_returned": rows,
+            "error_message": error_message,
+            "duration_ms": duration_ms,
             "created_at": datetime.utcnow().isoformat()
         }).execute()
     except Exception:
