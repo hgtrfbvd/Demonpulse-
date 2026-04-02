@@ -283,8 +283,14 @@ const {useState,useEffect,useRef,useCallback,useMemo}=React;
 // ──────────────────────────────────────────────
 const API={
   token:null,
-  setToken(t){this.token=t;if(t)localStorage.setItem('dp_token',t);else localStorage.removeItem('dp_token')},
-  getToken(){return this.token||localStorage.getItem('dp_token')},
+  setToken(t){
+    this.token=t;
+    if(t)localStorage.setItem('dp_token',t);
+    else localStorage.removeItem('dp_token');
+  },
+  getToken(){
+    return this.token||localStorage.getItem('dp_token');
+  },
   async req(method,url,body){
     const headers={'Content-Type':'application/json'};
     const t=this.getToken();
@@ -293,9 +299,25 @@ const API={
     if(body)opts.body=JSON.stringify(body);
     try{
       const r=await fetch(url,opts);
-      if(r.status===401){this.setToken(null);window.location.reload();return null}
-      return await r.json();
-    }catch(e){console.error('API error',e);return null}
+
+      if(r.status===401){
+        this.setToken(null);
+        return {error:'Unauthorized',unauthorized:true};
+      }
+
+      const text=await r.text();
+      if(!text)return null;
+
+      try{
+        return JSON.parse(text);
+      }catch(e){
+        console.error('Bad JSON response',url,text);
+        return {error:'Bad JSON response'};
+      }
+    }catch(e){
+      console.error('API error',e);
+      return {error:'Network error'};
+    }
   },
   get(url){return this.req('GET',url)},
   post(url,body){return this.req('POST',url,body)},
@@ -303,6 +325,7 @@ const API={
 
 // ──────────────────────────────────────────────
 // DEMO DATA ENGINE (fallback)
+// ────────────────────────────
 // ──────────────────────────────────────────────
 const TRACKS=['Sandown','Meadows','Cannington','Angle Park','Ballarat','Bendigo','Horsham','Mandurah'];
 const HORSE_NAMES=['Dark Phoenix','Thunderstrike','Night Raider','Blaze Runner','Iron Will','Storm Chaser','Shadow Bolt','Neon Flash','Crimson Edge','Steel Fury','Ghost Wind','Red Baron'];
