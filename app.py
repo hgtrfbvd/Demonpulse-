@@ -150,69 +150,116 @@ def api_env_switch():
 # ─────────────────────────────────────────────────────────────────
 @app.route("/api/auth/login", methods=["POST"])
 def api_login():
-    from auth import get_user_by_username, check_password, generate_token, check_rate_limit, reset_rate_limit
+    from auth import (
+        get_user_by_username,
+        check_password,
+        generate_token,
+        check_rate_limit,
+        reset_rate_limit,
+    )
     from audit import log_login
+
     ip = request.remote_addr or "unknown"
+
     if not check_rate_limit(ip):
         return jsonify({"error": "Too many attempts. Wait 5 minutes."}), 429
+
     d = request.json or {}
     username = (d.get("username") or "").strip().lower()
     password = d.get("password") or ""
+
     if not username or not password:
         return jsonify({"error": "Username and password required"}), 400
-    user = get_user_by_username(username)
-    if not user or not check_password(password, user.get("password_hash", "")):
+
+    try:
+        user = get_user_by_username(username)
+    except Exception as e:
+        log.error(f"Login user lookup failed for {username}: {e}")
+        return jsonify({"error": "Authentication system unavailable"}), 500
+
+    if not user:
         log_login(None, username, ip=ip, success=False)
         return jsonify({"error": "Invalid credentials"}), 401
+
+    if not check_password(password, user.get("password_hash", "")):
+        log_login(None, username, ip=ip, success=False)
+        return jsonify({"error": "Invalid credentials"}), 401
+
     if not user.get("active", True):
         return jsonify({"error": "Account disabled"}), 403
-    token, jti = generate_token(user["id"], user["username"], user["role"])
+
+    try:
+        token, jti = generate_token(user["id"], user["username"], user["role"])
+    except Exception as e:
+        log.error(f"Token generation failed for {username}: {e}")
+        return jsonify({"error": "Authentication system unavailable"}), 500
+
     reset_rate_limit(ip)
     log_login(user["id"], user["username"], ip=ip, success=True)
-    ttl = int(os.environ.get("SESSION_TIMEOUT_MIN","480"))*60
+
+    ttl = int(os.environ.get("SESSION_TIMEOUT_MIN", "480")) * 60
+
     try:
         from users import register_session, _record_activity
-        register_session(user["id"], jti, ip, request.headers.get("User-Agent",""), ttl)
+        register_session(user["id"], jti, ip, request.headers.get("User-Agent", ""), ttl)
         _record_activity(user["id"], "LOGIN", {"ip": ip})
     except Exception as e:
         log.warning(f"Session register failed: {e}")
+
     try:
-        from db import get_db, safe_query, T
-        # W-03: update last_login/last_ip separately from login_count to reduce
-        # window for the read-modify-write race condition. A proper atomic
-        # increment requires migration 005 (increment_login_count RPC); until
-        # that function is deployed this is the safest pattern with the
-        # standard Supabase REST client.
-        safe_query(lambda: get_db().table(T("users")).update({
+        from db import get_db, T
+
+        get_db().table(T("users")).update({
             "last_login": datetime.utcnow().isoformat(),
             "last_ip": ip,
-        }).eq("id", user["id"]).execute())
-        # Attempt atomic RPC increment; silently skip if function not yet deployed
+        }).eq("id", user["id"]).execute()
+
         try:
-            safe_query(lambda: get_db().rpc(
-                "increment_login_count", {"p_user_id": user["id"]}
-            ).execute())
+            get_db().rpc(
+                "increment_login_count",
+                {"p_user_id": user["id"]}
+            ).execute()
         except Exception:
-            # Fallback to read-modify-write until migration 005 is applied
-            cur = safe_query(lambda: get_db().table(T("users")).select("login_count")
-                             .eq("id", user["id"]).single().execute().data) or {}
-            safe_query(lambda: get_db().table(T("users")).update({
-                "login_count": (cur.get("login_count") or 0) + 1
-            }).eq("id", user["id"]).execute())
-    except Exception:
-        pass
-    resp = jsonify({"ok":True,"token":token,"user":{"id":user["id"],"username":user["username"],"role":user["role"]},"env":env.mode})
-    resp.set_cookie("dp_token", token, httponly=True, samesite="Lax", max_age=ttl)
+            rows = (
+                get_db().table(T("users")).select("login_count")
+                .eq("id", user["id"]).limit(1).execute().data
+                or []
+            )
+            current_login_count = (rows[0].get("login_count") or 0) if rows else 0
+            get_db().table(T("users")).update({
+                "login_count": current_login_count + 1
+            }).eq("id", user["id"]).execute()
+    except Exception as e:
+        log.warning(f"Post-login user update failed for {username}: {e}")
+
+    resp = jsonify({
+        "ok": True,
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+        },
+        "env": env.mode,
+    })
+    resp.set_cookie(
+        "dp_token",
+        token,
+        httponly=True,
+        samesite="Lax",
+        max_age=ttl,
+    )
     return resp
+
 
 @app.route("/api/auth/logout", methods=["POST"])
 def api_logout():
     from auth import get_current_user
     from audit import log_logout
+
     user = get_current_user()
     if user:
         log_logout(user.get("sub"), user.get("username"))
-        # Item 6b: LOGOUT in user_activity
         try:
             from users import _record_activity
             _record_activity(user["sub"], "LOGOUT", {
@@ -220,20 +267,30 @@ def api_logout():
             })
         except Exception:
             pass
+
     resp = jsonify({"ok": True})
     resp.delete_cookie("dp_token")
     return resp
 
+
 @app.route("/api/auth/me")
 def api_me():
     from auth import get_current_user, ROLE_PERMISSIONS
-    user = get_current_user()
+
+    try:
+        user = get_current_user()
+    except Exception as e:
+        log.error(f"/api/auth/me failed: {e}")
+        return jsonify({"error": "Authentication system unavailable"}), 500
+
     if not user:
         return jsonify({"error": "Not authenticated"}), 401
+
     return jsonify({
-        "id": user.get("sub"), "username": user.get("username"),
+        "id": user.get("sub"),
+        "username": user.get("username"),
         "role": user.get("role"),
-        "permissions": list(ROLE_PERMISSIONS.get(user.get("role","viewer"), set())),
+        "permissions": list(ROLE_PERMISSIONS.get(user.get("role", "viewer"), set())),
         "env": env.mode,
     })
 
