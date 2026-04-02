@@ -233,50 +233,57 @@ def detect_state(track):
 # ----------------------------------------------------------------
 # FETCH MEETINGS
 # ----------------------------------------------------------------
-def fetch_meetings():
-    log.info("Fetching racecards...")
-    html = fetch_page(
-        "https://www.thedogs.com.au/racing/racecards",
-        use_playwright=True,
-        wait_ms=3000,
-    )
-    soup = parse_html(html)
-    if not soup:
-        log.error("Racecards failed")
-        return []
-
-    meetings = []
-    seen = set()
+def fetch_meeting_races(meeting):
+    track = meeting["track"]
+    state = meeting["state"]
     today = date.today().isoformat()
 
-    for item in soup.find_all("a"):
-    href = item.get("href", "")
-    if not href or "/racing/" not in href:
-        continue
+    html = fetch_page(meeting["url"], use_playwright=True, wait_ms=2500)
+    soup = parse_html(html)
+    if not soup:
+        return []
+
+    races = []
+    seen = set()
+
+    for link in soup.find_all("a"):
+        href = link.get("href", "")
+        if not href or "/racing/" not in href:
+            continue
+
         parts = [p for p in href.strip("/").split("/") if p]
-        if len(parts) < 3 or parts[0] != "racing":
+        if len(parts) < 4 or parts[0] != "racing" or parts[1] != track:
+            continue
+        if not parts[3].isdigit():
             continue
 
-        track = parts[1]
-        mdate = parts[2]
-
-        if mdate != today or track in seen:
+        race_num = int(parts[3])
+        if race_num in seen:
             continue
+        seen.add(race_num)
 
-        seen.add(track)
-        state = detect_state(track)
-        meetings.append(
+        race_name = parts[4] if len(parts) > 4 else ""
+        cell_text = link.get_text(strip=True)
+        has_result = any(c.isdigit() for c in cell_text) and len(cell_text) < 10
+        race_uid = make_race_uid(today, "GREYHOUND", track, race_num)
+
+        races.append(
             {
+                "race_uid": race_uid,
                 "track": track,
-                "date": mdate,
                 "state": state,
-                "url": f"https://www.thedogs.com.au/racing/{track}/{mdate}?trial=false",
+                "date": today,
+                "race_num": race_num,
+                "race_name": race_name,
+                "code": "GREYHOUND",
+                "status": "completed" if has_result else "upcoming",
+                "expert_form_url": f"https://www.thedogs.com.au/racing/{track}/{today}/{race_num}/{race_name}/expert-form",
+                "url": f"https://www.thedogs.com.au/racing/{track}/{today}/{race_num}/{race_name}?trial=false",
             }
         )
 
-    log.info(f"Found {len(meetings)} meetings")
-    return meetings
-
+    races.sort(key=lambda x: x["race_num"])
+    return races
 
 # ----------------------------------------------------------------
 # FETCH SCRATCHINGS
