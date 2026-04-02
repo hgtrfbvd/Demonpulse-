@@ -6,38 +6,52 @@ ENV ENFORCEMENT:
   DP_ENV=LIVE  → fake data blocked, deletions blocked, /api/test/* blocked
   DP_ENV=TEST  → all test routes active, fake data allowed, separate tables
 """
+
 import os
 import time
 import logging
 from datetime import date, datetime
-from flask import Flask, request, jsonify, send_from_directory, g
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [V8] %(message)s")
-log = logging.getLogger(__name__)
+from flask import Flask, request, jsonify, send_from_directory, g
 
 # ── ENV must be imported first — it configures everything ──────────
 from env import env, EnvViolation, env_violation_response
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [V8] %(message)s")
+log = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("FLASK_SECRET", "dpv8-flask-secret-change-me")
 
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
-CLAUDE_SONNET  = "claude-sonnet-4-20250514"
-CLAUDE_HAIKU   = "claude-haiku-4-5-20251001"
+CLAUDE_SONNET = "claude-sonnet-4-20250514"
+CLAUDE_HAIKU = "claude-haiku-4-5-20251001"
 
 try:
     from system_prompt import V7_SYSTEM
 except ImportError:
-    V7_SYSTEM = "You are DEMONPULSE V8. Interpret the pre-scored race packet and give final BET/SESSION/PASS decision."
+    V7_SYSTEM = (
+        "You are DEMONPULSE V8. Interpret the pre-scored race packet "
+        "and give final BET/SESSION/PASS decision."
+    )
+
 
 # ─────────────────────────────────────────────────────────────────
 # STARTUP
 # ─────────────────────────────────────────────────────────────────
+_started = False
+
+
 def startup():
+    global _started
+
+    if _started:
+        log.info("Startup already completed")
+        return
+
     try:
         from scheduler import start_scheduler
         start_scheduler()
-        log.info("Scheduler started")
     except Exception as e:
         log.error(f"Scheduler failed: {e}")
 
@@ -50,13 +64,17 @@ def startup():
     try:
         from audit import log_event
         log_event(None, "system", "STARTUP", "app", {"version": "V8", "mode": env.mode})
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"Startup audit log failed: {e}")
+
+    _started = True
+    log.info(f"Startup complete in {env.mode} mode")
 
     # env.lock()  # uncomment if you want to hard-lock mode after startup
 
 
 startup()
+
 
 # ─────────────────────────────────────────────────────────────────
 # GLOBAL ENV VIOLATION HANDLER
@@ -69,31 +87,84 @@ def handle_env_violation(exc):
 # ─────────────────────────────────────────────────────────────────
 # HELPERS (V7 kept)
 # ─────────────────────────────────────────────────────────────────
-FLASK_ONLY_COMMANDS = {"status","settings","alerts","board","help","bets","log","source health"}
+FLASK_ONLY_COMMANDS = {
+    "status",
+    "settings",
+    "alerts",
+    "board",
+    "help",
+    "bets",
+    "log",
+    "source",
+}
 
-def is_flask_cmd(msg): return msg.strip().lower().split()[0] in FLASK_ONLY_COMMANDS if msg.strip() else False
-def needs_analysis(msg): return any(k in msg.lower() for k in ["analyse","analyze","ultra","next race","refresh","next 3","picks today"])
-def get_model(msg):      return CLAUDE_SONNET if needs_analysis(msg) else CLAUDE_HAIKU
+
+def is_flask_cmd(msg):
+    if not msg or not msg.strip():
+        return False
+    first = msg.strip().lower().split()[0]
+    return first in FLASK_ONLY_COMMANDS
+
+
+def needs_analysis(msg):
+    lower = (msg or "").lower()
+    return any(
+        k in lower
+        for k in ["analyse", "analyze", "ultra", "next race", "refresh", "next 3", "picks today"]
+    )
+
+
+def get_model(msg):
+    return CLAUDE_SONNET if needs_analysis(msg) else CLAUDE_HAIKU
+
+
 def get_max_tokens(msg):
-    l = msg.lower()
-    if any(k in l for k in ["analyse","analyze","ultra"]): return 1000
-    if any(k in l for k in ["next race","refresh","next 3","picks today"]): return 700
+    lower = (msg or "").lower()
+    if any(k in lower for k in ["analyse", "analyze", "ultra"]):
+        return 1000
+    if any(k in lower for k in ["next race", "refresh", "next 3", "picks today"]):
+        return 700
     return 350
 
+
 def call_claude(messages, model=None, max_tokens=700):
-    if not CLAUDE_API_KEY: return "CLAUDE_API_KEY not configured."
+    if not CLAUDE_API_KEY:
+        return "CLAUDE_API_KEY not configured."
+
     import requests as req
+
     try:
-        r = req.post(
+        response = req.post(
             "https://api.anthropic.com/v1/messages",
-            headers={"Content-Type":"application/json","x-api-key":CLAUDE_API_KEY,"anthropic-version":"2023-06-01"},
-            json={"model":model or CLAUDE_SONNET,"max_tokens":max_tokens,"system":V7_SYSTEM,"messages":messages},
-            timeout=45)
-        d = r.json()
-        if "error" in d: return f"API Error: {d['error'].get('message','Unknown')}"
-        return "".join(b["text"] for b in d.get("content",[]) if b.get("type")=="text")
-    except req.Timeout: return "Request timed out."
-    except Exception as e: return f"Error: {e}"
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": CLAUDE_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": model or CLAUDE_SONNET,
+                "max_tokens": max_tokens,
+                "system": V7_SYSTEM,
+                "messages": messages,
+            },
+            timeout=45,
+        )
+
+        data = response.json()
+
+        if "error" in data:
+            return f"API Error: {data['error'].get('message', 'Unknown')}"
+
+        return "".join(
+            block["text"]
+            for block in data.get("content", [])
+            if block.get("type") == "text"
+        )
+
+    except req.Timeout:
+        return "Request timed out."
+    except Exception as e:
+        return f"Error: {e}"
 
 
 # ─────────────────────────────────────────────────────────────────
