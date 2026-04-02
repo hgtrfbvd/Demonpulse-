@@ -35,9 +35,12 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────
 def startup():
     try:
-        from scheduler import start_scheduler
-        start_scheduler()
-        log.info("Scheduler started")
+        import threading
+        from scheduler import run_scheduler
+
+        threading.Thread(target=run_scheduler, daemon=True).start()
+
+        log.info("Scheduler started (threaded)")
     except Exception as e:
         log.error(f"Scheduler failed: {e}")
 
