@@ -3,12 +3,32 @@ data_engine.py - Data fetch, parse, normalise, store
 Responsibilities: fetch only. No scoring logic here.
 Feature coverage: A1-A4, B5-B8, G33-G37, I44-I48
 """
+
+import re
 import time
 import logging
 import hashlib
 from datetime import date, datetime
+from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
+
+
+# ----------------------------------------------------------------
+# CONFIG
+# ----------------------------------------------------------------
+BASE_URL = "https://www.thedogs.com.au"
+RACECARDS_URL = f"{BASE_URL}/racing/racecards"
+SCRATCHINGS_URL = f"{BASE_URL}/racing/scratchings"
+
+PLAYWRIGHT_TIMEOUT_MS = 60000
+PLAYWRIGHT_WAIT_MS = 2500
+STATIC_TIMEOUT_SECONDS = 20
+RATE_LIMIT_PER_MINUTE = 30
+
+RACE_PATH_RE = re.compile(
+    r"^/racing/([^/]+)/(\d{4}-\d{2}-\d{2})(?:/(\d+)(?:/([^/?#]+))?)?"
+)
 
 # State offsets to AEST Brisbane (UTC+10)
 STATE_OFFSETS = {
@@ -33,22 +53,107 @@ LIFECYCLE = [
     "learned",
 ]
 
+
 # ----------------------------------------------------------------
 # CANONICAL RACE UID (feature 2)
-# Format: date_code_track_racenum  e.g. 2026-04-01_GREYHOUND_horsham_9
 # ----------------------------------------------------------------
 def make_race_uid(race_date, code, track, race_num):
     return f"{race_date}_{code}_{track}_{race_num}"
 
 
 # ----------------------------------------------------------------
+# SOURCE HEALTH (feature 8)
+# ----------------------------------------------------------------
+_source_health = {}
+
+
+def mark_source_healthy(source):
+    prev = _source_health.get(source, {})
+    _source_health[source] = {
+        "status": "HEALTHY",
+        "consecutive_fails": 0,
+        "last_ok": time.time(),
+        "last_fail": prev.get("last_fail"),
+    }
+
+
+def mark_source_failed(source):
+    prev = _source_health.get(source, {})
+    fails = int(prev.get("consecutive_fails", 0)) + 1
+    _source_health[source] = {
+        "status": "DEGRADED" if fails >= 3 else "WARNING",
+        "consecutive_fails": fails,
+        "last_ok": prev.get("last_ok"),
+        "last_fail": time.time(),
+    }
+
+
+def get_source_health():
+    return dict(_source_health)
+
+
+# ----------------------------------------------------------------
+# LOGGING HELPERS
+# ----------------------------------------------------------------
+def log_source_call(
+    url,
+    method,
+    status,
+    rows=0,
+    grv=False,
+    source=None,
+    response_code=None,
+    error_message=None,
+    duration_ms=None,
+):
+    try:
+        from db import get_db, T
+
+        db = get_db()
+        db.table(T("source_log")).insert(
+            {
+                "date": date.today().isoformat(),
+                "source": source,
+                "url": url,
+                "method": method,
+                "status": status,
+                "response_code": response_code,
+                "grv_detected": grv,
+                "rows_returned": rows,
+                "error_message": error_message,
+                "duration_ms": duration_ms,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+        ).execute()
+    except Exception:
+        pass
+
+
+def _domain_from_url(url):
+    try:
+        return urlparse(url).netloc or url
+    except Exception:
+        return url
+
+
+def _absolute_url(href):
+    if not href:
+        return ""
+    if href.startswith("http://") or href.startswith("https://"):
+        return href
+    if href.startswith("/"):
+        return f"{BASE_URL}{href}"
+    return f"{BASE_URL}/{href.lstrip('/')}"
+
+
+# ----------------------------------------------------------------
 # FETCH - with rate limiting and fallback
 # ----------------------------------------------------------------
-def fetch_page(url, use_playwright=False, wait_ms=2000):
+def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
     from cache import check_rate_limit
 
-    domain = url.split("/")[2] if "/" in url else url
-    if not check_rate_limit(domain, max_per_minute=30):
+    domain = _domain_from_url(url)
+    if not check_rate_limit(domain, max_per_minute=RATE_LIMIT_PER_MINUTE):
         log.warning(f"Rate limited on {domain}, skipping {url}")
         log_source_call(url, "rate_limit", "SKIPPED", source=domain)
         return ""
@@ -80,10 +185,17 @@ def fetch_page(url, use_playwright=False, wait_ms=2000):
             response_code=200,
             duration_ms=duration_ms,
         )
+        mark_source_healthy(domain)
+    else:
+        mark_source_failed(domain)
+
     return result
 
 
-def _fetch_playwright(url, wait_ms=2000):
+def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
+    domain = _domain_from_url(url)
+    start = time.time()
+
     try:
         from playwright.sync_api import sync_playwright
 
@@ -92,40 +204,50 @@ def _fetch_playwright(url, wait_ms=2000):
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             )
-
             page = browser.new_page(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 viewport={"width": 1280, "height": 800},
             )
 
-            page.goto(url, timeout=60000, wait_until="networkidle")
+            response = page.goto(url, timeout=PLAYWRIGHT_TIMEOUT_MS, wait_until="domcontentloaded")
             page.wait_for_timeout(wait_ms)
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
 
             content = page.content()
-
-            print("=== HTML LENGTH ===", len(content))
-            print(content[:2000])
-
             browser.close()
+
+            if content:
+                mark_source_healthy(domain)
+            else:
+                mark_source_failed(domain)
+
             return content
 
     except ImportError:
         log.warning("Playwright not available")
         return ""
-
     except Exception as e:
+        duration_ms = int((time.time() - start) * 1000)
         log.error(f"Playwright failed for {url}: {e}")
         log_source_call(
             url,
             "playwright",
             "FAILED",
-            source=(url.split("/")[2] if "/" in url else None),
+            source=domain,
             error_message=str(e),
+            duration_ms=duration_ms,
         )
+        mark_source_failed(domain)
         return ""
 
 
 def _fetch_static(url):
+    domain = _domain_from_url(url)
+    start = time.time()
+
     try:
         import requests
 
@@ -135,19 +257,24 @@ def _fetch_static(url):
             "Accept-Language": "en-AU,en;q=0.9",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
+            "Referer": BASE_URL,
         }
-        r = requests.get(url, headers=headers, timeout=20)
+        r = requests.get(url, headers=headers, timeout=STATIC_TIMEOUT_SECONDS)
         r.raise_for_status()
+        mark_source_healthy(domain)
         return r.text
     except Exception as e:
+        duration_ms = int((time.time() - start) * 1000)
         log.error(f"Static fetch failed for {url}: {e}")
         log_source_call(
             url,
             "requests",
             "FAILED",
-            source=(url.split("/")[2] if "/" in url else None),
+            source=domain,
             error_message=str(e),
+            duration_ms=duration_ms,
         )
+        mark_source_failed(domain)
         return ""
 
 
@@ -233,47 +360,96 @@ def detect_state(track):
 
 
 # ----------------------------------------------------------------
+# EXTRACTION HELPERS
+# ----------------------------------------------------------------
+def _extract_racing_links(soup):
+    links = []
+    if not soup:
+        return links
+
+    for tag in soup.find_all("a", href=True):
+        href = (tag.get("href") or "").strip()
+        text = tag.get_text(" ", strip=True)
+        if "/racing/" not in href:
+            continue
+        links.append(
+            {
+                "href": href,
+                "abs_url": _absolute_url(href),
+                "text": text,
+            }
+        )
+    return links
+
+
+def _parse_racing_path(href):
+    if not href:
+        return None
+
+    parsed = urlparse(href)
+    path = parsed.path or href
+    m = RACE_PATH_RE.match(path)
+    if not m:
+        return None
+
+    track = m.group(1)
+    race_date = m.group(2)
+    race_num = m.group(3)
+    race_name = m.group(4)
+
+    return {
+        "track": track,
+        "date": race_date,
+        "race_num": int(race_num) if race_num and race_num.isdigit() else None,
+        "race_name": race_name or "",
+    }
+
+
+def _looks_like_completed_link(text):
+    clean = (text or "").strip()
+    if not clean:
+        return False
+    if clean in {"1", "2", "3", "1st", "2nd", "3rd"}:
+        return True
+    return False
+
+
+# ----------------------------------------------------------------
 # FETCH MEETINGS
 # ----------------------------------------------------------------
 def fetch_meetings():
     log.info("Fetching racecards...")
-    html = fetch_page(
-        "https://www.thedogs.com.au/racing/racecards",
-        use_playwright=True,
-        wait_ms=3000,
-    )
+    html = fetch_page(RACECARDS_URL, use_playwright=True, wait_ms=3000)
     soup = parse_html(html)
     if not soup:
         log.error("Racecards failed")
         return []
 
+    today = date.today().isoformat()
+    links = _extract_racing_links(soup)
     meetings = []
     seen = set()
-    today = date.today().isoformat()
 
-    for item in soup.find_all("a"):
-        href = item.get("href", "")
-        if not href or "/racing/" not in href:
+    log.info(f"Racecards link scan found {len(links)} /racing/ links")
+
+    for item in links:
+        parsed = _parse_racing_path(item["href"])
+        if not parsed:
             continue
 
-        parts = [p for p in href.strip("/").split("/") if p]
-        if len(parts) < 3 or parts[0] != "racing":
-            continue
-
-        track = parts[1]
-        mdate = parts[2]
+        track = parsed["track"]
+        mdate = parsed["date"]
 
         if mdate != today or track in seen:
             continue
 
         seen.add(track)
-        state = detect_state(track)
         meetings.append(
             {
                 "track": track,
                 "date": mdate,
-                "state": state,
-                "url": f"https://www.thedogs.com.au/racing/{track}/{mdate}?trial=false",
+                "state": detect_state(track),
+                "url": f"{BASE_URL}/racing/{track}/{mdate}?trial=false",
             }
         )
 
@@ -286,11 +462,7 @@ def fetch_meetings():
 # ----------------------------------------------------------------
 def fetch_scratchings():
     log.info("Fetching scratchings...")
-    html = fetch_page(
-        "https://www.thedogs.com.au/racing/scratchings",
-        use_playwright=True,
-        wait_ms=3000,
-    )
+    html = fetch_page(SCRATCHINGS_URL, use_playwright=True, wait_ms=3000)
     soup = parse_html(html)
     if not soup:
         return {}
@@ -337,28 +509,27 @@ def fetch_meeting_races(meeting):
     if not soup:
         return []
 
+    links = _extract_racing_links(soup)
     races = []
     seen = set()
 
-    for link in soup.find_all("a"):
-        href = link.get("href", "")
-        if not href or "/racing/" not in href:
+    log.info(f"{track}: meeting page scan found {len(links)} /racing/ links")
+
+    for item in links:
+        parsed = _parse_racing_path(item["href"])
+        if not parsed:
+            continue
+        if parsed["track"] != track or parsed["date"] != today:
+            continue
+        if parsed["race_num"] is None:
             continue
 
-        parts = [p for p in href.strip("/").split("/") if p]
-        if len(parts) < 4 or parts[0] != "racing" or parts[1] != track:
-            continue
-        if not parts[3].isdigit():
-            continue
-
-        race_num = int(parts[3])
+        race_num = parsed["race_num"]
         if race_num in seen:
             continue
         seen.add(race_num)
 
-        race_name = parts[4] if len(parts) > 4 else ""
-        cell_text = link.get_text(strip=True)
-        has_result = any(c.isdigit() for c in cell_text) and len(cell_text) < 10
+        race_name = parsed["race_name"]
         race_uid = make_race_uid(today, "GREYHOUND", track, race_num)
 
         races.append(
@@ -370,13 +541,14 @@ def fetch_meeting_races(meeting):
                 "race_num": race_num,
                 "race_name": race_name,
                 "code": "GREYHOUND",
-                "status": "completed" if has_result else "upcoming",
-                "expert_form_url": f"https://www.thedogs.com.au/racing/{track}/{today}/{race_num}/{race_name}/expert-form",
-                "url": f"https://www.thedogs.com.au/racing/{track}/{today}/{race_num}/{race_name}?trial=false",
+                "status": "completed" if _looks_like_completed_link(item["text"]) else "upcoming",
+                "expert_form_url": f"{BASE_URL}/racing/{track}/{today}/{race_num}/{race_name}/expert-form",
+                "url": f"{BASE_URL}/racing/{track}/{today}/{race_num}/{race_name}?trial=false",
             }
         )
 
     races.sort(key=lambda x: x["race_num"])
+    log.info(f"{track}: extracted {len(races)} races")
     return races
 
 
@@ -390,24 +562,28 @@ def fetch_expert_form(race, scratchings):
         return None, []
 
     jump_time = None
-    for tag in soup.find_all(["span", "div", "p", "td"]):
-        text = tag.get_text(strip=True)
-        if len(text) <= 8 and ":" in text:
-            parts = text.split(":")
-            if len(parts) == 2 and parts[0].isdigit() and parts[1][:2].isdigit():
-                jump_time = to_aest(text[:5], race["state"])
-                break
-
     grade = ""
     distance = ""
+
+    page_text = soup.get_text(" ", strip=True)
+
+    m = re.search(r"\b(\d{1,2}:\d{2})\b", page_text)
+    if m:
+        jump_time = to_aest(m.group(1), race["state"])
+
     for tag in soup.select("h1, h2, h3, .race-title, .race-info"):
-        text = tag.get_text(strip=True)
-        if "grade" in text.lower():
+        text = tag.get_text(" ", strip=True)
+        if not grade and "grade" in text.lower():
             grade = text[:60]
-        for word in text.split():
-            if word.endswith("m") and word[:-1].isdigit():
-                distance = word
-                break
+        if not distance:
+            dm = re.search(r"\b(\d{3,4}m)\b", text.lower())
+            if dm:
+                distance = dm.group(1)
+
+    if not distance:
+        dm = re.search(r"\b(\d{3,4}m)\b", page_text.lower())
+        if dm:
+            distance = dm.group(1)
 
     scratched_boxes = scratchings.get(race["race_uid"], [])
     runners_raw = []
@@ -695,7 +871,6 @@ def upsert_runners(race_id, race_uid, runners):
 
 
 def update_lifecycle(race_uid, state):
-    """Update race lifecycle state (feature 36)."""
     if state not in LIFECYCLE:
         return
 
@@ -735,7 +910,6 @@ def save_result(result):
 
 
 def auto_settle_bets(result):
-    """Auto-settle pending bets when result arrives."""
     if not result or not result.get("winner"):
         return
 
@@ -775,71 +949,6 @@ def auto_settle_bets(result):
             log.info(f"Auto-settled: {bet.get('runner')} {res} PL={pl}")
     except Exception as e:
         log.error(f"Auto-settle failed: {e}")
-
-
-def log_source_call(
-    url,
-    method,
-    status,
-    rows=0,
-    grv=False,
-    source=None,
-    response_code=None,
-    error_message=None,
-    duration_ms=None,
-):
-    try:
-        from db import get_db, T
-
-        db = get_db()
-        db.table(T("source_log")).insert(
-            {
-                "date": date.today().isoformat(),
-                "source": source,
-                "url": url,
-                "method": method,
-                "status": status,
-                "response_code": response_code,
-                "grv_detected": grv,
-                "rows_returned": rows,
-                "error_message": error_message,
-                "duration_ms": duration_ms,
-                "created_at": datetime.utcnow().isoformat(),
-            }
-        ).execute()
-    except Exception:
-        pass
-
-
-# ----------------------------------------------------------------
-# SOURCE HEALTH (feature 8)
-# ----------------------------------------------------------------
-_source_health = {}
-
-
-def mark_source_healthy(source):
-    prev = _source_health.get(source, {})
-    _source_health[source] = {
-        "status": "HEALTHY",
-        "consecutive_fails": 0,
-        "last_ok": time.time(),
-        "last_fail": prev.get("last_fail"),
-    }
-
-
-def mark_source_failed(source):
-    prev = _source_health.get(source, {})
-    fails = int(prev.get("consecutive_fails", 0)) + 1
-    _source_health[source] = {
-        "status": "DEGRADED" if fails >= 3 else "WARNING",
-        "consecutive_fails": fails,
-        "last_ok": prev.get("last_ok"),
-        "last_fail": time.time(),
-    }
-
-
-def get_source_health():
-    return dict(_source_health)
 
 
 # ----------------------------------------------------------------
@@ -890,7 +999,6 @@ def full_sweep():
                     upsert_race(race)
 
                 total_races += 1
-                mark_source_healthy("thedogs.com.au")
                 time.sleep(0.4)
             except Exception as e:
                 log.error(f"Race processing failed {race.get('race_uid')}: {e}")
@@ -939,11 +1047,11 @@ def rolling_refresh():
                 "race_name": race.get("race_name", ""),
                 "url": race.get(
                     "source_url",
-                    f"https://www.thedogs.com.au/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/?trial=false",
+                    f"{BASE_URL}/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/?trial=false",
                 ),
                 "expert_form_url": race.get(
                     "expert_form_url",
-                    f"https://www.thedogs.com.au/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/expert-form",
+                    f"{BASE_URL}/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/expert-form",
                 ),
             }
 
