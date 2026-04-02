@@ -1,7 +1,27 @@
+# CORE WEB
 flask==3.0.3
 gunicorn==22.0.0
+
+# HTTP / API
 requests==2.32.3
-supabase==2.3.4
 httpx==0.27.2
+
+# SUPABASE (LOCKED)
+supabase==2.3.4
+
+# ENV / UTILS
+python-dotenv==1.0.1
+
+# HTML PARSING (fallback scraper)
 beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# SCHEDULING (your rolling refresh loop)
+schedule==1.2.1
+
+# PLAYWRIGHT (JS rendering fix)
 playwright==1.44.0
+
+# DATA (safe version for Render Python 3.13)
+pandas==2.2.2
+numpy==1.26.4
