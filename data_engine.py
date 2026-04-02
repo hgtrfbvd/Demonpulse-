@@ -99,6 +99,10 @@ def _fetch_playwright(url, wait_ms=2000):
             page.wait_for_selector("a[href*='/racing/']", timeout=10000)
 
             content = page.content()
+
+            print("=== HTML LENGTH ===", len(content))
+            print(content[:2000])
+
             browser.close()
             return content
 
