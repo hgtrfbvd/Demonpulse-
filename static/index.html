@@ -101,20 +101,27 @@ const {useState,useEffect}=React;
 /* API */
 const API={
   async request(url,options={}){
+    const r=await fetch(url,{
+      credentials:'same-origin',
+      headers:{
+        'Content-Type':'application/json',
+        ...(options.headers||{})
+      },
+      ...options
+    });
+
+    let data=null;
     try{
-      const r=await fetch(url,{
-        credentials:'same-origin',
-        headers:{
-          'Content-Type':'application/json',
-          ...(options.headers||{})
-        },
-        ...options
-      });
-      const data=await r.json().catch(()=>null);
-      return {ok:r.ok,data};
-    }catch{
-      return {ok:false,data:null};
+      data=await r.json();
+    }catch(e){
+      data={error:'Invalid JSON response'};
     }
+
+    return {
+      ok:r.ok,
+      status:r.status,
+      data
+    };
   },
   get(url){
     return this.request(url);
@@ -131,23 +138,46 @@ const API={
 function Login({onLogin}){
   const [u,setU]=useState('');
   const [p,setP]=useState('');
+  const [loading,setLoading]=useState(false);
 
   async function login(){
-    const res=await API.post('/api/auth/login',{username:u,password:p});
+    if(loading) return;
+    setLoading(true);
 
-    if(res.ok && res.data?.user){
-      onLogin(res.data.user);
-    }else{
-      alert(res.data?.error||'Login failed');
+    try{
+      const res=await API.post('/api/auth/login',{username:u,password:p});
+
+      if(res.ok && res.data?.user){
+        onLogin(res.data.user);
+      }else{
+        alert(res.data?.error || `Login failed (${res.status})`);
+      }
+
+    }catch(e){
+      alert(e.message || 'Login request crashed');
     }
+
+    setLoading(false);
   }
 
   return React.createElement(
     'div',
     {className:'login'},
-    React.createElement('input',{placeholder:'Username',value:u,onChange:e=>setU(e.target.value)}),
-    React.createElement('input',{type:'password',placeholder:'Password',value:p,onChange:e=>setP(e.target.value)}),
-    React.createElement('button',{onClick:login},'LOGIN')
+    React.createElement('input',{
+      placeholder:'Username',
+      value:u,
+      onChange:e=>setU(e.target.value)
+    }),
+    React.createElement('input',{
+      type:'password',
+      placeholder:'Password',
+      value:p,
+      onChange:e=>setP(e.target.value)
+    }),
+    React.createElement('button',{
+      onClick:login,
+      disabled:loading
+    }, loading ? '...' : 'LOGIN')
   );
 }
 
