@@ -100,25 +100,30 @@ const {useState,useEffect}=React;
 
 /* API */
 const API={
-  async get(url){
-    try{
-      const r=await fetch(url);
-      return await r.json();
-    }catch{
-      return null;
-    }
-  },
-  async post(url,data){
+  async request(url,options={}){
     try{
       const r=await fetch(url,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(data)
+        credentials:'same-origin',
+        headers:{
+          'Content-Type':'application/json',
+          ...(options.headers||{})
+        },
+        ...options
       });
-      return await r.json();
+      const data=await r.json().catch(()=>null);
+      return {ok:r.ok,data};
     }catch{
-      return null;
+      return {ok:false,data:null};
     }
+  },
+  get(url){
+    return this.request(url);
+  },
+  post(url,data){
+    return this.request(url,{
+      method:'POST',
+      body:JSON.stringify(data||{})
+    });
   }
 };
 
@@ -129,92 +134,75 @@ function Login({onLogin}){
 
   async function login(){
     const res=await API.post('/api/auth/login',{username:u,password:p});
-    if(res?.ok) onLogin(res.user);
-    else alert('Login failed');
+
+    if(res.ok && res.data?.user){
+      onLogin(res.data.user);
+    }else{
+      alert(res.data?.error||'Login failed');
+    }
   }
 
-  return React.createElement('div',{className:'login'},
-    React.createElement('img',{src:'/static/IMG_1375.jpeg'}),
-    React.createElement('input',{className:'input',placeholder:'Username',onChange:e=>setU(e.target.value)}),
-    React.createElement('input',{className:'input',type:'password',placeholder:'Password',onChange:e=>setP(e.target.value)}),
-    React.createElement('button',{className:'btn',onClick:login},'LOGIN')
+  return React.createElement(
+    'div',
+    {className:'login'},
+    React.createElement('input',{placeholder:'Username',value:u,onChange:e=>setU(e.target.value)}),
+    React.createElement('input',{type:'password',placeholder:'Password',value:p,onChange:e=>setP(e.target.value)}),
+    React.createElement('button',{onClick:login},'LOGIN')
   );
 }
 
-/* PAGES */
+/* DASHBOARD */
 function Dashboard(){
   const [races,setRaces]=useState([]);
 
   useEffect(()=>{
-    API.get('/api/races/upcoming').then(d=>{
-      if(d) setRaces(d);
+    API.get('/api/races/upcoming').then(res=>{
+      if(res.ok && Array.isArray(res.data)){
+        setRaces(res.data);
+      }
     });
   },[]);
 
-  return React.createElement('div',null,
+  return React.createElement(
+    'div',
+    null,
     React.createElement('h2',null,'Upcoming Races'),
-    races.length===0 ?
-      React.createElement('div',null,'No data') :
-      races.map(r=>
-        React.createElement('div',{className:'card',key:r.race_uid},
-          r.track+' R'+r.race_num+' - '+(r.distance||'')
+    races.length===0
+      ? React.createElement('div',null,'No data')
+      : races.map(r=>
+          React.createElement('div',{key:r.race_uid},
+            `${r.track} R${r.race_num}`
+          )
         )
-      )
   );
-}
-
-function Live(){
-  return React.createElement('div',null,'Live Race (coming)');
-}
-
-function Betting(){
-  return React.createElement('div',null,'Betting Panel');
-}
-
-function Reports(){
-  return React.createElement('div',null,'Reports');
-}
-
-function Settings(){
-  return React.createElement('div',null,'Settings');
 }
 
 /* APP */
 function App(){
   const [user,setUser]=useState(null);
-  const [page,setPage]=useState('home');
+  const [loading,setLoading]=useState(true);
 
-  if(!user) return React.createElement(Login,{onLogin:setUser});
+  useEffect(()=>{
+    API.get('/api/auth/me').then(res=>{
+      if(res.ok && res.data?.id){
+        setUser(res.data);
+      }
+      setLoading(false);
+    });
+  },[]);
 
-  const pages={
-    home:Dashboard,
-    live:Live,
-    betting:Betting,
-    reports:Reports,
-    settings:Settings
-  };
+  if(loading){
+    return React.createElement('div',null,'Loading...');
+  }
 
-  const Page=pages[page];
+  if(!user){
+    return React.createElement(Login,{onLogin:setUser});
+  }
 
-  return React.createElement('div',{className:'app'},
-    React.createElement('div',{className:'sidebar'},
-      React.createElement('div',{className:'logo'},'DEMONPULSE'),
-      React.createElement('div',{className:'nav'},
-        ['home','live','betting','reports','settings'].map(p=>
-          React.createElement('div',{key:p,onClick:()=>setPage(p)},p.toUpperCase())
-        )
-      )
-    ),
-    React.createElement('div',{className:'main'},
-      React.createElement(Page)
-    )
-  );
+  return React.createElement(Dashboard);
 }
 
-/* MOUNT */
 ReactDOM.createRoot(document.getElementById('root')).render(
   React.createElement(App)
 );
 </script>
-</body>
-</html>
