@@ -1624,7 +1624,6 @@ def cache_stats_api():
     except Exception as e:
         return jsonify({"error":str(e)})
 
-
 # ─────────────────────────────────────────────────────────────────
 # TEST-MODE ONLY ROUTES  (/api/test/*)
 # All raise EnvViolation if DP_ENV != TEST
@@ -1635,27 +1634,56 @@ def test_status():
     env.require_test("GET /api/test/status")
     return jsonify({"mode": "TEST", "ok": True, "table_prefix": "test_"})
 
+
 @app.route("/api/test/seed", methods=["POST"])
 def test_seed():
     """Seed fake races into test tables for UI/stress testing."""
     env.require_test("POST /api/test/seed")
+
     from auth import get_current_user
+    from audit import log_event
+    from db import get_db, safe_query, T
+
     user = get_current_user()
     if not user or user.get("role") != "admin":
-        return jsonify({"error":"Forbidden"}), 403
-    from audit import log_event
-    d = request.json or {}
-    count = min(int(d.get("count", 10)), 100)
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.json or {}
+
+    try:
+        count = min(max(int(data.get("count", 10)), 1), 100)
+    except Exception:
+        return jsonify({"error": "Invalid count"}), 400
+
     races = _demo_races(n=count)
-    from db import get_db, safe_query, T
     inserted = 0
-    for r in races:
-        rec = {k:v for k,v in r.items() if k not in ("runners","signal_data","ai_comment")}
+
+    for race in races:
+        rec = {
+            k: v
+            for k, v in race.items()
+            if k not in ("runners", "signal_data", "ai_comment")
+        }
         rec["date"] = date.today().isoformat()
-        result = safe_query(lambda: get_db().table(T("today_races")).upsert(rec, on_conflict="race_uid").execute())
-        if result: inserted += 1
-    log_event(user["sub"], user["username"], "STRESS_TEST_RUN", "test/seed", data={"count":count,"inserted":inserted})
-    return jsonify({"ok":True,"seeded":inserted,"mode":"TEST"})
+
+        result = safe_query(
+            lambda rec=rec: get_db().table(T("today_races"))
+            .upsert(rec, on_conflict="race_uid")
+            .execute()
+        )
+        if result is not None:
+            inserted += 1
+
+    log_event(
+        user["sub"],
+        user["username"],
+        "STRESS_TEST_RUN",
+        "test/seed",
+        data={"count": count, "inserted": inserted},
+    )
+
+    return jsonify({"ok": True, "seeded": inserted, "mode": "TEST"})
+
 
 @app.route("/api/test/purge", methods=["POST"])
 def test_purge():
@@ -1665,62 +1693,137 @@ def test_purge():
     TEST mode: requires admin + explicit confirmation
     """
     env.require_test("POST /api/test/purge")
+
     from auth import get_current_user
     from audit import log_event
+    from db import get_db, safe_query, T
+
     user = get_current_user()
     if not user or user.get("role") != "admin":
-        return jsonify({"error":"Forbidden"}), 403
-    d = request.json or {}
-    if d.get("confirm") != "PURGE ALL TEST DATA":
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.json or {}
+    if data.get("confirm") != "PURGE ALL TEST DATA":
         return jsonify({"error": "Must confirm with 'PURGE ALL TEST DATA'"}), 400
-    from db import get_db, safe_query, T
+
     purged = []
-    tables = ["bet_log","today_races","today_runners","signals","chat_history","sessions","training_logs"]
+    tables = [
+        "bet_log",
+        "today_races",
+        "today_runners",
+        "signals",
+        "chat_history",
+        "sessions",
+        "training_logs",
+        "simulation_log",
+        "results_log",
+        "source_log",
+        "activity_log",
+        "scored_races",
+        "exotic_suggestions",
+    ]
+
     for tbl in tables:
-        result = safe_query(lambda: get_db().table(T(tbl)).delete().neq("id","00000000-0000-0000-0000-000000000000").execute())
-        if result: purged.append(T(tbl))
-    log_event(user["sub"], user["username"], "TEST_PURGE", "test/purge",
-              data={"tables_purged": purged}, severity="WARN")
-    return jsonify({"ok":True,"purged":purged,"mode":"TEST"})
+        result = safe_query(
+            lambda tbl=tbl: get_db().table(T(tbl))
+            .delete()
+            .neq("id", "00000000-0000-0000-0000-000000000000")
+            .execute()
+        )
+        if result is not None:
+            purged.append(T(tbl))
+
+    log_event(
+        user["sub"],
+        user["username"],
+        "TEST_PURGE",
+        "test/purge",
+        data={"tables_purged": purged},
+        severity="WARN",
+    )
+
+    return jsonify({"ok": True, "purged": purged, "mode": "TEST"})
+
 
 @app.route("/api/test/stress", methods=["POST"])
 def test_stress():
     """Run a stress simulation: N fake races × M simulations each."""
     env.require_test("POST /api/test/stress")
-    env.guard_stress_test()  # redundant but explicit
+    env.guard_stress_test()
+
     from auth import get_current_user
     from audit import log_event
+
     user = get_current_user()
     if not user or user.get("role") != "admin":
-        return jsonify({"error":"Forbidden"}), 403
-    d = request.json or {}
-    n_races = min(int(d.get("races", 5)), 50)
-    n_sims  = min(int(d.get("sims", 500)), 10000)
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.json or {}
+
+    try:
+        n_races = min(max(int(data.get("races", 5)), 1), 50)
+        n_sims = min(max(int(data.get("sims", 500)), 1), 10000)
+    except Exception:
+        return jsonify({"error": "Invalid races or sims value"}), 400
+
     results = []
     races = _demo_races(n=n_races)
+
     for race in races:
         runners = race.get("runners", [])
-        sim = _run_simulation(runners, n_sims)
-        results.append({"race_uid": race["race_uid"], "track": race["track"],
-                        "race_num": race["race_num"], "simulation": sim})
-    log_event(user["sub"], user["username"], "STRESS_TEST_RUN", "test/stress",
-              data={"n_races": n_races, "n_sims": n_sims})
-    return jsonify({"ok":True,"mode":"TEST","races_simulated":len(results),"results":results})
+        sim = _run_simulation_legacy(runners, n_sims)
+        results.append(
+            {
+                "race_uid": race["race_uid"],
+                "track": race["track"],
+                "race_num": race["race_num"],
+                "simulation": sim,
+            }
+        )
+
+    log_event(
+        user["sub"],
+        user["username"],
+        "STRESS_TEST_RUN",
+        "test/stress",
+        data={"n_races": n_races, "n_sims": n_sims},
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "mode": "TEST",
+            "races_simulated": len(results),
+            "results": results,
+        }
+    )
+
 
 @app.route("/api/test/fake-signal", methods=["POST"])
 def test_fake_signal():
     """Generate and optionally save a fake signal for a given race_uid."""
     env.require_test("POST /api/test/fake-signal")
+
     from auth import get_current_user
-    user = get_current_user()
-    if not user: return jsonify({"error":"Unauthorized"}), 401
     from signals import demo_signal, save_signal
-    d = request.json or {}
-    race_num = int(d.get("race_num", 0))
-    race_uid = d.get("race_uid", f"test-fake-{race_num}")
+
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json or {}
+
+    try:
+        race_num = int(data.get("race_num", 0))
+    except Exception:
+        return jsonify({"error": "Invalid race_num"}), 400
+
+    race_uid = data.get("race_uid", f"test-fake-{race_num}")
     sig = demo_signal(race_num)
-    if d.get("save", False):
+
+    if data.get("save", False):
         save_signal(race_uid, sig)
+
     return jsonify({**sig, "race_uid": race_uid})
 
 
