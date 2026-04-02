@@ -249,8 +249,10 @@ def fetch_meetings():
     seen = set()
     today = date.today().isoformat()
 
-    for item in soup.select("a[href*='/racing/']"):
-        href = item.get("href", "")
+    for item in soup.find_all("a"):
+    href = item.get("href", "")
+    if not href or "/racing/" not in href:
+        continue
         parts = [p for p in href.strip("/").split("/") if p]
         if len(parts) < 3 or parts[0] != "racing":
             continue
