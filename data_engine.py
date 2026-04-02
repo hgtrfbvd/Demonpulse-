@@ -723,35 +723,132 @@ def fetch_scratchings():
     html = fetch_page(SCRATCHINGS_URL, use_playwright=True, wait_ms=3000)
     soup = parse_html(html)
     if not soup:
+        log.warning("Scratchings page failed")
         return {}
 
     scratchings = {}
     today = date.today().isoformat()
+    page_text = soup.get_text(" ", strip=True)
+
+    # ------------------------------------------------------------
+    # PRIMARY TABLE PARSE
+    # ------------------------------------------------------------
+    parsed_rows = 0
 
     for row in soup.select("tr"):
         cells = row.select("td")
         if len(cells) < 3:
             continue
-        try:
-            track = cells[0].get_text(strip=True).lower().replace(" ", "-")
-            rnum = cells[1].get_text(strip=True)
-            boxes = cells[2].get_text(strip=True)
 
-            if not rnum.isdigit():
+        try:
+            cell_texts = [c.get_text(" ", strip=True) for c in cells]
+
+            track_raw = (cell_texts[0] or "").strip().lower()
+            rnum_raw = (cell_texts[1] or "").strip()
+            boxes_raw = (cell_texts[2] or "").strip()
+
+            if not track_raw or not rnum_raw or not boxes_raw:
                 continue
 
-            uid = make_race_uid(today, "GREYHOUND", track, int(rnum))
+            track = track_raw.replace(" ", "-")
+            rnum_match = re.search(r"\b([0-9]{1,2})\b", rnum_raw)
+            if not rnum_match:
+                continue
+
+            race_num = int(rnum_match.group(1))
+            if race_num < 1 or race_num > 20:
+                continue
+
+            box_nums = []
+            for b in re.findall(r"\b([0-9]{1,2})\b", boxes_raw):
+                try:
+                    box_num = int(b)
+                    if 1 <= box_num <= 12:
+                        box_nums.append(box_num)
+                except Exception:
+                    continue
+
+            if not box_nums:
+                continue
+
+            uid = make_race_uid(today, "GREYHOUND", track, race_num)
             scratchings.setdefault(uid, [])
 
-            for b in boxes.split(","):
-                b = b.strip()
-                if b.isdigit():
-                    scratchings[uid].append(int(b))
+            for box_num in box_nums:
+                if box_num not in scratchings[uid]:
+                    scratchings[uid].append(box_num)
+
+            parsed_rows += 1
+
         except Exception:
             continue
 
-    log.info(f"Scratchings loaded for {len(scratchings)} races")
-    return scratchings
+    # ------------------------------------------------------------
+    # FALLBACK TEXT PARSE
+    # ------------------------------------------------------------
+    if not scratchings:
+        text_lines = [ln.strip() for ln in soup.get_text("\n", strip=True).splitlines() if ln.strip()]
+
+        current_track = None
+        current_race = None
+
+        for line in text_lines:
+            line_lower = line.lower().strip()
+
+            # Track guess
+            if line_lower:
+                guessed_track = line_lower.replace(" ", "-")
+                if guessed_track in TRACK_STATES:
+                    current_track = guessed_track
+                    current_race = None
+                    continue
+
+            # Race guess
+            race_match = re.search(r"\bR(?:ace)?\s*([0-9]{1,2})\b", line, flags=re.IGNORECASE)
+            if race_match:
+                try:
+                    rn = int(race_match.group(1))
+                    if 1 <= rn <= 20:
+                        current_race = rn
+                        continue
+                except Exception:
+                    pass
+
+            # Scratch box guess
+            if current_track and current_race:
+                if "scratch" in line_lower or "scratched" in line_lower:
+                    nums = []
+                    for b in re.findall(r"\b([0-9]{1,2})\b", line):
+                        try:
+                            bn = int(b)
+                            if 1 <= bn <= 12:
+                                nums.append(bn)
+                        except Exception:
+                            continue
+
+                    if nums:
+                        uid = make_race_uid(today, "GREYHOUND", current_track, current_race)
+                        scratchings.setdefault(uid, [])
+                        for bn in nums:
+                            if bn not in scratchings[uid]:
+                                scratchings[uid].append(bn)
+
+    # Sort values for stable output
+    for uid in scratchings:
+        scratchings[uid] = sorted(set(scratchings[uid]))
+
+    if scratchings:
+        total_boxes = sum(len(v) for v in scratchings.values())
+        log.info(
+            f"Scratchings loaded for {len(scratchings)} races, "
+            f"{total_boxes} scratched boxes, parsed_rows={parsed_rows}"
+        )
+        return scratchings
+
+    preview = page_text[:1500]
+    log.warning("Scratchings parsed but none extracted")
+    log.warning(f"Scratchings preview: {preview}")
+    return {}
 
 
 # ----------------------------------------------------------------
