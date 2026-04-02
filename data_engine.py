@@ -437,14 +437,12 @@ def score_completeness(race_meta, runners):
 # ----------------------------------------------------------------
 def compute_race_hash(race_meta, runners, scratchings_snapshot):
     key = str(race_meta.get("jump_time")) + str(scratchings_snapshot) + str(len(runners))
-    return hashlib.md5(key.encode()).hexdigest()[:12]
-
-# ----------------------------------------------------------------
+    return hashlib.md5(key.encode()).hexdigest()[:# ----------------------------------------------------------------
 # SUPABASE STORAGE
 # ----------------------------------------------------------------
 def upsert_race(race_data):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
         payload = {
             "race_uid": race_data["race_uid"],
@@ -462,52 +460,58 @@ def upsert_race(race_data):
             "completeness_score": race_data.get("completeness_score", 0),
             "completeness_quality": race_data.get("completeness_quality", "LOW"),
             "race_hash": race_data.get("race_hash", ""),
-            "lifecycle_state": "fetched",
+            "lifecycle_state": race_data.get("lifecycle_state", "fetched"),
             "fetched_at": datetime.utcnow().isoformat(),
         }
-        res = db.table("today_races").upsert(payload, on_conflict="race_uid").execute()
-        return res.data[0]["id"] if res.data else None
+        res = db.table(T("today_races")).upsert(payload, on_conflict="race_uid").execute()
+        return res.data[0]["id"] if getattr(res, "data", None) else None
     except Exception as e:
         log.error(f"Upsert race failed {race_data.get('race_uid')}: {e}")
         return None
+
 
 def upsert_runners(race_id, race_uid, runners):
     if not race_id or not runners:
         return
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("today_runners").delete().eq("race_uid", race_uid).execute()
+        db.table(T("today_runners")).delete().eq("race_uid", race_uid).execute()
+        payload = []
         for r in runners:
-            r["race_id"] = str(race_id)
-            r["race_uid"] = race_uid
-            r["date"] = date.today().isoformat()
-        db.table("today_runners").insert(runners).execute()
+            row = dict(r)
+            row["race_id"] = str(race_id)
+            row["race_uid"] = race_uid
+            row["date"] = date.today().isoformat()
+            payload.append(row)
+        db.table(T("today_runners")).insert(payload).execute()
     except Exception as e:
         log.error(f"Upsert runners failed {race_uid}: {e}")
+
 
 def update_lifecycle(race_uid, state):
     """Update race lifecycle state (feature 36)."""
     if state not in LIFECYCLE:
         return
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("today_races").update({
+        db.table(T("today_races")).update({
             "lifecycle_state": state,
             f"{state}_at": datetime.utcnow().isoformat()
         }).eq("race_uid", race_uid).execute()
     except Exception as e:
         log.error(f"Lifecycle update failed {race_uid} -> {state}: {e}")
 
+
 def save_result(result):
     if not result:
         return
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("results_log").upsert(result, on_conflict="race_uid").execute()
-        db.table("today_races").update({
+        db.table(T("results_log")).upsert(result, on_conflict="race_uid").execute()
+        db.table(T("today_races")).update({
             "status": "completed",
             "lifecycle_state": "result_captured",
             "result_captured_at": datetime.utcnow().isoformat()
@@ -516,34 +520,50 @@ def save_result(result):
     except Exception as e:
         log.error(f"Save result failed: {e}")
 
+
 def auto_settle_bets(result):
     """Auto-settle pending bets when result arrives."""
     if not result or not result.get("winner"):
         return
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        pending = db.table("bet_log").select("*").eq("race_uid", result["race_uid"]).eq("result", "PENDING").execute().data or []
+        pending = (
+            db.table(T("bet_log"))
+            .select("*")
+            .eq("race_uid", result["race_uid"])
+            .eq("result", "PENDING")
+            .execute()
+            .data
+            or []
+        )
+        winner = (result.get("winner") or "").strip().lower()
+
         for bet in pending:
-            is_win = bet.get("runner", "").lower() == result["winner"].lower()
+            runner = (bet.get("runner") or "").strip().lower()
+            is_win = runner == winner
             res = "WIN" if is_win else "LOSS"
-            stake = bet.get("stake") or 0
-            odds = bet.get("odds") or 2
+            stake = float(bet.get("stake") or 0)
+            odds = float(bet.get("odds") or 0)
             pl = round(stake * (odds - 1), 2) if is_win else round(-stake, 2)
-            db.table("bet_log").update({
-                "result": res, "pl": pl,
+
+            db.table(T("bet_log")).update({
+                "result": res,
+                "pl": pl,
                 "error_tag": None if is_win else "VARIANCE",
                 "settled_at": datetime.utcnow().isoformat()
             }).eq("id", bet["id"]).execute()
+
             log.info(f"Auto-settled: {bet.get('runner')} {res} PL={pl}")
     except Exception as e:
         log.error(f"Auto-settle failed: {e}")
 
+
 def log_source_call(url, method, status, rows=0, grv=False):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("source_log").insert({
+        db.table(T("source_log")).insert({
             "date": date.today().isoformat(),
             "url": url,
             "method": method,
@@ -555,37 +575,53 @@ def log_source_call(url, method, status, rows=0, grv=False):
     except Exception:
         pass
 
+
 # ----------------------------------------------------------------
 # SOURCE HEALTH (feature 8)
 # ----------------------------------------------------------------
 _source_health = {}
 
+
 def mark_source_healthy(source):
-    _source_health[source] = {"status": "HEALTHY", "last_ok": time.time()}
+    prev = _source_health.get(source, {})
+    _source_health[source] = {
+        "status": "HEALTHY",
+        "consecutive_fails": 0,
+        "last_ok": time.time(),
+        "last_fail": prev.get("last_fail"),
+    }
+
 
 def mark_source_failed(source):
     prev = _source_health.get(source, {})
-    fails = prev.get("consecutive_fails", 0) + 1
+    fails = int(prev.get("consecutive_fails", 0)) + 1
     _source_health[source] = {
         "status": "DEGRADED" if fails >= 3 else "WARNING",
         "consecutive_fails": fails,
-        "last_fail": time.time()
+        "last_ok": prev.get("last_ok"),
+        "last_fail": time.time(),
     }
 
+
 def get_source_health():
-    # ----------------------------------------------------------------
+    return dict(_source_health)
+
+
+# ----------------------------------------------------------------
 # FULL SWEEP
 # ----------------------------------------------------------------
 def full_sweep():
     log.info("=== FULL SWEEP START ===")
     start = time.time()
     meetings = fetch_meetings()
+
     if not meetings:
         log.warning("No meetings found")
         return {"ok": True, "races": 0, "runners": 0, "elapsed": 0, "warning": "No meetings found"}
 
     scratchings = fetch_scratchings()
-    total_races = total_runners = 0
+    total_races = 0
+    total_runners = 0
 
     for meeting in meetings:
         log.info(f"Processing {meeting['track']}...")
@@ -593,14 +629,20 @@ def full_sweep():
 
         for race in races:
             try:
-                if race["status"] == "upcoming":
+                if race.get("status") == "upcoming":
                     form_meta, runners = fetch_expert_form(race, scratchings)
                     if form_meta:
                         race.update(form_meta)
+
                     completeness = score_completeness(race, runners)
                     race["completeness_score"] = completeness["score"]
                     race["completeness_quality"] = completeness["quality"]
-                    race["race_hash"] = compute_race_hash(race, runners, scratchings.get(race["race_uid"], []))
+                    race["race_hash"] = compute_race_hash(
+                        race,
+                        runners,
+                        scratchings.get(race["race_uid"], [])
+                    )
+
                     race_id = upsert_race(race)
                     if race_id and runners:
                         upsert_runners(race_id, race["race_uid"], runners)
@@ -623,6 +665,7 @@ def full_sweep():
     log.info(f"=== SWEEP COMPLETE: {total_races} races, {total_runners} runners in {elapsed}s ===")
     return {"ok": True, "races": total_races, "runners": total_runners, "elapsed": elapsed}
 
+
 # ----------------------------------------------------------------
 # ROLLING REFRESH
 # ----------------------------------------------------------------
@@ -631,13 +674,24 @@ def rolling_refresh():
     scratchings = fetch_scratchings()
 
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        upcoming = db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("status", "upcoming").eq("code", "GREYHOUND").execute().data or []
-    except Exception:
-        return {"ok": False}
+        upcoming = (
+            db.table(T("today_races"))
+            .select("*")
+            .eq("date", date.today().isoformat())
+            .eq("status", "upcoming")
+            .eq("code", "GREYHOUND")
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        log.error(f"Rolling refresh load failed: {e}")
+        return {"ok": False, "error": "load_failed"}
 
     results_captured = 0
+
     for race in upcoming:
         try:
             race_obj = {
@@ -646,12 +700,14 @@ def rolling_refresh():
                 "state": race.get("state", "QLD"),
                 "date": date.today().isoformat(),
                 "race_num": race["race_num"],
-                "race_name": race.get("source_url", "").rstrip("/").split("/")[-1],
-                "url": race.get("source_url", f"https://www.thedogs.com.au/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/?trial=false"),
+                "race_name": (race.get("source_url") or "").rstrip("/").split("/")[-1],
+                "url": race.get(
+                    "source_url",
+                    f"https://www.thedogs.com.au/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/?trial=false"
+                ),
                 "expert_form_url": f"https://www.thedogs.com.au/racing/{race['track']}/{date.today().isoformat()}/{race['race_num']}/expert-form",
             }
 
-            # Check if result now exists
             result = fetch_result(race_obj)
             if result:
                 save_result(result)
@@ -659,23 +715,19 @@ def rolling_refresh():
                 results_captured += 1
                 continue
 
-            # Check for late scratchings (feature 13)
             new_scratches = scratchings.get(race["race_uid"], [])
             if new_scratches:
                 try:
-                    from db import get_db
-                    db = get_db()
-                    db.table("today_runners").update({
+                    db.table(T("today_runners")).update({
                         "scratched": True,
                         "scratch_timing": "late"
                     }).eq("race_uid", race["race_uid"]).in_("box_num", new_scratches).execute()
 
-                    # Invalidate cached recommendation if scratching changes structure
                     from cache import cache_clear
                     cache_clear(race["race_uid"])
                     log.info(f"Late scratch detected: {race['track']} R{race['race_num']} boxes {new_scratches}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.error(f"Late scratching update failed {race.get('race_uid')}: {e}")
 
             time.sleep(0.3)
         except Exception as e:
@@ -683,46 +735,91 @@ def rolling_refresh():
 
     return {"ok": True, "results_captured": results_captured}
 
+
 # ----------------------------------------------------------------
 # READ HELPERS
 # ----------------------------------------------------------------
 def get_next_race(anchor_time=None):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        races = db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("status", "upcoming").eq("code", "GREYHOUND").order("jump_time").execute().data or []
+        races = (
+            db.table(T("today_races"))
+            .select("*")
+            .eq("date", date.today().isoformat())
+            .eq("status", "upcoming")
+            .eq("code", "GREYHOUND")
+            .order("jump_time")
+            .execute()
+            .data
+            or []
+        )
         if not races:
             return None
         if anchor_time:
-            for r in races:
-                if r.get("jump_time") and r["jump_time"] > anchor_time:
-                    return r
+            for race in races:
+                if race.get("jump_time") and race["jump_time"] > anchor_time:
+                    return race
         return races[0]
     except Exception as e:
-        log.error(f"Get next race: {e}")
+        log.error(f"Get next race failed: {e}")
         return None
+
 
 def get_board(limit=10):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        return db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("status", "upcoming").eq("code", "GREYHOUND").order("jump_time").limit(limit).execute().data or []
-    except Exception:
+        return (
+            db.table(T("today_races"))
+            .select("*")
+            .eq("date", date.today().isoformat())
+            .eq("status", "upcoming")
+            .eq("code", "GREYHOUND")
+            .order("jump_time")
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        log.error(f"Get board failed: {e}")
         return []
+
 
 def get_race_with_runners(track, race_num):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        races = db.table("today_races").select("*").eq("date", date.today().isoformat()).eq("track", track).eq("race_num", race_num).execute().data or []
+        races = (
+            db.table(T("today_races"))
+            .select("*")
+            .eq("date", date.today().isoformat())
+            .eq("track", track)
+            .eq("race_num", race_num)
+            .execute()
+            .data
+            or []
+        )
         if not races:
             return None, []
+
         race = races[0]
-        runners = db.table("today_runners").select("*").eq("race_uid", race["race_uid"]).eq("scratched", False).order("box_num").execute().data or []
+        runners = (
+            db.table(T("today_runners"))
+            .select("*")
+            .eq("race_uid", race["race_uid"])
+            .eq("scratched", False)
+            .order("box_num")
+            .execute()
+            .data
+            or []
+        )
         return race, runners
     except Exception as e:
-        log.error(f"Get race with runners: {e}")
+        log.error(f"Get race with runners failed: {e}")
         return None, []
+
 
 if __name__ == "__main__":
     full_sweep()
