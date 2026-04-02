@@ -1,0 +1,17 @@
+.card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.badge {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.text-grn { color: var(--green); }
+.text-red { color: var(--primary); }
+.text-amb { color: var(--amber); }
