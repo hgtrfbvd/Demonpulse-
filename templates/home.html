@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<div class="page-shell home-page">
+
+    <section class="hero-strip card">
+        <div class="hero-left">
+            <div class="page-kicker">UNIFIED LIVE BOARD</div>
+            <h1 class="page-title">Home / Dashboard</h1>
+            <div class="page-subtitle">
+                All next-up races across Greyhound, Horse, and Harness in one control board.
+            </div>
+        </div>
+
+        <div class="hero-right">
+            <div class="hero-stat">
+                <div class="hero-stat-label">ENV</div>
+                <div class="hero-stat-value" id="homeEnvValue">—</div>
+            </div>
+            <div class="hero-stat">
+                <div class="hero-stat-label">SHADOW</div>
+                <div class="hero-stat-value" id="homeShadowValue">—</div>
+            </div>
+            <div class="hero-stat">
+                <div class="hero-stat-label">RACES</div>
+                <div class="hero-stat-value" id="homeRaceCount">0</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="toolbar-row card">
+        <div class="toolbar-left">
+            <button class="dp-btn dp-btn-primary" id="refreshBoardBtn">Refresh Board</button>
+        </div>
+
+        <div class="toolbar-right">
+            <button class="dp-filter-btn active" data-code="ALL">All</button>
+            <button class="dp-filter-btn" data-code="GREYHOUND">Greyhound</button>
+            <button class="dp-filter-btn" data-code="HORSE">Horse</button>
+            <button class="dp-filter-btn" data-code="HARNESS">Harness</button>
+        </div>
+    </section>
+
+    <section class="summary-grid">
+        <div class="card summary-card">
+            <div class="summary-label">Next Up</div>
+            <div class="summary-value" id="summaryNextUp">—</div>
+            <div class="summary-sub" id="summaryNextUpSub">Waiting for board</div>
+        </div>
+
+        <div class="card summary-card">
+            <div class="summary-label">Hot Races</div>
+            <div class="summary-value" id="summaryHotCount">0</div>
+            <div class="summary-sub">Signal-led priority items</div>
+        </div>
+
+        <div class="card summary-card">
+            <div class="summary-label">Greyhound / Horse / Harness</div>
+            <div class="summary-value" id="summaryCodeMix">0 / 0 / 0</div>
+            <div class="summary-sub">Current visible board mix</div>
+        </div>
+    </section>
+
+    <section class="card board-card">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">MASTER BOARD</div>
+                <h2 class="section-title">Upcoming Races</h2>
+            </div>
+            <div class="section-meta" id="boardMeta">Loading…</div>
+        </div>
+
+        <div class="board-table-wrap">
+            <table class="board-table">
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Track</th>
+                        <th>Race</th>
+                        <th>Jump</th>
+                        <th>Countdown</th>
+                        <th>Status</th>
+                        <th>Signal</th>
+                        <th>Confidence</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="homeBoardBody">
+                    <tr>
+                        <td colspan="9" class="board-empty">Loading board…</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/home.js"></script>
+{% endblock %}
