@@ -22,3 +22,5 @@ services:
         value: LIVE
       - key: SESSION_TIMEOUT_MIN
         value: "480"
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
