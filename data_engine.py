@@ -160,6 +160,7 @@ def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
 
     start = time.time()
 
+    # TheDogs is JS-heavy / often blocks static fetch, so Playwright is primary
     if use_playwright:
         result = _fetch_playwright(url, wait_ms)
         if result:
@@ -171,11 +172,14 @@ def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
                 source=domain,
                 response_code=200,
                 duration_ms=duration_ms,
+                rows=len(result),
             )
             return result
 
+    # Static fallback remains for non-blocked pages / resilience
     result = _fetch_static(url)
     duration_ms = int((time.time() - start) * 1000)
+
     if result:
         log_source_call(
             url,
@@ -184,12 +188,118 @@ def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
             source=domain,
             response_code=200,
             duration_ms=duration_ms,
+            rows=len(result),
         )
         mark_source_healthy(domain)
-    else:
-        mark_source_failed(domain)
+        return result
 
-    return result
+    log_source_call(
+        url,
+        "fetch",
+        "FAILED",
+        source=domain,
+        duration_ms=duration_ms,
+        error_message="Both playwright and static fetch returned empty content",
+    )
+    mark_source_failed(domain)
+    return ""
+
+
+def _page_type(url):
+    url = (url or "").lower()
+    if "racecards" in url:
+        return "racecards"
+    if "scratchings" in url:
+        return "scratchings"
+    if "expert-form" in url:
+        return "expert_form"
+    return "meeting_or_result"
+
+
+def _content_markers_for_url(url):
+    kind = _page_type(url)
+
+    if kind == "racecards":
+        return [
+            "/racing/",
+            "racecards",
+            "Next To Jump",
+            "Today",
+            "meeting",
+        ]
+
+    if kind == "scratchings":
+        return [
+            "scratchings",
+            "Scratching",
+            "Late Scratching",
+            "<table",
+            "<tr",
+        ]
+
+    if kind == "expert_form":
+        return [
+            "expert-form",
+            "Expert Form",
+            "Grade",
+            "m",
+            "<tr",
+        ]
+
+    return [
+        "/racing/",
+        "Race",
+        "R1",
+        "R2",
+        "Form",
+        "<tr",
+    ]
+
+
+def _has_meaningful_content(url, html):
+    if not html:
+        return False
+
+    lower = html.lower()
+    markers = _content_markers_for_url(url)
+
+    hits = 0
+    for marker in markers:
+        if marker.lower() in lower:
+            hits += 1
+
+    # Strong signal: race links in HTML
+    racing_link_hits = lower.count("/racing/")
+
+    # Block / shell detection
+    blocked_signals = [
+        "403 forbidden",
+        "access denied",
+        "request blocked",
+        "cf-error",
+        "captcha",
+        "attention required",
+    ]
+    blocked = any(sig in lower for sig in blocked_signals)
+
+    if blocked:
+        return False
+
+    if racing_link_hits >= 3:
+        return True
+
+    return hits >= 2
+
+
+def _log_fetch_diagnostics(url, html, prefix="FETCH"):
+    try:
+        preview = (html or "")[:1200].replace("\n", " ").replace("\r", " ")
+        log.info(f"{prefix} DIAG url={url}")
+        log.info(f"{prefix} DIAG html_len={len(html or '')}")
+        log.info(f"{prefix} DIAG racing_refs={(html or '').lower().count('/racing/')}")
+        log.info(f"{prefix} DIAG preview={preview}")
+    except Exception:
+        pass
 
 
 def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
@@ -202,33 +312,103 @@ def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            )
-            page = browser.new_page(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                viewport={"width": 1280, "height": 800},
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
             )
 
-            response = page.goto(url, timeout=PLAYWRIGHT_TIMEOUT_MS, wait_until="domcontentloaded")
+            page = browser.new_page(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1440, "height": 1200},
+                locale="en-AU",
+            )
+
+            page.set_extra_http_headers(
+                {
+                    "Accept-Language": "en-AU,en;q=0.9",
+                    "Referer": BASE_URL,
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                }
+            )
+
+            response = page.goto(
+                url,
+                timeout=PLAYWRIGHT_TIMEOUT_MS,
+                wait_until="domcontentloaded",
+            )
+
+            # Initial settle
             page.wait_for_timeout(wait_ms)
+
+            # Try a few stronger readiness checks without hard-failing
+            selectors = [
+                "a[href*='/racing/']",
+                "table",
+                "tr",
+                "[href*='/racing/']",
+                "body",
+            ]
+
+            for selector in selectors:
+                try:
+                    page.wait_for_selector(selector, timeout=4000)
+                    break
+                except Exception:
+                    continue
+
+            # Additional settle after selector hit
             try:
-                page.wait_for_load_state("networkidle", timeout=5000)
+                page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
 
+            page.wait_for_timeout(1500)
+
             content = page.content()
+
+            # If DOM still looks thin, try a controlled scroll + wait once more
+            if not _has_meaningful_content(url, content):
+                try:
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    page.wait_for_timeout(2000)
+                    page.evaluate("window.scrollTo(0, 0)")
+                    page.wait_for_timeout(1200)
+                    content = page.content()
+                except Exception:
+                    pass
+
             browser.close()
 
-            if content:
+            if _has_meaningful_content(url, content):
                 mark_source_healthy(domain)
-            else:
-                mark_source_failed(domain)
+                return content
 
-            return content
+            duration_ms = int((time.time() - start) * 1000)
+            _log_fetch_diagnostics(url, content, prefix="PLAYWRIGHT_EMPTY")
+            log_source_call(
+                url,
+                "playwright",
+                "FAILED",
+                source=domain,
+                response_code=response.status if response else None,
+                error_message="Playwright returned HTML but no meaningful race content markers were found",
+                duration_ms=duration_ms,
+                rows=len(content or ""),
+            )
+            mark_source_failed(domain)
+            return ""
 
     except ImportError:
         log.warning("Playwright not available")
         return ""
+
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
         log.error(f"Playwright failed for {url}: {e}")
@@ -252,17 +432,41 @@ def _fetch_static(url):
         import requests
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-AU,en;q=0.9",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
             "Referer": BASE_URL,
         }
+
         r = requests.get(url, headers=headers, timeout=STATIC_TIMEOUT_SECONDS)
         r.raise_for_status()
-        mark_source_healthy(domain)
-        return r.text
+
+        html = r.text or ""
+        if _has_meaningful_content(url, html):
+            mark_source_healthy(domain)
+            return html
+
+        duration_ms = int((time.time() - start) * 1000)
+        _log_fetch_diagnostics(url, html, prefix="STATIC_EMPTY")
+        log_source_call(
+            url,
+            "requests",
+            "FAILED",
+            source=domain,
+            response_code=getattr(r, "status_code", None),
+            error_message="Static fetch returned HTML but no meaningful race content markers were found",
+            duration_ms=duration_ms,
+            rows=len(html),
+        )
+        mark_source_failed(domain)
+        return ""
+
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
         log.error(f"Static fetch failed for {url}: {e}")
@@ -287,11 +491,6 @@ def parse_html(html):
     except Exception as e:
         log.error(f"HTML parse failed: {e}")
         return None
-
-
-# ----------------------------------------------------------------
-# TIMEZONE
-# ----------------------------------------------------------------
 def to_aest(time_str, state):
     if not time_str or ":" not in time_str:
         return time_str
