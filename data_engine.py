@@ -86,10 +86,9 @@ def _fetch_playwright(url, wait_ms=2000):
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                executable_path="/opt/render/.cache/ms-playwright/chromium-1117/chrome-linux/chrome",
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            )
+    headless=True,
+    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+)
             page = browser.new_page(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             )
