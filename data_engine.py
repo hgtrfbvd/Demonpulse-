@@ -758,18 +758,20 @@ def fetch_scratchings():
 # FETCH RACE LIST FOR MEETING
 # ----------------------------------------------------------------
 def fetch_meeting_races(meeting):
-    track = meeting["track"]
-    state = meeting["state"]
+    track = (meeting.get("track") or "").strip().lower()
+    state = meeting.get("state", "QLD")
     today = date.today().isoformat()
 
     html = fetch_page(meeting["url"], use_playwright=True, wait_ms=2500)
     soup = parse_html(html)
     if not soup:
+        log.error(f"{track}: meeting page failed")
         return []
 
     links = _extract_racing_links(soup)
     races = []
     seen = set()
+    candidate_nums = []
 
     log.info(f"{track}: meeting page scan found {len(links)} /racing/ links")
 
@@ -777,17 +779,25 @@ def fetch_meeting_races(meeting):
         parsed = _parse_racing_path(item["href"])
         if not parsed:
             continue
-        if parsed["track"] != track or parsed["date"] != today:
+
+        parsed_track = (parsed.get("track") or "").strip().lower()
+        parsed_date = parsed.get("date")
+        race_num = parsed.get("race_num")
+
+        if parsed_track != track:
             continue
-        if parsed["race_num"] is None:
+        if parsed_date != today:
+            continue
+        if race_num is None:
             continue
 
-        race_num = parsed["race_num"]
+        candidate_nums.append(race_num)
+
         if race_num in seen:
             continue
         seen.add(race_num)
 
-        race_name = parsed["race_name"]
+        race_name = (parsed.get("race_name") or "").strip()
         race_uid = make_race_uid(today, "GREYHOUND", track, race_num)
 
         races.append(
@@ -805,10 +815,102 @@ def fetch_meeting_races(meeting):
             }
         )
 
-    races.sort(key=lambda x: x["race_num"])
-    log.info(f"{track}: extracted {len(races)} races")
-    return races
+    if races:
+        races.sort(key=lambda x: x["race_num"])
+        log.info(f"{track}: extracted {len(races)} races from anchor scan")
+        return races
 
+    # Fallback 1:
+    # scan raw HTML for direct race paths for this track/date
+    html_matches = re.findall(
+        rf"/racing/{re.escape(track)}/{today}/(\d+)(?:/([^\"'<>?#]+))?",
+        html or "",
+        flags=re.IGNORECASE,
+    )
+
+    for race_num_raw, race_name_raw in html_matches:
+        if not race_num_raw.isdigit():
+            continue
+
+        race_num = int(race_num_raw)
+        if race_num in seen:
+            continue
+        seen.add(race_num)
+
+        race_name = (race_name_raw or "").strip("/")
+        race_uid = make_race_uid(today, "GREYHOUND", track, race_num)
+
+        races.append(
+            {
+                "race_uid": race_uid,
+                "track": track,
+                "state": state,
+                "date": today,
+                "race_num": race_num,
+                "race_name": race_name,
+                "code": "GREYHOUND",
+                "status": "upcoming",
+                "expert_form_url": f"{BASE_URL}/racing/{track}/{today}/{race_num}/{race_name}/expert-form",
+                "url": f"{BASE_URL}/racing/{track}/{today}/{race_num}/{race_name}?trial=false",
+            }
+        )
+
+    if races:
+        races.sort(key=lambda x: x["race_num"])
+        log.info(f"{track}: extracted {len(races)} races from raw HTML fallback")
+        return races
+
+    # Fallback 2:
+    # infer race numbers from page text like R1 / Race 1 if link structure is weak
+    page_text = soup.get_text(" ", strip=True)
+    text_nums = set()
+
+    for match in re.findall(r"\bR(?:ace)?\s*([0-9]{1,2})\b", page_text, flags=re.IGNORECASE):
+        try:
+            rn = int(match)
+            if 1 <= rn <= 20:
+                text_nums.add(rn)
+        except Exception:
+            continue
+
+    for race_num in sorted(text_nums):
+        if race_num in seen:
+            continue
+        seen.add(race_num)
+
+        race_uid = make_race_uid(today, "GREYHOUND", track, race_num)
+
+        races.append(
+            {
+                "race_uid": race_uid,
+                "track": track,
+                "state": state,
+                "date": today,
+                "race_num": race_num,
+                "race_name": "",
+                "code": "GREYHOUND",
+                "status": "upcoming",
+                "expert_form_url": f"{BASE_URL}/racing/{track}/{today}/{race_num}/expert-form",
+                "url": f"{BASE_URL}/racing/{track}/{today}/{race_num}?trial=false",
+            }
+        )
+
+    if races:
+        races.sort(key=lambda x: x["race_num"])
+        log.info(f"{track}: inferred {len(races)} races from text fallback")
+        return races
+
+    # Diagnostics so we stop guessing when this fails
+    try:
+        preview = page_text[:1500]
+        log.warning(f"{track}: no races extracted for today={today}")
+        log.warning(f"{track}: candidate anchor race nums={sorted(set(candidate_nums))[:20]}")
+        log.warning(f"{track}: page text preview={preview}")
+    except Exception:
+        pass
+
+    log.error(f"{track}: meeting page parsed but no races extracted")
+    return []
 
 # ----------------------------------------------------------------
 # FETCH EXPERT FORM
@@ -817,57 +919,86 @@ def fetch_expert_form(race, scratchings):
     html = fetch_page(race["expert_form_url"], use_playwright=True, wait_ms=2000)
     soup = parse_html(html)
     if not soup:
+        log.error(f"{race.get('race_uid')}: expert form failed")
         return None, []
 
+    page_text = soup.get_text(" ", strip=True)
+
+    # ------------------------------------------------------------
+    # META EXTRACTION
+    # ------------------------------------------------------------
     jump_time = None
     grade = ""
     distance = ""
 
-    page_text = soup.get_text(" ", strip=True)
+    # Prefer explicit short time tokens first
+    time_candidates = re.findall(r"\b(\d{1,2}:\d{2})\b", page_text)
+    for candidate in time_candidates:
+        jump_time = to_aest(candidate, race["state"])
+        if jump_time:
+            break
 
-    m = re.search(r"\b(\d{1,2}:\d{2})\b", page_text)
-    if m:
-        jump_time = to_aest(m.group(1), race["state"])
-
-    for tag in soup.select("h1, h2, h3, .race-title, .race-info"):
+    # Grade / distance from headings and info blocks first
+    for tag in soup.select("h1, h2, h3, .race-title, .race-info, .event-info, .meeting-info"):
         text = tag.get_text(" ", strip=True)
+
         if not grade and "grade" in text.lower():
-            grade = text[:60]
+            grade = text[:80]
+
         if not distance:
             dm = re.search(r"\b(\d{3,4}m)\b", text.lower())
             if dm:
                 distance = dm.group(1)
+
+    # Fallback to whole page text
+    if not grade:
+        gm = re.search(r"\b(grade\s*[0-9a-z+\- ]+)\b", page_text, flags=re.IGNORECASE)
+        if gm:
+            grade = gm.group(1)[:80]
 
     if not distance:
         dm = re.search(r"\b(\d{3,4}m)\b", page_text.lower())
         if dm:
             distance = dm.group(1)
 
-    scratched_boxes = scratchings.get(race["race_uid"], [])
+    scratched_boxes = set(scratchings.get(race["race_uid"], []))
     runners_raw = []
+    seen_boxes = set()
 
+    # ------------------------------------------------------------
+    # PRIMARY TABLE PARSE
+    # ------------------------------------------------------------
     for row in soup.select("tr"):
         cells = row.select("td")
         if len(cells) < 2:
             continue
 
         try:
-            box_text = cells[0].get_text(strip=True)
+            cell_texts = [c.get_text(" ", strip=True) for c in cells]
+            box_text = (cell_texts[0] or "").strip()
+
             if not box_text.isdigit():
                 continue
 
             box_num = int(box_text)
-            name = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            if box_num < 1 or box_num > 12:
+                continue
+
+            if box_num in seen_boxes:
+                continue
+
+            name = (cell_texts[1] or "").strip()
             if not name or len(name) < 2:
                 continue
 
-            trainer = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+            trainer = cell_texts[2].strip() if len(cell_texts) > 2 else ""
             best_time = None
             weight = None
             career = None
 
-            for cell in cells[3:]:
-                text = cell.get_text(strip=True)
+            for text in cell_texts[3:]:
+                if not text:
+                    continue
 
                 if "." in text:
                     try:
@@ -879,11 +1010,11 @@ def fetch_expert_form(race, scratchings):
                     except ValueError:
                         pass
 
-                if (":" in text and "-" in text) or text.count("-") >= 2:
+                if career is None and ((":" in text and "-" in text) or text.count("-") >= 2):
                     career = text[:40]
 
             raw_hash = hashlib.md5(
-                f"{name}{trainer}{best_time}{career}".encode()
+                f"{box_num}|{name}|{trainer}|{best_time}|{career}".encode()
             ).hexdigest()[:8]
 
             runners_raw.append(
@@ -906,8 +1037,105 @@ def fetch_expert_form(race, scratchings):
                     "source_confidence": "official",
                 }
             )
+            seen_boxes.add(box_num)
+
         except Exception:
             continue
+
+    # ------------------------------------------------------------
+    # FALLBACK TEXT PARSE
+    # Handles pages where rows are not in clean <tr><td> tables
+    # ------------------------------------------------------------
+    if len(runners_raw) < 4:
+        text_lines = [ln.strip() for ln in soup.get_text("\n", strip=True).splitlines() if ln.strip()]
+
+        i = 0
+        while i < len(text_lines):
+            line = text_lines[i]
+
+            # Box + runner name patterns like:
+            # "1 Runner Name"
+            # "1. Runner Name"
+            # "1 - Runner Name"
+            m = re.match(r"^([1-9]|1[0-2])[\.\-\s]+(.+)$", line)
+            if not m:
+                i += 1
+                continue
+
+            try:
+                box_num = int(m.group(1))
+                if box_num in seen_boxes:
+                    i += 1
+                    continue
+
+                name = (m.group(2) or "").strip()
+                if len(name) < 2:
+                    i += 1
+                    continue
+
+                trainer = ""
+                best_time = None
+                weight = None
+                career = None
+
+                # Look ahead a few lines for useful fields
+                lookahead = text_lines[i + 1:i + 6]
+                for txt in lookahead:
+                    if not trainer and len(txt) <= 40 and not txt.isdigit():
+                        # weak trainer heuristic only if it isn't another boxed runner
+                        if not re.match(r"^([1-9]|1[0-2])[\.\-\s]+", txt):
+                            trainer = txt
+
+                    if "." in txt:
+                        try:
+                            val = float(txt)
+                            if 20 < val < 35 and best_time is None:
+                                best_time = txt
+                            elif 20 < val < 45 and weight is None:
+                                weight = val
+                        except ValueError:
+                            pass
+
+                    if career is None and ((":" in txt and "-" in txt) or txt.count("-") >= 2):
+                        career = txt[:40]
+
+                raw_hash = hashlib.md5(
+                    f"{box_num}|{name}|{trainer}|{best_time}|{career}".encode()
+                ).hexdigest()[:8]
+
+                runners_raw.append(
+                    {
+                        "race_uid": race["race_uid"],
+                        "race_id": None,
+                        "box_num": box_num,
+                        "name": name,
+                        "trainer": trainer,
+                        "weight": weight,
+                        "best_time": best_time,
+                        "career": career,
+                        "price": None,
+                        "rating": None,
+                        "scratched": box_num in scratched_boxes,
+                        "scratch_timing": "late" if box_num in scratched_boxes else None,
+                        "run_style": None,
+                        "early_speed": None,
+                        "raw_hash": raw_hash,
+                        "source_confidence": "official",
+                    }
+                )
+                seen_boxes.add(box_num)
+            except Exception:
+                pass
+
+            i += 1
+
+    runners_raw.sort(key=lambda r: r.get("box_num") or 99)
+
+    # Diagnostics when parse is weak
+    if len(runners_raw) < 4:
+        preview = page_text[:1500]
+        log.warning(f"{race.get('race_uid')}: weak expert form parse, runners={len(runners_raw)}")
+        log.warning(f"{race.get('race_uid')}: expert form text preview={preview}")
 
     form_meta = {
         "jump_time": jump_time,
@@ -915,8 +1143,13 @@ def fetch_expert_form(race, scratchings):
         "distance": distance,
         "time_status": "VERIFIED" if jump_time else "PARTIAL",
     }
-    return form_meta, runners_raw
 
+    log.info(
+        f"{race.get('race_uid')}: expert form extracted "
+        f"jump_time={jump_time}, grade={grade}, distance={distance}, runners={len(runners_raw)}"
+    )
+
+    return form_meta, runners_raw
 
 # ----------------------------------------------------------------
 # FETCH RESULT
@@ -925,29 +1158,46 @@ def fetch_result(race):
     html = fetch_page(race["url"], use_playwright=True, wait_ms=1500)
     soup = parse_html(html)
     if not soup:
+        log.error(f"{race.get('race_uid')}: result fetch failed")
         return None
 
     positions = []
+    seen_pos = set()
+    page_text = soup.get_text(" ", strip=True)
+
+    # ------------------------------------------------------------
+    # PRIMARY TABLE PARSE
+    # ------------------------------------------------------------
     for row in soup.select("tr"):
         cells = row.select("td")
-        if len(cells) < 3:
+        if len(cells) < 2:
             continue
 
         try:
-            pos = cells[0].get_text(strip=True)
-            if pos not in ["1st", "2nd", "3rd", "1", "2", "3"]:
+            cell_texts = [c.get_text(" ", strip=True) for c in cells]
+            pos = (cell_texts[0] or "").strip()
+
+            if pos not in {"1st", "2nd", "3rd", "1", "2", "3"}:
                 continue
 
-            name = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            norm_pos = pos.replace("st", "").replace("nd", "").replace("rd", "")
+            if norm_pos in seen_pos:
+                continue
+
+            name = (cell_texts[1] or "").strip()
+            if not name or len(name) < 2:
+                continue
+
             price = None
             win_time = None
 
-            for cell in cells:
-                text = cell.get_text(strip=True)
+            for text in cell_texts[2:]:
+                if not text:
+                    continue
 
                 if text.startswith("$"):
                     try:
-                        price = float(text.replace("$", ""))
+                        price = float(text.replace("$", "").replace(",", ""))
                     except ValueError:
                         pass
 
@@ -959,26 +1209,100 @@ def fetch_result(race):
                     except ValueError:
                         pass
 
-            positions.append({"pos": pos, "name": name, "price": price, "time": win_time})
+            positions.append(
+                {
+                    "pos": norm_pos,
+                    "name": name,
+                    "price": price,
+                    "time": win_time,
+                }
+            )
+            seen_pos.add(norm_pos)
+
         except Exception:
             continue
 
+    # ------------------------------------------------------------
+    # FALLBACK TEXT PARSE
+    # ------------------------------------------------------------
     if not positions:
+        text_lines = [ln.strip() for ln in soup.get_text("\n", strip=True).splitlines() if ln.strip()]
+
+        for line in text_lines:
+            m = re.match(r"^(1st|2nd|3rd|1|2|3)[\.\-\s]+(.+)$", line, flags=re.IGNORECASE)
+            if not m:
+                continue
+
+            pos_raw = m.group(1)
+            norm_pos = pos_raw.lower().replace("st", "").replace("nd", "").replace("rd", "")
+            if norm_pos in seen_pos:
+                continue
+
+            remainder = (m.group(2) or "").strip()
+            if len(remainder) < 2:
+                continue
+
+            # Try to strip trailing price/time tokens if embedded in same line
+            name = remainder
+            price = None
+            win_time = None
+
+            price_match = re.search(r"\$([0-9]+(?:\.[0-9]+)?)", remainder)
+            if price_match:
+                try:
+                    price = float(price_match.group(1))
+                except ValueError:
+                    pass
+
+            time_match = re.search(r"\b([2-3][0-9]\.[0-9]{1,3})\b", remainder)
+            if time_match:
+                win_time = time_match.group(1)
+
+            # remove obvious trailing price/time fragments from name
+            name = re.sub(r"\$[0-9]+(?:\.[0-9]+)?", "", name).strip()
+            name = re.sub(r"\b[2-3][0-9]\.[0-9]{1,3}\b", "", name).strip(" -|")
+
+            positions.append(
+                {
+                    "pos": norm_pos,
+                    "name": name,
+                    "price": price,
+                    "time": win_time,
+                }
+            )
+            seen_pos.add(norm_pos)
+
+            if len(positions) >= 3:
+                break
+
+    # Sort into 1 / 2 / 3 order
+    positions.sort(key=lambda x: int(x["pos"]) if str(x.get("pos", "")).isdigit() else 99)
+
+    if not positions:
+        preview = page_text[:1500]
+        log.warning(f"{race.get('race_uid')}: no result positions parsed")
+        log.warning(f"{race.get('race_uid')}: result text preview={preview}")
         return None
 
-    return {
+    result = {
         "race_uid": race["race_uid"],
         "track": race["track"],
         "race_num": race["race_num"],
         "date": date.today().isoformat(),
         "code": "GREYHOUND",
-        "winner": positions[0]["name"] if positions else None,
-        "win_price": positions[0]["price"] if positions else None,
-        "winning_time": positions[0]["time"] if positions else None,
+        "winner": positions[0]["name"] if len(positions) > 0 else None,
+        "win_price": positions[0]["price"] if len(positions) > 0 else None,
+        "winning_time": positions[0]["time"] if len(positions) > 0 else None,
         "place_2": positions[1]["name"] if len(positions) > 1 else None,
         "place_3": positions[2]["name"] if len(positions) > 2 else None,
     }
 
+    log.info(
+        f"{race.get('race_uid')}: result extracted "
+        f"winner={result.get('winner')}, place_2={result.get('place_2')}, place_3={result.get('place_3')}"
+    )
+
+    return result
 
 # ----------------------------------------------------------------
 # DATA COMPLETENESS SCORE (feature 5)
@@ -1264,10 +1588,129 @@ def full_sweep():
 
     elapsed = round(time.time() - start, 1)
     log.info(f"=== SWEEP COMPLETE: {total_races} races, {total_runners} runners in {elapsed}s ===")
-    return {"ok": True, "races": total_races, "runners": total_runners, "elapsed": elapsed}
-
-
+    return {"ok": True, "races": total_races, "runners": total_runners, "elapsed": # ----------------------------------------------------------------
+# FULL SWEEP
 # ----------------------------------------------------------------
+def full_sweep():
+    log.info("=== FULL SWEEP START ===")
+    start = time.time()
+
+    meetings = fetch_meetings()
+    if not meetings:
+        log.warning("No meetings found")
+        return {
+            "ok": True,
+            "races": 0,
+            "runners": 0,
+            "meetings": 0,
+            "elapsed": 0,
+            "warning": "No meetings found",
+        }
+
+    scratchings = fetch_scratchings()
+    total_meetings = len(meetings)
+    total_races = 0
+    total_runners = 0
+    processed_upcoming = 0
+    processed_completed = 0
+    failed_races = 0
+    failed_meetings = 0
+
+    for meeting in meetings:
+        track = meeting.get("track", "unknown")
+        try:
+            log.info(f"Processing meeting: {track} {meeting.get('date')} {meeting.get('state')}")
+            races = fetch_meeting_races(meeting)
+
+            if not races:
+                log.warning(f"{track}: no races extracted from meeting page")
+                failed_meetings += 1
+                continue
+
+            log.info(f"{track}: {len(races)} races found")
+
+            for race in races:
+                try:
+                    race_uid = race.get("race_uid")
+                    race_status = race.get("status", "upcoming")
+
+                    if race_status == "upcoming":
+                        form_meta, runners = fetch_expert_form(race, scratchings)
+
+                        if form_meta:
+                            race.update(form_meta)
+
+                        completeness = score_completeness(race, runners)
+                        race["completeness_score"] = completeness["score"]
+                        race["completeness_quality"] = completeness["quality"]
+                        race["race_hash"] = compute_race_hash(
+                            race,
+                            runners,
+                            scratchings.get(race["race_uid"], []),
+                        )
+
+                        race_id = upsert_race(race)
+                        if race_id:
+                            update_lifecycle(race_uid, "fetched")
+
+                        if race_id and runners:
+                            upsert_runners(race_id, race["race_uid"], runners)
+                            total_runners += len(runners)
+
+                        processed_upcoming += 1
+
+                        log.info(
+                            f"{race_uid}: upcoming processed | "
+                            f"runners={len(runners)} | "
+                            f"jump_time={race.get('jump_time')} | "
+                            f"distance={race.get('distance')} | "
+                            f"grade={race.get('grade')} | "
+                            f"quality={race.get('completeness_quality')} "
+                            f"({race.get('completeness_score')})"
+                        )
+
+                    else:
+                        result = fetch_result(race)
+                        if result:
+                            save_result(result)
+                            auto_settle_bets(result)
+                        else:
+                            log.warning(f"{race_uid}: marked completed but no result extracted")
+
+                        upsert_race(race)
+                        processed_completed += 1
+
+                        log.info(f"{race_uid}: completed race processed")
+
+                    total_races += 1
+                    time.sleep(0.4)
+
+                except Exception as e:
+                    failed_races += 1
+                    log.error(f"Race processing failed {race.get('race_uid')}: {e}")
+                    mark_source_failed("thedogs.com.au")
+
+        except Exception as e:
+            failed_meetings += 1
+            log.error(f"Meeting processing failed {track}: {e}")
+            mark_source_failed("thedogs.com.au")
+
+    elapsed = round(time.time() - start, 1)
+
+    summary = {
+        "ok": True,
+        "meetings": total_meetings,
+        "races": total_races,
+        "runners": total_runners,
+        "processed_upcoming": processed_upcoming,
+        "processed_completed": processed_completed,
+        "failed_races": failed_races,
+        "failed_meetings": failed_meetings,
+        "elapsed": elapsed,
+    }
+
+    log.info(f"=== SWEEP COMPLETE: {summary} ===")
+    return summary# ----------------------------------------------------------------
 # ROLLING REFRESH
 # ----------------------------------------------------------------
 def rolling_refresh():
@@ -1292,10 +1735,25 @@ def rolling_refresh():
         log.error(f"Rolling refresh load failed: {e}")
         return {"ok": False, "error": "load_failed"}
 
+    if not upcoming:
+        log.info("Rolling refresh: no upcoming races in DB")
+        return {
+            "ok": True,
+            "results_captured": 0,
+            "late_scratches_applied": 0,
+            "upcoming_checked": 0,
+            "warning": "no_upcoming_races",
+        }
+
     results_captured = 0
+    late_scratches_applied = 0
+    checked = 0
+    failed = 0
 
     for race in upcoming:
         try:
+            checked += 1
+
             race_obj = {
                 "race_uid": race["race_uid"],
                 "track": race["track"],
@@ -1313,13 +1771,24 @@ def rolling_refresh():
                 ),
             }
 
+            # ----------------------------------------------------
+            # RESULT CHECK FIRST
+            # ----------------------------------------------------
             result = fetch_result(race_obj)
             if result:
                 save_result(result)
                 auto_settle_bets(result)
                 results_captured += 1
+                log.info(
+                    f"{race_obj['race_uid']}: result captured during refresh "
+                    f"winner={result.get('winner')}"
+                )
+                time.sleep(0.3)
                 continue
 
+            # ----------------------------------------------------
+            # LATE SCRATCHINGS
+            # ----------------------------------------------------
             new_scratches = scratchings.get(race["race_uid"], [])
             if new_scratches:
                 try:
@@ -1333,19 +1802,31 @@ def rolling_refresh():
                     from cache import cache_clear
 
                     cache_clear(race["race_uid"])
+                    late_scratches_applied += 1
+
                     log.info(
-                        f"Late scratch detected: {race['track']} R{race['race_num']} boxes {new_scratches}"
+                        f"{race['race_uid']}: late scratches applied "
+                        f"track={race['track']} R{race['race_num']} boxes={new_scratches}"
                     )
                 except Exception as e:
                     log.error(f"Late scratching update failed {race.get('race_uid')}: {e}")
 
             time.sleep(0.3)
+
         except Exception as e:
+            failed += 1
             log.error(f"Rolling refresh error {race.get('race_uid')}: {e}")
 
-    return {"ok": True, "results_captured": results_captured}
+    summary = {
+        "ok": True,
+        "results_captured": results_captured,
+        "late_scratches_applied": late_scratches_applied,
+        "upcoming_checked": checked,
+        "failed": failed,
+    }
 
-
+    log.info(f"Rolling refresh summary: {summary}")
+    return summary
 # ----------------------------------------------------------------
 # READ HELPERS
 # ----------------------------------------------------------------
@@ -1367,14 +1848,30 @@ def get_next_race(anchor_time=None):
         )
 
         if not races:
+            log.info("get_next_race: no upcoming races found")
             return None
 
+        # Prefer valid jump_time rows first
+        valid_races = [r for r in races if r.get("jump_time")]
+        scan_pool = valid_races if valid_races else races
+
         if anchor_time:
-            for race in races:
-                if race.get("jump_time") and race["jump_time"] > anchor_time:
+            for race in scan_pool:
+                jump_time = race.get("jump_time")
+                if jump_time and jump_time > anchor_time:
+                    log.info(
+                        f"get_next_race: selected {race.get('track')} R{race.get('race_num')} "
+                        f"jump_time={jump_time} anchor={anchor_time}"
+                    )
                     return race
 
-        return races[0]
+        chosen = scan_pool[0]
+        log.info(
+            f"get_next_race: fallback selected {chosen.get('track')} R{chosen.get('race_num')} "
+            f"jump_time={chosen.get('jump_time')}"
+        )
+        return chosen
+
     except Exception as e:
         log.error(f"Get next race failed: {e}")
         return None
@@ -1385,7 +1882,7 @@ def get_board(limit=10):
         from db import get_db, T
 
         db = get_db()
-        return (
+        rows = (
             db.table(T("today_races"))
             .select("*")
             .eq("date", date.today().isoformat())
@@ -1397,6 +1894,10 @@ def get_board(limit=10):
             .data
             or []
         )
+
+        log.info(f"get_board: returning {len(rows)} races")
+        return rows
+
     except Exception as e:
         log.error(f"Get board failed: {e}")
         return []
@@ -1407,21 +1908,26 @@ def get_race_with_runners(track, race_num):
         from db import get_db, T
 
         db = get_db()
+        track = (track or "").strip().lower()
+
         races = (
             db.table(T("today_races"))
             .select("*")
             .eq("date", date.today().isoformat())
             .eq("track", track)
             .eq("race_num", race_num)
+            .limit(1)
             .execute()
             .data
             or []
         )
 
         if not races:
+            log.warning(f"get_race_with_runners: no race found for {track} R{race_num}")
             return None, []
 
         race = races[0]
+
         runners = (
             db.table(T("today_runners"))
             .select("*")
@@ -1432,11 +1938,14 @@ def get_race_with_runners(track, race_num):
             .data
             or []
         )
+
+        log.info(
+            f"get_race_with_runners: {track} R{race_num} "
+            f"race_uid={race.get('race_uid')} runners={len(runners)}"
+        )
+
         return race, runners
+
     except Exception as e:
         log.error(f"Get race with runners failed: {e}")
         return None, []
-
-
-if __name__ == "__main__":
-    full_sweep()
