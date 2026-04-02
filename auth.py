@@ -161,29 +161,40 @@ def create_user(username: str, password: str, role: str = "operator") -> dict:
 # ─────────────────────────────────────────────────────────────────
 def bootstrap_admin():
     """
-    Create default users if the users table is empty.
+    Ensure required default accounts exist.
 
-    LIVE mode:  creates admin only (from ADMIN_PASSWORD env var).
-                Operator/viewer must be created manually via /api/users/create.
-    TEST mode:  also creates operator + viewer demo accounts.
+    LIVE mode:
+      - ensure admin exists
+      - operator/viewer are NOT auto-created
+
+    TEST mode:
+      - ensure admin/operator/viewer all exist
     """
     try:
-        from db import get_db, safe_query, T
-        count = safe_query(
-            lambda: get_db().table(T("users")).select("id", count="exact").execute().count, None
-        )
-        if count is None or count == 0:
-            admin_pw = os.environ.get("ADMIN_PASSWORD", "DemonPulse2025!")
+        admin_pw = os.environ.get("ADMIN_PASSWORD", "DemonPulse2025!")
+
+        admin_user = get_user_by_username("admin")
+        if not admin_user:
             create_user("admin", admin_pw, "admin")
             log.info(f"[{env.mode}] Bootstrapped admin user")
+        else:
+            log.info(f"[{env.mode}] Admin user already exists")
 
-            if env.is_test:
-                # Demo accounts for TEST mode only
+        if env.is_test:
+            if not get_user_by_username("operator"):
                 create_user("operator", "Operator2025!", "operator")
-                create_user("viewer",   "Viewer2025!",   "viewer")
-                log.warning("[TEST] Bootstrapped demo operator + viewer accounts")
+                log.warning("[TEST] Bootstrapped operator user")
             else:
-                log.info("[LIVE] Only admin bootstrapped — create operator/viewer via admin panel")
+                log.info("[TEST] Operator user already exists")
+
+            if not get_user_by_username("viewer"):
+                create_user("viewer", "Viewer2025!", "viewer")
+                log.warning("[TEST] Bootstrapped viewer user")
+            else:
+                log.info("[TEST] Viewer user already exists")
+        else:
+            log.info("[LIVE] Only admin is auto-managed at bootstrap")
+
     except Exception as e:
         log.error(f"Bootstrap failed: {e}")
 
