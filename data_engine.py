@@ -86,20 +86,26 @@ def _fetch_playwright(url, wait_ms=2000):
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
-    headless=True,
-    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-)
-            page = browser.new_page(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             )
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            page.wait_for_timeout(wait_ms)
+
+            page = browser.new_page(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                viewport={"width": 1280, "height": 800},
+            )
+
+            page.goto(url, timeout=60000, wait_until="networkidle")
+            page.wait_for_selector("a[href*='/racing/']", timeout=10000)
+
             content = page.content()
             browser.close()
             return content
+
     except ImportError:
         log.warning("Playwright not available")
         return ""
+
     except Exception as e:
         log.error(f"Playwright failed for {url}: {e}")
         log_source_call(
