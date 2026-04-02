@@ -35,12 +35,9 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────
 def startup():
     try:
-        import threading
-        from scheduler import run_scheduler
-
-        threading.Thread(target=run_scheduler, daemon=True).start()
-
-        log.info("Scheduler started (threaded)")
+        from scheduler import start_scheduler
+        start_scheduler()
+        log.info("Scheduler started")
     except Exception as e:
         log.error(f"Scheduler failed: {e}")
 
@@ -56,9 +53,8 @@ def startup():
     except Exception:
         pass
 
-    # Lock mode after startup so it cannot be changed mid-process
-    # (runtime switches still go through env.switch_mode which requires admin)
-    # env.lock()  # uncomment to fully lock; left unlocked to allow admin switch
+    # env.lock()  # uncomment if you want to hard-lock mode after startup
+
 
 startup()
 
