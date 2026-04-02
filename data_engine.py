@@ -38,7 +38,7 @@ LIFECYCLE = [
 # Format: date_code_track_racenum  e.g. 2026-04-01_GREYHOUND_horsham_9
 # ----------------------------------------------------------------
 def make_race_uid(race_date, code, track, race_num):
-    return f"{race_date}_{code}_{track}_{# ----------------------------------------------------------------
+    return f"{race_date}_{code}_{track}_{race_num}"
 # FETCH - with rate limiting and fallback
 # ----------------------------------------------------------------
 def fetch_page(url, use_playwright=False, wait_ms=2000):
