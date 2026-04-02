@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 # ── ENV must be imported first — it configures everything ──────────
 from env import env, EnvViolation, env_violation_response
 
-app = Flask(__name__, static_folder="static", static_url_path="")
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("FLASK_SECRET", "dpv8-flask-secret-change-me")
 
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
