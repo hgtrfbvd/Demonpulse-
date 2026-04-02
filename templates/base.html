@@ -1,177 +1,54 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DEMONPULSE V7 — {% block title %}Dashboard{% endblock %}</title>
-<link rel="stylesheet" href="/static/css/style.css">
-<link rel="icon" href="/static/img/logo.png">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <meta charset="UTF-8">
+    <title>{% block title %}DemonPulse{% endblock %}</title>
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="/static/css/tokens.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/layout.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/tabs.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
 
-<!-- TOP BAR -->
-<header class="topbar">
-  <div class="tb-logo">
-    <img src="/static/img/logo.png" alt="DP">
-    <div class="tb-brand">
-      <div class="tb-title">DEMONPULSE</div>
-      <div class="tb-sub">SYNDICATE V7</div>
-    </div>
-  </div>
-  <div class="tb-stats">
-    <div class="tb-stat">
-      <div class="tb-stat-val neu">${{ "%.0f"|format(state.bankroll or 0) }}</div>
-      <div class="tb-stat-lbl">BANKROLL</div>
-    </div>
-    <div class="tb-stat">
-      <div class="tb-stat-val {% if (session.total or 0) >= 0 %}pos{% else %}neg{% endif %}">{{ "+$%.2f"|format(session.total) if (session.total or 0) >= 0 else "-$%.2f"|format((session.total or 0)|abs) }}</div>
-      <div class="tb-stat-lbl">P/L</div>
-    </div>
-    <div class="tb-stat hide-xs">
-      <div class="tb-stat-val neu">{{ session.bets or 0 }}</div>
-      <div class="tb-stat-lbl">BETS</div>
-    </div>
-    <div class="tb-stat hide-xs">
-      <div class="tb-stat-val neu">{% if session.bets and session.bets > 0 %}{{ "%.0f"|format((session.wins or 0)/session.bets*100) }}%{% else %}—{% endif %}</div>
-      <div class="tb-stat-lbl">STRIKE</div>
-    </div>
-  </div>
-  <div class="tb-right">
-    <div class="tb-dot {{ state.sys_state|lower if state.sys_state else 'stable' }}" title="{{ state.sys_state or 'STABLE' }}"></div>
-    <input type="text" id="time-anchor" placeholder="HH:MM" value="{{ state.time_anchor or '' }}" onchange="setTime(this.value)">
-    <div class="tb-code" onclick="cycleCode()" title="Click to change code">{{ (state.active_code or 'GREYHOUND')[:4] }}</div>
-    <button class="btn btn-ghost btn-sm" onclick="showBankModal()" title="Set Bankroll">💰</button>
-  </div>
-</header>
+<div class="topbar">
+    <div class="logo">DEMONPULSE</div>
 
-<!-- TAB NAVIGATION -->
-<nav class="tabnav">
-  <a href="/" class="tabitem {% if page=='home' %}active{% endif %}">
-    <span class="tab-ico">🎯</span><span class="tab-lbl">LIVE</span>
-  </a>
-  <a href="/backtest" class="tabitem {% if page=='backtest' %}active{% endif %}">
-    <span class="tab-ico">🔬</span><span class="tab-lbl">BACKTEST</span>
-  </a>
-  <a href="/performance" class="tabitem {% if page=='performance' %}active{% endif %}">
-    <span class="tab-ico">📈</span><span class="tab-lbl">PERF</span>
-  </a>
-  <a href="/data" class="tabitem {% if page=='data' %}active{% endif %}">
-    <span class="tab-ico">📋</span><span class="tab-lbl">DATA</span>
-  </a>
-  <a href="/quality" class="tabitem {% if page=='quality' %}active{% endif %}">
-    <span class="tab-ico">🔍</span><span class="tab-lbl">QUALITY</span>
-  </a>
-  <div class="tabitem" onclick="toggleSettings()">
-    <span class="tab-ico">⚙️</span><span class="tab-lbl">SETTINGS</span>
-  </div>
-</nav>
-
-<!-- SETTINGS PANEL (collapsible) -->
-<div id="settings-panel" style="display:none;background:#0a0a0a;border-bottom:2px solid #cc0000;padding:14px 16px;">
-  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
-    <div>
-      <div class="tiny text-dim" style="margin-bottom:5px;letter-spacing:2px;">BANK MODE</div>
-      <div style="display:flex;gap:5px;">
-        {% for m in ['SAFE','STANDARD','AGGRESSIVE'] %}
-        <button onclick="setState('bank_mode','{{m}}')" style="background:{% if state.bank_mode==m %}#cc0000{% else %}transparent{% endif %};border:1px solid {% if state.bank_mode==m %}#cc0000{% else %}#2a2a2a{% endif %};color:{% if state.bank_mode==m %}#fff{% else %}#555{% endif %};padding:5px 10px;border-radius:3px;font-family:monospace;font-size:9px;cursor:pointer;letter-spacing:1px;">{{m}}</button>
-        {% endfor %}
-      </div>
+    <div class="topbar-right">
+        <div id="envBadge" class="badge"></div>
+        <div id="shadowStatus" class="badge"></div>
+        <div id="userInfo"></div>
     </div>
-    <div>
-      <div class="tiny text-dim" style="margin-bottom:5px;letter-spacing:2px;">POSTURE</div>
-      <div style="display:flex;gap:5px;">
-        {% for p in ['NORMAL','TIGHTENED','PROTECTIVE'] %}
-        <button onclick="setState('posture','{{p}}')" style="background:{% if state.posture==p %}#cc0000{% else %}transparent{% endif %};border:1px solid {% if state.posture==p %}#cc0000{% else %}#2a2a2a{% endif %};color:{% if state.posture==p %}#fff{% else %}#555{% endif %};padding:5px 10px;border-radius:3px;font-family:monospace;font-size:9px;cursor:pointer;letter-spacing:1px;">{{p}}</button>
-        {% endfor %}
-      </div>
-    </div>
-    <div>
-      <div class="tiny text-dim" style="margin-bottom:5px;letter-spacing:2px;">CODE</div>
-      <div style="display:flex;gap:5px;">
-        {% for c in ['GREYHOUND','HORSE','HARNESS'] %}
-        <button onclick="setState('active_code','{{c}}')" style="background:{% if state.active_code==c %}#cc0000{% else %}transparent{% endif %};border:1px solid {% if state.active_code==c %}#cc0000{% else %}#2a2a2a{% endif %};color:{% if state.active_code==c %}#fff{% else %}#555{% endif %};padding:5px 10px;border-radius:3px;font-family:monospace;font-size:9px;cursor:pointer;letter-spacing:1px;">{{c[:3]}}</button>
-        {% endfor %}
-      </div>
-    </div>
-    <div style="margin-left:auto;">
-      <button class="btn btn-sm" onclick="killSwitch()" style="background:transparent;border:1px solid #cc0000;color:#ff3333;letter-spacing:1px;">⛔ KILL SWITCH</button>
-    </div>
-  </div>
-  <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1e1e1e;display:flex;gap:16px;flex-wrap:wrap;">
-    <span class="tiny"><span class="text-dim">BANK </span><strong style="color:#e0e0e0">${{ "%.2f"|format(state.bankroll or 0) }}</strong></span>
-    <span class="tiny"><span class="text-dim">P/L </span><strong style="color:{% if (session.total or 0)>=0 %}#00cc44{% else %}#ff3333{% endif %}">{{ "+$%.2f"|format(session.total) if (session.total or 0)>=0 else "-$%.2f"|format((session.total or 0)|abs) }}</strong></span>
-    <span class="tiny"><span class="text-dim">PENDING </span><strong style="color:#ffaa00">{{ session.pending or 0 }}</strong></span>
-    <span class="tiny"><span class="text-dim">VARIANCE </span><strong style="color:#ffaa00">{{ state.variance or 'NORMAL' }}</strong></span>
-    <span class="tiny"><span class="text-dim">GRV </span><strong style="color:#00cc44">BANNED ✓</strong></span>
-  </div>
 </div>
 
-<!-- MAIN CONTENT -->
-<main class="main">
-  {% block content %}{% endblock %}
-</main>
+<div class="layout">
 
-<!-- BANKROLL MODAL -->
-<div id="bank-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;align-items:center;justify-content:center;">
-  <div style="background:#111;border:1px solid #cc0000;border-radius:6px;padding:24px;width:300px;max-width:90vw;">
-    <div style="font-family:monospace;font-size:13px;color:#ff3333;letter-spacing:2px;margin-bottom:14px;">SET BANKROLL</div>
-    <input type="number" id="bank-input" class="dp-input" placeholder="1000.00" style="margin-bottom:12px;">
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-red" style="flex:1;" onclick="saveBankroll()">CONFIRM</button>
-      <button class="btn btn-ghost" style="flex:1;" onclick="hideBankModal()">CANCEL</button>
+    <div class="sidebar">
+        <a href="/" class="nav-item">Home</a>
+        <a href="/live" class="nav-item">Live</a>
+        <a href="/simulator" class="nav-item">Simulator</a>
+        <a href="/betting" class="nav-item">Betting</a>
+        <a href="/reports" class="nav-item">Reports</a>
+        <a href="/learning" class="nav-item">AI Learning</a>
+        <a href="/backtesting" class="nav-item">Backtesting</a>
+        <a href="/settings" class="nav-item">Settings</a>
     </div>
-  </div>
+
+    <div class="content">
+        {% block content %}{% endblock %}
+    </div>
+
 </div>
 
-<script>
-const SESSION_ID = 'dpv7_' + (localStorage.getItem('dpv7_sid') || (()=>{const id=Date.now().toString(36);localStorage.setItem('dpv7_sid',id);return id;})());
-
-function setTime(val){ fetch('/api/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({time_anchor:val})}); }
-
-function cycleCode(){
-  const codes=['GREYHOUND','HORSE','HARNESS'];
-  const el=document.querySelector('.tb-code');
-  const cur=el.textContent.trim();
-  const fullCode=codes.find(c=>c.startsWith(cur))||'GREYHOUND';
-  const next=codes[(codes.indexOf(fullCode)+1)%codes.length];
-  el.textContent=next.slice(0,4);
-  setState('active_code',next);
-}
-
-function setState(key,val){
-  fetch('/api/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[key]:val})}).then(()=>location.reload());
-}
-
-function toggleSettings(){
-  const p=document.getElementById('settings-panel');
-  p.style.display=p.style.display==='none'?'block':'none';
-}
-
-function showBankModal(){ document.getElementById('bank-modal').style.display='flex'; }
-function hideBankModal(){ document.getElementById('bank-modal').style.display='none'; }
-
-function saveBankroll(){
-  const val=parseFloat(document.getElementById('bank-input').value);
-  if(!val||val<=0)return;
-  fetch('/api/bankroll/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bankroll:val})}).then(()=>location.reload());
-}
-
-function killSwitch(){
-  if(confirm('KILL SWITCH: Stop all betting and lock session?')){
-    setState('posture','PROTECTIVE');
-  }
-}
-
-setInterval(()=>{
-  fetch('/api/session/pl').then(r=>r.json()).then(d=>{
-    const pl=d.total||0;
-    const els=document.querySelectorAll('.tb-stat-val');
-    if(els[1]){ els[1].textContent=(pl>=0?'+$':'-$')+Math.abs(pl).toFixed(2); els[1].className='tb-stat-val '+(pl>=0?'pos':'neg'); }
-  });
-},30000);
-</script>
-
+<script src="/static/js/core.js"></script>
 {% block scripts %}{% endblock %}
+
 </body>
 </html>
