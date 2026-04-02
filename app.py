@@ -469,28 +469,36 @@ def api_users_sessions(user_id):
 @app.route("/api/races/upcoming")
 def api_races_upcoming():
     from auth import get_current_user
-    user = get_current_user()  # allow None (no auth block)
+    from db import get_db, safe_query, T
+    from signals import get_signal_or_demo
+
+    # Public-friendly route: allow unauthenticated board view
+    _ = get_current_user()
 
     try:
-        from db import get_db, safe_query, T
-        from signals import get_signal_or_demo
-
         races = safe_query(
             lambda: get_db().table(T("today_races")).select("*")
-                    .eq("date", date.today().isoformat())
-                    .order("jump_time").limit(30).execute().data,
-            []
+            .eq("date", date.today().isoformat())
+            .eq("status", "upcoming")
+            .eq("code", "GREYHOUND")
+            .order("jump_time")
+            .limit(30)
+            .execute()
+            .data,
+            [],
         ) or []
 
         enriched = []
-        for i, r in enumerate(races):
-            sig = get_signal_or_demo(r.get("race_uid"), i)
-            jump_ts = _compute_jump_ts(r.get("jump_time"))
-            enriched.append({
-                **r,
-                "signal_data": sig,
-                "jump_ts": jump_ts
-            })
+        for i, race in enumerate(races):
+            sig = get_signal_or_demo(race.get("race_uid"), i)
+            jump_ts = _compute_jump_ts(race.get("jump_time"))
+            enriched.append(
+                {
+                    **race,
+                    "signal_data": sig,
+                    "jump_ts": jump_ts,
+                }
+            )
 
         return jsonify(enriched)
 
@@ -498,41 +506,64 @@ def api_races_upcoming():
         log.error(f"Upcoming races error: {e}")
         return jsonify([])
 
+
 @app.route("/api/races/<race_uid>/analysis")
 def api_race_analysis(race_uid):
     from auth import get_current_user
+    from db import get_db, safe_query, T
+    from scorer import score_race
+    from signals import generate_signal, get_signal
+
     user = get_current_user()
-    if not user: return jsonify({"error": "Unauthorized"}), 401
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
     try:
-        from db import get_db, safe_query, T
-        from scorer import score_race
-        from signals import generate_signal, get_signal
         race = safe_query(
-            lambda: get_db().table(T("today_races")).select("*").eq("race_uid", race_uid).single().execute().data)
+            lambda: get_db().table(T("today_races")).select("*")
+            .eq("race_uid", race_uid)
+            .single()
+            .execute()
+            .data
+        )
+
         runners = safe_query(
-            lambda: get_db().table(T("today_runners")).select("*").eq("race_uid", race_uid).order("box_num").execute().data, []
+            lambda: get_db().table(T("today_runners")).select("*")
+            .eq("race_uid", race_uid)
+            .order("box_num")
+            .execute()
+            .data,
+            [],
         ) or []
+
         if not race:
             if env.is_test:
                 return jsonify(_demo_race_analysis())
             return jsonify({"error": "Race not found"}), 404
+
         scored = score_race(race, runners, race.get("track", ""))
         sig = get_signal(race_uid) or generate_signal(scored)
 
         stored_score = safe_query(
-            lambda: get_db().table("scored_races").select("*")
-                    .eq("race_uid", race_uid).single().execute().data
+            lambda: get_db().table(T("scored_races")).select("*")
+            .eq("race_uid", race_uid)
+            .single()
+            .execute()
+            .data
         )
 
-        return jsonify({
-            "race": race,
-            "runners": runners,
-            "scored": scored,
-            "signal": sig,
-            "stored_score": stored_score,
-        })
+        return jsonify(
+            {
+                "race": race,
+                "runners": runners,
+                "scored": scored,
+                "signal": sig,
+                "stored_score": stored_score,
+            }
+        )
+
     except Exception as e:
-        log.error(f"Race analysis error: {e}")
+        log.error(f"Race analysis error for {race_uid}: {e}")
         if env.is_test:
             return jsonify(_demo_race_analysis())
         return jsonify({"error": str(e)}), 500
