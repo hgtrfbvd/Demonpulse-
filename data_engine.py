@@ -38,10 +38,7 @@ LIFECYCLE = [
 # Format: date_code_track_racenum  e.g. 2026-04-01_GREYHOUND_horsham_9
 # ----------------------------------------------------------------
 def make_race_uid(race_date, code, track, race_num):
-    return f"{race_date}_{code}_{track}_{race_num}"
-
-
-# ----------------------------------------------------------------
+    return f"{race_date}_{code}_{track}_{# ----------------------------------------------------------------
 # FETCH - with rate limiting and fallback
 # ----------------------------------------------------------------
 def fetch_page(url, use_playwright=False, wait_ms=2000):
@@ -89,6 +86,7 @@ def _fetch_playwright(url, wait_ms=2000):
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
+                executable_path="/opt/render/.cache/ms-playwright/chromium-1117/chrome-linux/chrome",
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             )
