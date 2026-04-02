@@ -7,6 +7,7 @@ ENV NOTES:
   TEST: bootstrap also creates demo users (admin/operator/viewer)
         demo credentials only work in TEST mode
 """
+
 import os
 import logging
 import hashlib
@@ -17,7 +18,9 @@ import base64
 import secrets
 from functools import wraps
 from datetime import datetime
+
 from flask import request, jsonify, g
+
 from env import env
 
 log = logging.getLogger(__name__)
@@ -27,8 +30,19 @@ TOKEN_TTL = int(os.environ.get("SESSION_TIMEOUT_MIN", "480")) * 60
 
 ROLE_PERMISSIONS = {
     "admin": {
-        "home", "live", "betting", "reports", "simulator", "ai_learning",
-        "settings", "audit", "users", "backtest", "data", "quality", "performance"
+        "home",
+        "live",
+        "betting",
+        "reports",
+        "simulator",
+        "ai_learning",
+        "settings",
+        "audit",
+        "users",
+        "backtest",
+        "data",
+        "quality",
+        "performance",
     },
     "operator": {"home", "live", "betting", "reports"},
     "viewer": {"home", "reports"},
@@ -57,29 +71,34 @@ def _sign(h: str, p: str) -> str:
 
 
 def generate_token(user_id: str, username: str, role: str) -> tuple[str, str]:
-    """Returns (token, jti). Register jti in user_sessions after calling this."""
+    """Returns (token, jti)."""
     now = int(time.time())
     jti = secrets.token_hex(16)
 
-    header = _b64e(json.dumps(
-        {"alg": "HS256", "typ": "JWT"},
-        separators=(",", ":")
-    ).encode())
+    header = _b64e(
+        json.dumps(
+            {"alg": "HS256", "typ": "JWT"},
+            separators=(",", ":"),
+        ).encode()
+    )
 
-    payload = _b64e(json.dumps(
-        {
-            "sub": user_id,
-            "username": username,
-            "role": role,
-            "iat": now,
-            "exp": now + TOKEN_TTL,
-            "jti": jti,
-            "env": env.mode,
-        },
-        separators=(",", ":")
-    ).encode())
+    payload = _b64e(
+        json.dumps(
+            {
+                "sub": user_id,
+                "username": username,
+                "role": role,
+                "iat": now,
+                "exp": now + TOKEN_TTL,
+                "jti": jti,
+                "env": env.mode,
+            },
+            separators=(",", ":"),
+        ).encode()
+    )
 
-    return f"{header}.{payload}.{_sign(header, payload)}", jti
+    token = f"{header}.{payload}.{_sign(header, payload)}"
+    return token, jti
 
 
 def decode_token(token: str) -> dict | None:
@@ -89,7 +108,6 @@ def decode_token(token: str) -> dict | None:
             return None
 
         h, p, sig = parts
-
         expected_sig = _sign(h, p)
         if not hmac.compare_digest(sig, expected_sig):
             return None
@@ -119,11 +137,13 @@ def decode_token(token: str) -> dict | None:
                 from users import is_session_revoked
                 if is_session_revoked(jti):
                     return None
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"Session revoke check failed for jti={jti}: {e}")
 
         return payload
-    except Exception:
+
+    except Exception as e:
+        log.warning(f"Token decode failed: {e}")
         return None
 
 
@@ -217,8 +237,21 @@ def create_user(username: str, password: str, role: str = "operator") -> dict:
     from db import get_db, T
     import uuid
 
+    username = (username or "").strip().lower()
+
+    if not username:
+        raise ValueError("Username is required")
+
     if role not in ROLE_PERMISSIONS:
         raise ValueError(f"Invalid role: {role}")
+
+    existing = get_user_by_username(username)
+    if existing:
+        return {
+            "id": existing["id"],
+            "username": existing["username"],
+            "role": existing["role"],
+        }
 
     user_id = str(uuid.uuid4())
 
@@ -226,14 +259,16 @@ def create_user(username: str, password: str, role: str = "operator") -> dict:
         result = (
             get_db()
             .table(T("users"))
-            .insert({
-                "id": user_id,
-                "username": username.lower(),
-                "password_hash": hash_password(password),
-                "role": role,
-                "active": True,
-                "created_at": datetime.utcnow().isoformat(),
-            })
+            .insert(
+                {
+                    "id": user_id,
+                    "username": username,
+                    "password_hash": hash_password(password),
+                    "role": role,
+                    "active": True,
+                    "created_at": datetime.utcnow().isoformat(),
+                }
+            )
             .execute()
         )
     except Exception as e:
@@ -243,7 +278,9 @@ def create_user(username: str, password: str, role: str = "operator") -> dict:
     if not getattr(result, "data", None):
         raise RuntimeError("USER_CREATE_FAILED")
 
-    return {"id": user_id, "username": username.lower(), "role": role}
+    return {"id": user_id, "username": username, "role": role}
+
+
 def bootstrap_admin():
     """
     Ensure required default accounts exist.
@@ -285,16 +322,22 @@ def bootstrap_admin():
 
 
 # ─────────────────────────────────────────────────────────────────
-# DECORATORS
+# CURRENT USER / DECORATORS
 # ─────────────────────────────────────────────────────────────────
 def get_current_user():
     token = None
+
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        token = auth[7:]
+        token = auth[7:].strip()
+
     if not token:
         token = request.cookies.get("dp_token")
-    return decode_token(token) if token else None
+
+    if not token:
+        return None
+
+    return decode_token(token)
 
 
 def require_auth(fn):
@@ -305,6 +348,7 @@ def require_auth(fn):
             return jsonify({"error": "Unauthorized", "code": 401}), 401
         g.user = user
         return fn(*args, **kwargs)
+
     return wrapper
 
 
@@ -315,6 +359,7 @@ def require_role(*roles):
             user = get_current_user()
             if not user:
                 return jsonify({"error": "Unauthorized", "code": 401}), 401
+
             if user.get("role") not in roles:
                 try:
                     from audit import log_event
@@ -323,16 +368,33 @@ def require_role(*roles):
                         user["username"],
                         "ACCESS_DENIED",
                         request.endpoint or "unknown",
-                        {"roles_required": list(roles)}
+                        {"roles_required": list(roles)},
                     )
                 except Exception:
                     pass
+
                 return jsonify({"error": "Forbidden", "code": 403}), 403
+
             g.user = user
             return fn(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 def can_access(user: dict, page: str) -> bool:
-    return page in ROLE_PERMISSIONS.get(user.get("role", "viewer"), set())
+    """
+    Resolve page access.
+    If user_permissions exists, use that.
+    Otherwise fall back to role defaults.
+    """
+    if not user:
+        return False
+
+    try:
+        from users import resolve_permissions
+        perms = resolve_permissions(user.get("sub"), user.get("role", "viewer"))
+        return page in perms
+    except Exception:
+        return page in ROLE_PERMISSIONS.get(user.get("role", "viewer"), set())
