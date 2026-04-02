@@ -30,7 +30,6 @@ RACE_PATH_RE = re.compile(
     r"^/racing/([^/]+)/(\d{4}-\d{2}-\d{2})(?:/(\d+)(?:/([^/?#]+))?)?"
 )
 
-# State offsets to AEST Brisbane (UTC+10)
 STATE_OFFSETS = {
     "NSW": -1,
     "VIC": -1,
@@ -41,7 +40,6 @@ STATE_OFFSETS = {
     "NZ": -2,
 }
 
-# Race lifecycle states (feature 36)
 LIFECYCLE = [
     "fetched",
     "normalized",
@@ -53,16 +51,54 @@ LIFECYCLE = [
     "learned",
 ]
 
+TRACK_STATES = {
+    "casino": "NSW",
+    "gosford": "NSW",
+    "wentworth-park": "NSW",
+    "bulli": "NSW",
+    "maitland": "NSW",
+    "gunnedah": "NSW",
+    "grafton": "NSW",
+    "richmond": "NSW",
+    "wagga": "NSW",
+    "taree": "NSW",
+    "dubbo": "NSW",
+    "nowra": "NSW",
+    "goulburn": "NSW",
+    "temora": "NSW",
+    "the-gardens": "NSW",
+    "broken-hill": "NSW",
+    "horsham": "VIC",
+    "bendigo": "VIC",
+    "ballarat": "VIC",
+    "sandown": "VIC",
+    "meadows": "VIC",
+    "shepparton": "VIC",
+    "warragul": "VIC",
+    "sale": "VIC",
+    "geelong": "VIC",
+    "traralgon": "VIC",
+    "cranbourne": "VIC",
+    "warrnambool": "VIC",
+    "ladbrokes-q1-lakeside": "QLD",
+    "ladbrokes-q-straight": "QLD",
+    "ladbrokes-q2-parklands": "QLD",
+    "townsville": "QLD",
+    "capalaba": "QLD",
+    "rockhampton": "QLD",
+    "angle-park": "SA",
+    "mount-gambier": "SA",
+    "murray-bridge-straight": "SA",
+    "gawler": "SA",
+    "cannington": "WA",
+    "mandurah": "WA",
+    "launceston": "TAS",
+    "hobart": "TAS",
+}
+
 
 # ----------------------------------------------------------------
-# CANONICAL RACE UID (feature 2)
-# ----------------------------------------------------------------
-def make_race_uid(race_date, code, track, race_num):
-    return f"{race_date}_{code}_{track}_{race_num}"
-
-
-# ----------------------------------------------------------------
-# SOURCE HEALTH (feature 8)
+# SOURCE HEALTH
 # ----------------------------------------------------------------
 _source_health = {}
 
@@ -93,8 +129,110 @@ def get_source_health():
 
 
 # ----------------------------------------------------------------
-# LOGGING HELPERS
+# CORE HELPERS
 # ----------------------------------------------------------------
+def make_race_uid(race_date, code, track, race_num):
+    return f"{race_date}_{code}_{track}_{race_num}"
+
+
+def detect_state(track):
+    return TRACK_STATES.get((track or "").lower(), "QLD")
+
+
+def to_aest(time_str, state):
+    if not time_str or ":" not in time_str:
+        return time_str
+    try:
+        parts = time_str.strip().split(":")
+        h, m = int(parts[0]), int(parts[1])
+        offset = STATE_OFFSETS.get(state, 0)
+        total = h * 60 + m + int(offset * 60)
+        total = total % (24 * 60)
+        return f"{total // 60:02d}:{total % 60:02d}"
+    except Exception:
+        return time_str
+
+
+def _domain_from_url(url):
+    try:
+        return urlparse(url).netloc or url
+    except Exception:
+        return url
+
+
+def _absolute_url(href):
+    if not href:
+        return ""
+    if href.startswith("http://") or href.startswith("https://"):
+        return href
+    if href.startswith("/"):
+        return f"{BASE_URL}{href}"
+    return f"{BASE_URL}/{href.lstrip('/')}"
+
+
+def _page_type(url):
+    url = (url or "").lower()
+    if "racecards" in url:
+        return "racecards"
+    if "scratchings" in url:
+        return "scratchings"
+    if "expert-form" in url:
+        return "expert_form"
+    return "meeting_or_result"
+
+
+def _content_markers_for_url(url):
+    kind = _page_type(url)
+
+    if kind == "racecards":
+        return ["/racing/", "racecards", "next to jump", "today", "meeting"]
+
+    if kind == "scratchings":
+        return ["scratchings", "scratching", "late scratching", "<table", "<tr"]
+
+    if kind == "expert_form":
+        return ["expert-form", "expert form", "grade", "m", "<tr"]
+
+    return ["/racing/", "race", "r1", "r2", "form", "<tr"]
+
+
+def _has_meaningful_content(url, html):
+    if not html:
+        return False
+
+    lower = html.lower()
+    markers = _content_markers_for_url(url)
+    hits = sum(1 for marker in markers if marker.lower() in lower)
+    racing_link_hits = lower.count("/racing/")
+
+    blocked_signals = [
+        "403 forbidden",
+        "access denied",
+        "request blocked",
+        "cf-error",
+        "captcha",
+        "attention required",
+    ]
+    if any(sig in lower for sig in blocked_signals):
+        return False
+
+    if racing_link_hits >= 3:
+        return True
+
+    return hits >= 2
+
+
+def _log_fetch_diagnostics(url, html, prefix="FETCH"):
+    try:
+        preview = (html or "")[:1200].replace("\n", " ").replace("\r", " ")
+        log.info(f"{prefix} DIAG url={url}")
+        log.info(f"{prefix} DIAG html_len={len(html or '')}")
+        log.info(f"{prefix} DIAG racing_refs={(html or '').lower().count('/racing/')}")
+        log.info(f"{prefix} DIAG preview={preview}")
+    except Exception:
+        pass
+
+
 def log_source_call(
     url,
     method,
@@ -129,25 +267,8 @@ def log_source_call(
         pass
 
 
-def _domain_from_url(url):
-    try:
-        return urlparse(url).netloc or url
-    except Exception:
-        return url
-
-
-def _absolute_url(href):
-    if not href:
-        return ""
-    if href.startswith("http://") or href.startswith("https://"):
-        return href
-    if href.startswith("/"):
-        return f"{BASE_URL}{href}"
-    return f"{BASE_URL}/{href.lstrip('/')}"
-
-
 # ----------------------------------------------------------------
-# FETCH - with rate limiting and fallback
+# FETCH
 # ----------------------------------------------------------------
 def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
     from cache import check_rate_limit
@@ -160,7 +281,6 @@ def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
 
     start = time.time()
 
-    # TheDogs is JS-heavy / often blocks static fetch, so Playwright is primary
     if use_playwright:
         result = _fetch_playwright(url, wait_ms)
         if result:
@@ -176,7 +296,6 @@ def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
             )
             return result
 
-    # Static fallback remains for non-blocked pages / resilience
     result = _fetch_static(url)
     duration_ms = int((time.time() - start) * 1000)
 
@@ -205,103 +324,6 @@ def fetch_page(url, use_playwright=False, wait_ms=PLAYWRIGHT_WAIT_MS):
     return ""
 
 
-def _page_type(url):
-    url = (url or "").lower()
-    if "racecards" in url:
-        return "racecards"
-    if "scratchings" in url:
-        return "scratchings"
-    if "expert-form" in url:
-        return "expert_form"
-    return "meeting_or_result"
-
-
-def _content_markers_for_url(url):
-    kind = _page_type(url)
-
-    if kind == "racecards":
-        return [
-            "/racing/",
-            "racecards",
-            "Next To Jump",
-            "Today",
-            "meeting",
-        ]
-
-    if kind == "scratchings":
-        return [
-            "scratchings",
-            "Scratching",
-            "Late Scratching",
-            "<table",
-            "<tr",
-        ]
-
-    if kind == "expert_form":
-        return [
-            "expert-form",
-            "Expert Form",
-            "Grade",
-            "m",
-            "<tr",
-        ]
-
-    return [
-        "/racing/",
-        "Race",
-        "R1",
-        "R2",
-        "Form",
-        "<tr",
-    ]
-
-
-def _has_meaningful_content(url, html):
-    if not html:
-        return False
-
-    lower = html.lower()
-    markers = _content_markers_for_url(url)
-
-    hits = 0
-    for marker in markers:
-        if marker.lower() in lower:
-            hits += 1
-
-    # Strong signal: race links in HTML
-    racing_link_hits = lower.count("/racing/")
-
-    # Block / shell detection
-    blocked_signals = [
-        "403 forbidden",
-        "access denied",
-        "request blocked",
-        "cf-error",
-        "captcha",
-        "attention required",
-    ]
-    blocked = any(sig in lower for sig in blocked_signals)
-
-    if blocked:
-        return False
-
-    if racing_link_hits >= 3:
-        return True
-
-    return hits >= 2
-
-
-def _log_fetch_diagnostics(url, html, prefix="FETCH"):
-    try:
-        preview = (html or "")[:1200].replace("\n", " ").replace("\r", " ")
-        log.info(f"{prefix} DIAG url={url}")
-        log.info(f"{prefix} DIAG html_len={len(html or '')}")
-        log.info(f"{prefix} DIAG racing_refs={(html or '').lower().count('/racing/')}")
-        log.info(f"{prefix} DIAG preview={preview}")
-    except Exception:
-        pass
-
-
 def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
     domain = _domain_from_url(url)
     start = time.time()
@@ -312,11 +334,7 @@ def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                ],
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             )
 
             page = browser.new_page(
@@ -338,16 +356,9 @@ def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
                 }
             )
 
-            response = page.goto(
-                url,
-                timeout=PLAYWRIGHT_TIMEOUT_MS,
-                wait_until="domcontentloaded",
-            )
-
-            # Initial settle
+            response = page.goto(url, timeout=PLAYWRIGHT_TIMEOUT_MS, wait_until="domcontentloaded")
             page.wait_for_timeout(wait_ms)
 
-            # Try a few stronger readiness checks without hard-failing
             selectors = [
                 "a[href*='/racing/']",
                 "table",
@@ -363,17 +374,14 @@ def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
                 except Exception:
                     continue
 
-            # Additional settle after selector hit
             try:
                 page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
 
             page.wait_for_timeout(1500)
-
             content = page.content()
 
-            # If DOM still looks thin, try a controlled scroll + wait once more
             if not _has_meaningful_content(url, content):
                 try:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -408,7 +416,6 @@ def _fetch_playwright(url, wait_ms=PLAYWRIGHT_WAIT_MS):
     except ImportError:
         log.warning("Playwright not available")
         return ""
-
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
         log.error(f"Playwright failed for {url}: {e}")
@@ -491,71 +498,6 @@ def parse_html(html):
     except Exception as e:
         log.error(f"HTML parse failed: {e}")
         return None
-def to_aest(time_str, state):
-    if not time_str or ":" not in time_str:
-        return time_str
-    try:
-        parts = time_str.strip().split(":")
-        h, m = int(parts[0]), int(parts[1])
-        offset = STATE_OFFSETS.get(state, 0)
-        total = h * 60 + m + int(offset * 60)
-        total = total % (24 * 60)
-        return f"{total // 60:02d}:{total % 60:02d}"
-    except Exception:
-        return time_str
-
-
-# ----------------------------------------------------------------
-# STATE DETECTION
-# ----------------------------------------------------------------
-TRACK_STATES = {
-    "casino": "NSW",
-    "gosford": "NSW",
-    "wentworth-park": "NSW",
-    "bulli": "NSW",
-    "maitland": "NSW",
-    "gunnedah": "NSW",
-    "grafton": "NSW",
-    "richmond": "NSW",
-    "wagga": "NSW",
-    "taree": "NSW",
-    "dubbo": "NSW",
-    "nowra": "NSW",
-    "goulburn": "NSW",
-    "temora": "NSW",
-    "the-gardens": "NSW",
-    "broken-hill": "NSW",
-    "horsham": "VIC",
-    "bendigo": "VIC",
-    "ballarat": "VIC",
-    "sandown": "VIC",
-    "meadows": "VIC",
-    "shepparton": "VIC",
-    "warragul": "VIC",
-    "sale": "VIC",
-    "geelong": "VIC",
-    "traralgon": "VIC",
-    "cranbourne": "VIC",
-    "warrnambool": "VIC",
-    "ladbrokes-q1-lakeside": "QLD",
-    "ladbrokes-q-straight": "QLD",
-    "ladbrokes-q2-parklands": "QLD",
-    "townsville": "QLD",
-    "capalaba": "QLD",
-    "rockhampton": "QLD",
-    "angle-park": "SA",
-    "mount-gambier": "SA",
-    "murray-bridge-straight": "SA",
-    "gawler": "SA",
-    "cannington": "WA",
-    "mandurah": "WA",
-    "launceston": "TAS",
-    "hobart": "TAS",
-}
-
-
-def detect_state(track):
-    return TRACK_STATES.get((track or "").lower(), "QLD")
 
 
 # ----------------------------------------------------------------
@@ -571,13 +513,7 @@ def _extract_racing_links(soup):
         text = tag.get_text(" ", strip=True)
         if "/racing/" not in href:
             continue
-        links.append(
-            {
-                "href": href,
-                "abs_url": _absolute_url(href),
-                "text": text,
-            }
-        )
+        links.append({"href": href, "abs_url": _absolute_url(href), "text": text})
     return links
 
 
@@ -608,9 +544,7 @@ def _looks_like_completed_link(text):
     clean = (text or "").strip()
     if not clean:
         return False
-    if clean in {"1", "2", "3", "1st", "2nd", "3rd"}:
-        return True
-    return False
+    return clean in {"1", "2", "3", "1st", "2nd", "3rd"}
 
 
 # ----------------------------------------------------------------
@@ -648,10 +582,7 @@ def fetch_meetings():
         candidate_dates[race_date] = candidate_dates.get(race_date, 0) + 1
         candidate_tracks[track] = candidate_tracks.get(track, 0) + 1
 
-        if race_date != today:
-            continue
-
-        if track in seen_tracks:
+        if race_date != today or track in seen_tracks:
             continue
 
         seen_tracks.add(track)
@@ -668,14 +599,10 @@ def fetch_meetings():
         log.info(f"Found {len(meetings)} meetings for today={today}")
         return meetings
 
-    # Fallback 1:
-    # If page has race links but none match today's date, log strongest seen dates
     if candidate_dates:
         sorted_dates = sorted(candidate_dates.items(), key=lambda x: x[1], reverse=True)
         log.warning(f"No meetings matched today={today}. Top dates seen: {sorted_dates[:5]}")
 
-    # Fallback 2:
-    # Look for track/date patterns anywhere in raw HTML, not just in anchor hrefs
     html_matches = re.findall(
         r"/racing/([a-z0-9\-]+)/(\d{4}-\d{2}-\d{2})",
         html or "",
@@ -684,9 +611,7 @@ def fetch_meetings():
 
     for track, race_date in html_matches:
         track = (track or "").strip().lower()
-        if race_date != today:
-            continue
-        if not track or track in seen_tracks:
+        if race_date != today or not track or track in seen_tracks:
             continue
 
         seen_tracks.add(track)
@@ -703,8 +628,6 @@ def fetch_meetings():
         log.info(f"Fallback HTML scan found {len(meetings)} meetings for today={today}")
         return meetings
 
-    # Fallback 3:
-    # If we still have nothing, dump diagnostics so we stop guessing
     try:
         page_text = soup.get_text(" ", strip=True)[:1500]
         log.warning(f"Racecards diagnostics: today={today}, candidate_tracks={list(candidate_tracks)[:20]}")
@@ -714,6 +637,7 @@ def fetch_meetings():
 
     log.error("Racecards parsed but no meetings were extracted")
     return []
+
 
 # ----------------------------------------------------------------
 # FETCH SCRATCHINGS
@@ -729,10 +653,6 @@ def fetch_scratchings():
     scratchings = {}
     today = date.today().isoformat()
     page_text = soup.get_text(" ", strip=True)
-
-    # ------------------------------------------------------------
-    # PRIMARY TABLE PARSE
-    # ------------------------------------------------------------
     parsed_rows = 0
 
     for row in soup.select("tr"):
@@ -742,7 +662,6 @@ def fetch_scratchings():
 
         try:
             cell_texts = [c.get_text(" ", strip=True) for c in cells]
-
             track_raw = (cell_texts[0] or "").strip().lower()
             rnum_raw = (cell_texts[1] or "").strip()
             boxes_raw = (cell_texts[2] or "").strip()
@@ -783,19 +702,14 @@ def fetch_scratchings():
         except Exception:
             continue
 
-    # ------------------------------------------------------------
-    # FALLBACK TEXT PARSE
-    # ------------------------------------------------------------
     if not scratchings:
         text_lines = [ln.strip() for ln in soup.get_text("\n", strip=True).splitlines() if ln.strip()]
-
         current_track = None
         current_race = None
 
         for line in text_lines:
             line_lower = line.lower().strip()
 
-            # Track guess
             if line_lower:
                 guessed_track = line_lower.replace(" ", "-")
                 if guessed_track in TRACK_STATES:
@@ -803,7 +717,6 @@ def fetch_scratchings():
                     current_race = None
                     continue
 
-            # Race guess
             race_match = re.search(r"\bR(?:ace)?\s*([0-9]{1,2})\b", line, flags=re.IGNORECASE)
             if race_match:
                 try:
@@ -814,26 +727,23 @@ def fetch_scratchings():
                 except Exception:
                     pass
 
-            # Scratch box guess
-            if current_track and current_race:
-                if "scratch" in line_lower or "scratched" in line_lower:
-                    nums = []
-                    for b in re.findall(r"\b([0-9]{1,2})\b", line):
-                        try:
-                            bn = int(b)
-                            if 1 <= bn <= 12:
-                                nums.append(bn)
-                        except Exception:
-                            continue
+            if current_track and current_race and ("scratch" in line_lower or "scratched" in line_lower):
+                nums = []
+                for b in re.findall(r"\b([0-9]{1,2})\b", line):
+                    try:
+                        bn = int(b)
+                        if 1 <= bn <= 12:
+                            nums.append(bn)
+                    except Exception:
+                        continue
 
-                    if nums:
-                        uid = make_race_uid(today, "GREYHOUND", current_track, current_race)
-                        scratchings.setdefault(uid, [])
-                        for bn in nums:
-                            if bn not in scratchings[uid]:
-                                scratchings[uid].append(bn)
+                if nums:
+                    uid = make_race_uid(today, "GREYHOUND", current_track, current_race)
+                    scratchings.setdefault(uid, [])
+                    for bn in nums:
+                        if bn not in scratchings[uid]:
+                            scratchings[uid].append(bn)
 
-    # Sort values for stable output
     for uid in scratchings:
         scratchings[uid] = sorted(set(scratchings[uid]))
 
@@ -881,11 +791,7 @@ def fetch_meeting_races(meeting):
         parsed_date = parsed.get("date")
         race_num = parsed.get("race_num")
 
-        if parsed_track != track:
-            continue
-        if parsed_date != today:
-            continue
-        if race_num is None:
+        if parsed_track != track or parsed_date != today or race_num is None:
             continue
 
         candidate_nums.append(race_num)
@@ -917,8 +823,6 @@ def fetch_meeting_races(meeting):
         log.info(f"{track}: extracted {len(races)} races from anchor scan")
         return races
 
-    # Fallback 1:
-    # scan raw HTML for direct race paths for this track/date
     html_matches = re.findall(
         rf"/racing/{re.escape(track)}/{today}/(\d+)(?:/([^\"'<>?#]+))?",
         html or "",
@@ -957,8 +861,6 @@ def fetch_meeting_races(meeting):
         log.info(f"{track}: extracted {len(races)} races from raw HTML fallback")
         return races
 
-    # Fallback 2:
-    # infer race numbers from page text like R1 / Race 1 if link structure is weak
     page_text = soup.get_text(" ", strip=True)
     text_nums = set()
 
@@ -976,7 +878,6 @@ def fetch_meeting_races(meeting):
         seen.add(race_num)
 
         race_uid = make_race_uid(today, "GREYHOUND", track, race_num)
-
         races.append(
             {
                 "race_uid": race_uid,
@@ -997,7 +898,6 @@ def fetch_meeting_races(meeting):
         log.info(f"{track}: inferred {len(races)} races from text fallback")
         return races
 
-    # Diagnostics so we stop guessing when this fails
     try:
         preview = page_text[:1500]
         log.warning(f"{track}: no races extracted for today={today}")
@@ -1008,6 +908,7 @@ def fetch_meeting_races(meeting):
 
     log.error(f"{track}: meeting page parsed but no races extracted")
     return []
+
 
 # ----------------------------------------------------------------
 # FETCH EXPERT FORM
@@ -1021,21 +922,16 @@ def fetch_expert_form(race, scratchings):
 
     page_text = soup.get_text(" ", strip=True)
 
-    # ------------------------------------------------------------
-    # META EXTRACTION
-    # ------------------------------------------------------------
     jump_time = None
     grade = ""
     distance = ""
 
-    # Prefer explicit short time tokens first
     time_candidates = re.findall(r"\b(\d{1,2}:\d{2})\b", page_text)
     for candidate in time_candidates:
         jump_time = to_aest(candidate, race["state"])
         if jump_time:
             break
 
-    # Grade / distance from headings and info blocks first
     for tag in soup.select("h1, h2, h3, .race-title, .race-info, .event-info, .meeting-info"):
         text = tag.get_text(" ", strip=True)
 
@@ -1047,7 +943,6 @@ def fetch_expert_form(race, scratchings):
             if dm:
                 distance = dm.group(1)
 
-    # Fallback to whole page text
     if not grade:
         gm = re.search(r"\b(grade\s*[0-9a-z+\- ]+)\b", page_text, flags=re.IGNORECASE)
         if gm:
@@ -1062,9 +957,6 @@ def fetch_expert_form(race, scratchings):
     runners_raw = []
     seen_boxes = set()
 
-    # ------------------------------------------------------------
-    # PRIMARY TABLE PARSE
-    # ------------------------------------------------------------
     for row in soup.select("tr"):
         cells = row.select("td")
         if len(cells) < 2:
@@ -1078,10 +970,7 @@ def fetch_expert_form(race, scratchings):
                 continue
 
             box_num = int(box_text)
-            if box_num < 1 or box_num > 12:
-                continue
-
-            if box_num in seen_boxes:
+            if box_num < 1 or box_num > 12 or box_num in seen_boxes:
                 continue
 
             name = (cell_texts[1] or "").strip()
@@ -1139,21 +1028,11 @@ def fetch_expert_form(race, scratchings):
         except Exception:
             continue
 
-    # ------------------------------------------------------------
-    # FALLBACK TEXT PARSE
-    # Handles pages where rows are not in clean <tr><td> tables
-    # ------------------------------------------------------------
     if len(runners_raw) < 4:
         text_lines = [ln.strip() for ln in soup.get_text("\n", strip=True).splitlines() if ln.strip()]
-
         i = 0
         while i < len(text_lines):
             line = text_lines[i]
-
-            # Box + runner name patterns like:
-            # "1 Runner Name"
-            # "1. Runner Name"
-            # "1 - Runner Name"
             m = re.match(r"^([1-9]|1[0-2])[\.\-\s]+(.+)$", line)
             if not m:
                 i += 1
@@ -1175,11 +1054,9 @@ def fetch_expert_form(race, scratchings):
                 weight = None
                 career = None
 
-                # Look ahead a few lines for useful fields
                 lookahead = text_lines[i + 1:i + 6]
                 for txt in lookahead:
                     if not trainer and len(txt) <= 40 and not txt.isdigit():
-                        # weak trainer heuristic only if it isn't another boxed runner
                         if not re.match(r"^([1-9]|1[0-2])[\.\-\s]+", txt):
                             trainer = txt
 
@@ -1228,7 +1105,6 @@ def fetch_expert_form(race, scratchings):
 
     runners_raw.sort(key=lambda r: r.get("box_num") or 99)
 
-    # Diagnostics when parse is weak
     if len(runners_raw) < 4:
         preview = page_text[:1500]
         log.warning(f"{race.get('race_uid')}: weak expert form parse, runners={len(runners_raw)}")
@@ -1248,6 +1124,7 @@ def fetch_expert_form(race, scratchings):
 
     return form_meta, runners_raw
 
+
 # ----------------------------------------------------------------
 # FETCH RESULT
 # ----------------------------------------------------------------
@@ -1262,9 +1139,6 @@ def fetch_result(race):
     seen_pos = set()
     page_text = soup.get_text(" ", strip=True)
 
-    # ------------------------------------------------------------
-    # PRIMARY TABLE PARSE
-    # ------------------------------------------------------------
     for row in soup.select("tr"):
         cells = row.select("td")
         if len(cells) < 2:
@@ -1306,22 +1180,12 @@ def fetch_result(race):
                     except ValueError:
                         pass
 
-            positions.append(
-                {
-                    "pos": norm_pos,
-                    "name": name,
-                    "price": price,
-                    "time": win_time,
-                }
-            )
+            positions.append({"pos": norm_pos, "name": name, "price": price, "time": win_time})
             seen_pos.add(norm_pos)
 
         except Exception:
             continue
 
-    # ------------------------------------------------------------
-    # FALLBACK TEXT PARSE
-    # ------------------------------------------------------------
     if not positions:
         text_lines = [ln.strip() for ln in soup.get_text("\n", strip=True).splitlines() if ln.strip()]
 
@@ -1339,7 +1203,6 @@ def fetch_result(race):
             if len(remainder) < 2:
                 continue
 
-            # Try to strip trailing price/time tokens if embedded in same line
             name = remainder
             price = None
             win_time = None
@@ -1355,24 +1218,15 @@ def fetch_result(race):
             if time_match:
                 win_time = time_match.group(1)
 
-            # remove obvious trailing price/time fragments from name
             name = re.sub(r"\$[0-9]+(?:\.[0-9]+)?", "", name).strip()
             name = re.sub(r"\b[2-3][0-9]\.[0-9]{1,3}\b", "", name).strip(" -|")
 
-            positions.append(
-                {
-                    "pos": norm_pos,
-                    "name": name,
-                    "price": price,
-                    "time": win_time,
-                }
-            )
+            positions.append({"pos": norm_pos, "name": name, "price": price, "time": win_time})
             seen_pos.add(norm_pos)
 
             if len(positions) >= 3:
                 break
 
-    # Sort into 1 / 2 / 3 order
     positions.sort(key=lambda x: int(x["pos"]) if str(x.get("pos", "")).isdigit() else 99)
 
     if not positions:
@@ -1401,8 +1255,9 @@ def fetch_result(race):
 
     return result
 
+
 # ----------------------------------------------------------------
-# DATA COMPLETENESS SCORE (feature 5)
+# DATA COMPLETENESS SCORE
 # ----------------------------------------------------------------
 def score_completeness(race_meta, runners):
     checks = {
@@ -1430,7 +1285,7 @@ def score_completeness(race_meta, runners):
 
 
 # ----------------------------------------------------------------
-# CHANGE DETECTION (feature 37)
+# CHANGE DETECTION
 # ----------------------------------------------------------------
 def compute_race_hash(race_meta, runners, scratchings_snapshot):
     runner_bits = []
@@ -1457,7 +1312,7 @@ def compute_race_hash(race_meta, runners, scratchings_snapshot):
 
 
 # ----------------------------------------------------------------
-# SUPABASE STORAGE
+# STORAGE
 # ----------------------------------------------------------------
 def upsert_race(race_data):
     try:
@@ -1636,61 +1491,6 @@ def auto_settle_bets(result):
 def full_sweep():
     log.info("=== FULL SWEEP START ===")
     start = time.time()
-    meetings = fetch_meetings()
-
-    if not meetings:
-        log.warning("No meetings found")
-        return {"ok": True, "races": 0, "runners": 0, "elapsed": 0, "warning": "No meetings found"}
-
-    scratchings = fetch_scratchings()
-    total_races = 0
-    total_runners = 0
-
-    for meeting in meetings:
-        log.info(f"Processing {meeting['track']}...")
-        races = fetch_meeting_races(meeting)
-
-        for race in races:
-            try:
-                if race.get("status") == "upcoming":
-                    form_meta, runners = fetch_expert_form(race, scratchings)
-                    if form_meta:
-                        race.update(form_meta)
-
-                    completeness = score_completeness(race, runners)
-                    race["completeness_score"] = completeness["score"]
-                    race["completeness_quality"] = completeness["quality"]
-                    race["race_hash"] = compute_race_hash(
-                        race,
-                        runners,
-                        scratchings.get(race["race_uid"], []),
-                    )
-
-                    race_id = upsert_race(race)
-                    if race_id and runners:
-                        upsert_runners(race_id, race["race_uid"], runners)
-                        total_runners += len(runners)
-                else:
-                    result = fetch_result(race)
-                    if result:
-                        save_result(result)
-                        auto_settle_bets(result)
-                    upsert_race(race)
-
-                total_races += 1
-                time.sleep(0.4)
-            except Exception as e:
-                log.error(f"Race processing failed {race.get('race_uid')}: {e}")
-                mark_source_failed("thedogs.com.au")
-
-    elapsed = round(time.time() - start, 1)
-    log.info(f"=== SWEEP COMPLETE: {total_races} races, {total_runners} runners in {elapsed}s ===")
-    return {"ok": True, "races": total_races, "runners": total_runners, "elapsed": # ----------------------------------------------------------------
-# FULL SWEEP
-# ----------------------------------------------------------------
-def full_sweep():
-    log.info("=== FULL SWEEP START ===")
-    start = time.time()
 
     meetings = fetch_meetings()
     if not meetings:
@@ -1776,7 +1576,6 @@ def full_sweep():
 
                         upsert_race(race)
                         processed_completed += 1
-
                         log.info(f"{race_uid}: completed race processed")
 
                     total_races += 1
@@ -1807,7 +1606,10 @@ def full_sweep():
     }
 
     log.info(f"=== SWEEP COMPLETE: {summary} ===")
-    return summary# ----------------------------------------------------------------
+    return summary
+
+
+# ----------------------------------------------------------------
 # ROLLING REFRESH
 # ----------------------------------------------------------------
 def rolling_refresh():
@@ -1868,9 +1670,6 @@ def rolling_refresh():
                 ),
             }
 
-            # ----------------------------------------------------
-            # RESULT CHECK FIRST
-            # ----------------------------------------------------
             result = fetch_result(race_obj)
             if result:
                 save_result(result)
@@ -1883,24 +1682,17 @@ def rolling_refresh():
                 time.sleep(0.3)
                 continue
 
-            # ----------------------------------------------------
-            # LATE SCRATCHINGS
-            # ----------------------------------------------------
             new_scratches = scratchings.get(race["race_uid"], [])
             if new_scratches:
                 try:
                     db.table(T("today_runners")).update(
-                        {
-                            "scratched": True,
-                            "scratch_timing": "late",
-                        }
+                        {"scratched": True, "scratch_timing": "late"}
                     ).eq("race_uid", race["race_uid"]).in_("box_num", new_scratches).execute()
 
                     from cache import cache_clear
-
                     cache_clear(race["race_uid"])
-                    late_scratches_applied += 1
 
+                    late_scratches_applied += 1
                     log.info(
                         f"{race['race_uid']}: late scratches applied "
                         f"track={race['track']} R{race['race_num']} boxes={new_scratches}"
@@ -1924,6 +1716,8 @@ def rolling_refresh():
 
     log.info(f"Rolling refresh summary: {summary}")
     return summary
+
+
 # ----------------------------------------------------------------
 # READ HELPERS
 # ----------------------------------------------------------------
@@ -1948,7 +1742,6 @@ def get_next_race(anchor_time=None):
             log.info("get_next_race: no upcoming races found")
             return None
 
-        # Prefer valid jump_time rows first
         valid_races = [r for r in races if r.get("jump_time")]
         scan_pool = valid_races if valid_races else races
 
@@ -2046,3 +1839,7 @@ def get_race_with_runners(track, race_num):
     except Exception as e:
         log.error(f"Get race with runners failed: {e}")
         return None, []
+
+
+if __name__ == "__main__":
+    full_sweep()
