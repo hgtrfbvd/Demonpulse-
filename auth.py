@@ -14,7 +14,7 @@ import hmac
 import time
 import json
 import base64
-import secrets   # M-03: moved from inside generate_token() to top level
+import secrets
 from functools import wraps
 from datetime import datetime
 from flask import request, jsonify, g
@@ -23,13 +23,15 @@ from env import env
 log = logging.getLogger(__name__)
 
 SECRET_KEY = os.environ.get("JWT_SECRET", "dpv8-dev-secret-change-in-prod")
-TOKEN_TTL  = int(os.environ.get("SESSION_TIMEOUT_MIN", "480")) * 60
+TOKEN_TTL = int(os.environ.get("SESSION_TIMEOUT_MIN", "480")) * 60
 
 ROLE_PERMISSIONS = {
-    "admin":    {"home","live","betting","reports","simulator","ai_learning",
-                 "settings","audit","users","backtest","data","quality","performance"},
-    "operator": {"home","live","betting","reports"},
-    "viewer":   {"home","reports"},
+    "admin": {
+        "home", "live", "betting", "reports", "simulator", "ai_learning",
+        "settings", "audit", "users", "backtest", "data", "quality", "performance"
+    },
+    "operator": {"home", "live", "betting", "reports"},
+    "viewer": {"home", "reports"},
 }
 
 LOGIN_RATE = {}
@@ -43,34 +45,74 @@ RATE_WINDOW = 300
 def _b64e(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
+
 def _b64d(s: str) -> bytes:
-    return base64.urlsafe_b64decode(s + "=" * (4 - len(s) % 4))
+    padding = (-len(s)) % 4
+    return base64.urlsafe_b64decode(s + ("=" * padding))
+
 
 def _sign(h: str, p: str) -> str:
     sig = hmac.new(SECRET_KEY.encode(), f"{h}.{p}".encode(), hashlib.sha256).digest()
     return _b64e(sig)
 
+
 def generate_token(user_id: str, username: str, role: str) -> tuple[str, str]:
     """Returns (token, jti). Register jti in user_sessions after calling this."""
+    now = int(time.time())
     jti = secrets.token_hex(16)
-    header  = _b64e(json.dumps({"alg":"HS256","typ":"JWT"}).encode())
-    payload = _b64e(json.dumps({
-        "sub": user_id, "username": username, "role": role,
-        "iat": int(time.time()), "exp": int(time.time()) + TOKEN_TTL,
-        "jti": jti,               # unique token ID for revocation
-        "env": env.mode,
-    }).encode())
+
+    header = _b64e(json.dumps(
+        {"alg": "HS256", "typ": "JWT"},
+        separators=(",", ":")
+    ).encode())
+
+    payload = _b64e(json.dumps(
+        {
+            "sub": user_id,
+            "username": username,
+            "role": role,
+            "iat": now,
+            "exp": now + TOKEN_TTL,
+            "jti": jti,
+            "env": env.mode,
+        },
+        separators=(",", ":")
+    ).encode())
+
     return f"{header}.{payload}.{_sign(header, payload)}", jti
+
 
 def decode_token(token: str) -> dict | None:
     try:
-        h, p, sig = token.split(".")
-        if not hmac.compare_digest(sig, _sign(h, p)):
+        parts = token.split(".")
+        if len(parts) != 3:
             return None
-        payload = json.loads(_b64d(p))
-        if payload.get("exp", 0) < time.time():
+
+        h, p, sig = parts
+
+        expected_sig = _sign(h, p)
+        if not hmac.compare_digest(sig, expected_sig):
             return None
-        # Check session revocation (non-fatal — if DB down, allow)
+
+        payload = json.loads(_b64d(p).decode())
+
+        now = int(time.time())
+        if int(payload.get("exp", 0)) < now:
+            return None
+
+        if payload.get("env") != env.mode:
+            return None
+
+        if not payload.get("sub") or not payload.get("username") or not payload.get("role"):
+            return None
+
+        if payload.get("role") not in ROLE_PERMISSIONS:
+            return None
+
+        user = get_user_by_id(payload["sub"])
+        if not user or not user.get("active", False):
+            return None
+
         jti = payload.get("jti")
         if jti:
             try:
@@ -79,6 +121,7 @@ def decode_token(token: str) -> dict | None:
                     return None
             except Exception:
                 pass
+
         return payload
     except Exception:
         return None
@@ -89,12 +132,15 @@ def decode_token(token: str) -> dict | None:
 # ─────────────────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
     salt = os.urandom(16).hex()
-    dk   = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260000)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260000)
     return f"pbkdf2:sha256:{salt}:{dk.hex()}"
+
 
 def check_password(password: str, stored: str) -> bool:
     try:
-        _, algo, salt, dk_hex = stored.split(":")
+        scheme, algo, salt, dk_hex = stored.split(":")
+        if scheme != "pbkdf2":
+            return False
         dk = hashlib.pbkdf2_hmac(algo, password.encode(), salt.encode(), 260000)
         return hmac.compare_digest(dk.hex(), dk_hex)
     except Exception:
@@ -108,9 +154,11 @@ def check_rate_limit(ip: str) -> bool:
     now = time.time()
     attempts = [t for t in LOGIN_RATE.get(ip, []) if now - t < RATE_WINDOW]
     if len(attempts) >= MAX_LOGIN_ATTEMPTS:
+        LOGIN_RATE[ip] = attempts
         return False
     LOGIN_RATE[ip] = attempts + [now]
     return True
+
 
 def reset_rate_limit(ip: str):
     LOGIN_RATE.pop(ip, None)
@@ -124,36 +172,46 @@ def get_user_by_username(username: str) -> dict | None:
         from db import get_db, safe_query, T
         return safe_query(
             lambda: get_db().table(T("users")).select("*")
-                    .eq("username", username.lower()).single().execute().data
+            .eq("username", username.lower()).single().execute().data
         )
     except Exception:
         return None
+
 
 def get_user_by_id(user_id: str) -> dict | None:
     try:
         from db import get_db, safe_query, T
         return safe_query(
             lambda: get_db().table(T("users")).select("id,username,role,active,created_at")
-                    .eq("id", user_id).single().execute().data
+            .eq("id", user_id).single().execute().data
         )
     except Exception:
         return None
 
+
 def create_user(username: str, password: str, role: str = "operator") -> dict:
     from db import get_db, safe_query, T
     import uuid
+
     if role not in ROLE_PERMISSIONS:
         raise ValueError(f"Invalid role: {role}")
+
     user_id = str(uuid.uuid4())
-    result = safe_query(lambda: get_db().table(T("users")).insert({
-        "id": user_id,
-        "username": username.lower(),
-        "password_hash": hash_password(password),
-        "role": role,
-        "active": True,
-        "created_at": datetime.utcnow().isoformat(),
-    }).execute())
-    return {"id": user_id, "username": username, "role": role}
+    result = safe_query(
+        lambda: get_db().table(T("users")).insert({
+            "id": user_id,
+            "username": username.lower(),
+            "password_hash": hash_password(password),
+            "role": role,
+            "active": True,
+            "created_at": datetime.utcnow().isoformat(),
+        }).execute()
+    )
+
+    if not result:
+        raise RuntimeError("Failed to create user")
+
+    return {"id": user_id, "username": username.lower(), "role": role}
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -204,12 +262,13 @@ def bootstrap_admin():
 # ─────────────────────────────────────────────────────────────────
 def get_current_user():
     token = None
-    auth  = request.headers.get("Authorization", "")
+    auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:]
     if not token:
         token = request.cookies.get("dp_token")
     return decode_token(token) if token else None
+
 
 def require_auth(fn):
     @wraps(fn)
@@ -221,6 +280,7 @@ def require_auth(fn):
         return fn(*args, **kwargs)
     return wrapper
 
+
 def require_role(*roles):
     def decorator(fn):
         @wraps(fn)
@@ -231,8 +291,13 @@ def require_role(*roles):
             if user.get("role") not in roles:
                 try:
                     from audit import log_event
-                    log_event(user["sub"], user["username"], "ACCESS_DENIED",
-                              request.endpoint or "unknown", {"roles_required": list(roles)})
+                    log_event(
+                        user["sub"],
+                        user["username"],
+                        "ACCESS_DENIED",
+                        request.endpoint or "unknown",
+                        {"roles_required": list(roles)}
+                    )
                 except Exception:
                     pass
                 return jsonify({"error": "Forbidden", "code": 403}), 403
@@ -240,6 +305,7 @@ def require_role(*roles):
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
 
 def can_access(user: dict, page: str) -> bool:
     return page in ROLE_PERMISSIONS.get(user.get("role", "viewer"), set())
