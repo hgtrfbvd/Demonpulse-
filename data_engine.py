@@ -435,9 +435,31 @@ def score_completeness(race_meta, runners):
 # ----------------------------------------------------------------
 # CHANGE DETECTION (feature 37)
 # ----------------------------------------------------------------
+# ----------------------------------------------------------------
+# CHANGE DETECTION (feature 37)
+# ----------------------------------------------------------------
 def compute_race_hash(race_meta, runners, scratchings_snapshot):
-    key = str(race_meta.get("jump_time")) + str(scratchings_snapshot) + str(len(runners))
-    return hashlib.md5(key.encode()).hexdigest()[:# ----------------------------------------------------------------
+    runner_bits = []
+    for r in runners or []:
+        runner_bits.append(
+            f"{r.get('box_num','')}-{r.get('name','')}-{r.get('best_time','')}-{r.get('trainer','')}-{r.get('raw_hash','')}"
+        )
+
+    scratch_bits = [str(s) for s in (scratchings_snapshot or [])]
+
+    key = "|".join([
+        str(race_meta.get("race_uid", "")),
+        str(race_meta.get("track", "")),
+        str(race_meta.get("race_num", "")),
+        str(race_meta.get("distance", "")),
+        str(race_meta.get("jump_time", "")),
+        ",".join(sorted(runner_bits)),
+        ",".join(sorted(scratch_bits)),
+    ])
+
+    return hashlib.md5(key.encode()).hexdigest()[:12]
+
+# ----------------------------------------------------------------
 # SUPABASE STORAGE
 # ----------------------------------------------------------------
 def upsert_race(race_data):
