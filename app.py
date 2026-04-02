@@ -1244,159 +1244,301 @@ def run_learning():
 @app.route("/api/chat", methods=["POST"])
 def chat():
     from auth import get_current_user
-    user = get_current_user()
-    if not user: return jsonify({"error":"Unauthorized"}), 401
-    from db import get_state, get_db, safe_query, T
+    from db import get_state
     from cache import make_key, is_duplicate, cache_get, cache_set
+
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
     data = request.json or {}
-    session_id = data.get("session_id","default")
-    user_msg = data.get("message","").strip()
-    if not user_msg: return jsonify({"response":"Empty message.","ok":False})
-    state = get_state()
-    code  = state.get("active_code","GREYHOUND")
-    anchor = state.get("time_anchor","")
+    session_id = data.get("session_id", "default")
+    user_msg = (data.get("message") or "").strip()
+
+    if not user_msg:
+        return jsonify({"response": "Empty message.", "ok": False}), 400
+
+    state = get_state() or {}
+    code = state.get("active_code", "GREYHOUND")
+    anchor = state.get("time_anchor", "")
     cache_key = make_key(user_msg, code)
+
     if is_duplicate(cache_key):
         cached = cache_get(cache_key)
-        if cached: return jsonify({"response":cached,"ok":True,"cached":True})
+        if cached:
+            return jsonify({"response": cached, "ok": True, "cached": True})
+
     if needs_analysis(user_msg):
         cached = cache_get(cache_key)
-        if cached: return jsonify({"response":cached,"ok":True,"cached":True})
+        if cached:
+            return jsonify({"response": cached, "ok": True, "cached": True})
+
     if is_flask_cmd(user_msg):
-        return jsonify({"response":_handle_flask_cmd(user_msg, state, code),"ok":True,"source":"flask"})
+        return jsonify(
+            {
+                "response": _handle_flask_cmd(user_msg, state, code),
+                "ok": True,
+                "source": "flask",
+            }
+        )
+
     response = None
     if needs_analysis(user_msg):
         response = _try_pre_scored_analysis(user_msg, state, code, anchor)
+
     if not response:
         history = _get_history(session_id, 4 if needs_analysis(user_msg) else 2)
-        history.append({"role":"user","content":f"ANCHOR:{anchor} Code:{code}\n{user_msg}"})
-        response = call_claude(history, model=get_model(user_msg), max_tokens=get_max_tokens(user_msg))
+        history.append(
+            {
+                "role": "user",
+                "content": f"ANCHOR:{anchor} Code:{code}\n{user_msg}",
+            }
+        )
+        response = call_claude(
+            history,
+            model=get_model(user_msg),
+            max_tokens=get_max_tokens(user_msg),
+        )
+
     if needs_analysis(user_msg) and response and not response.startswith("Error"):
         cache_set(cache_key, response, ttl=90)
+
     _save_history(session_id, user_msg, response)
-    return jsonify({"response":response,"ok":True})
+    return jsonify({"response": response, "ok": True})
+
 
 def _try_pre_scored_analysis(msg, state, code, anchor):
     try:
         from data_engine import get_next_race, get_race_with_runners
         from scorer import score_race
         from packet_builder import build_packet, is_worth_sending_to_claude
+
         lower = msg.lower()
-        race = get_next_race(anchor) if "next race" in lower or "refresh" in lower else None
-        if not race: return None
+        race = get_next_race(anchor) if ("next race" in lower or "refresh" in lower) else None
+        if not race:
+            return None
+
         race, runners = get_race_with_runners(race["track"], race["race_num"])
-        if not race: return None
-        scored = score_race(race, runners or [], race.get("track",""))
-        if not is_worth_sending_to_claude(scored): return f"PASS - {scored.get('pass_reason','')}"
-        packet = build_packet(race, scored, runners or [], bankroll=state.get("bankroll",1000),
-                              bank_mode=state.get("bank_mode","STANDARD"), anchor_time=anchor)
-        return call_claude([{"role":"user","content":packet}], model=CLAUDE_SONNET, max_tokens=800)
+        if not race:
+            return None
+
+        scored = score_race(race, runners or [], race.get("track", ""))
+        if not is_worth_sending_to_claude(scored):
+            return f"PASS - {scored.get('pass_reason', '')}"
+
+        packet = build_packet(
+            race,
+            scored,
+            runners or [],
+            bankroll=state.get("bankroll", 1000),
+            bank_mode=state.get("bank_mode", "STANDARD"),
+            anchor_time=anchor,
+        )
+
+        return call_claude(
+            [{"role": "user", "content": packet}],
+            model=CLAUDE_SONNET,
+            max_tokens=800,
+        )
     except Exception as e:
         log.error(f"Pre-scored analysis failed: {e}")
         return None
 
+
 def _get_history(session_id, limit=4):
     try:
         from db import get_db, safe_query, T
+
         rows = safe_query(
             lambda: get_db().table(T("chat_history")).select("role,content")
-                    .eq("session_id",session_id).order("id",desc=True).limit(limit).execute().data, []
+            .eq("session_id", session_id)
+            .order("id", desc=True)
+            .limit(limit)
+            .execute()
+            .data,
+            [],
         ) or []
+
         rows.reverse()
-        return [{"role":r["role"],"content":r["content"]} for r in rows]
-    except Exception: return []
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
+    except Exception:
+        return []
+
 
 def _save_history(session_id, user_msg, response):
     try:
         from db import get_db, T
+
         db = get_db()
-        db.table(T("chat_history")).insert({"session_id":session_id,"role":"user","content":user_msg}).execute()
-        db.table(T("chat_history")).insert({"session_id":session_id,"role":"assistant","content":response}).execute()
-    except Exception: pass
+        db.table(T("chat_history")).insert(
+            {"session_id": session_id, "role": "user", "content": user_msg}
+        ).execute()
+        db.table(T("chat_history")).insert(
+            {"session_id": session_id, "role": "assistant", "content": response}
+        ).execute()
+    except Exception:
+        pass
+
 
 def _handle_flask_cmd(msg, state, code):
     lower = msg.lower()
+
     if "status" in lower:
         from db import get_session_pl
+
         s = get_session_pl()
-        return f"STATUS:{state.get('sys_state','STABLE')} | Code:{code} | Bank:${state.get('bankroll',0):.0f} | P/L:${s['total']:.2f} | ENV:{env.mode}"
+        return (
+            f"STATUS:{state.get('sys_state', 'STABLE')} | "
+            f"Code:{code} | "
+            f"Bank:${state.get('bankroll', 0):.0f} | "
+            f"P/L:${s['total']:.2f} | "
+            f"ENV:{env.mode}"
+        )
+
     if "board" in lower:
         try:
             from data_engine import get_board
+
             races = get_board(10)
-            if not races: return "Board empty."
-            return "\n".join(f"#{i+1} {r['track'].upper()} R{r['race_num']} {r.get('jump_time','?')}" for i,r in enumerate(races))
-        except Exception: return "Board unavailable."
-    return f"Status:{state.get('sys_state','STABLE')} | Code:{code} | ENV:{env.mode}"
+            if not races:
+                return "Board empty."
+
+            return "\n".join(
+                f"#{i+1} {r['track'].upper()} R{r['race_num']} {r.get('jump_time', '?')}"
+                for i, r in enumerate(races)
+            )
+        except Exception:
+            return "Board unavailable."
+
+    return f"Status:{state.get('sys_state', 'STABLE')} | Code:{code} | ENV:{env.mode}"
+
 
 @app.route("/api/sweep", methods=["POST"])
 def manual_sweep():
     from auth import get_current_user
+    from data_engine import full_sweep
+
     user = get_current_user()
-    if not user or user.get("role") != "admin": return jsonify({"error":"Forbidden"}), 403
+    if not user or user.get("role") != "admin":
+        return jsonify({"error": "Forbidden"}), 403
+
     try:
-        from data_engine import full_sweep
         return jsonify(full_sweep())
     except Exception as e:
-        return jsonify({"ok":False,"error":str(e)})
+        log.error(f"Manual sweep failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/api/scheduler/status")
 def scheduler_status():
     from auth import get_current_user
+    from scheduler import get_status
+    from safety import circuit_breaker
+
     user = get_current_user()
-    if not user or user.get("role") != "admin": return jsonify({"error":"Forbidden"}), 403
+    if not user or user.get("role") != "admin":
+        return jsonify({"error": "Forbidden"}), 403
+
     try:
-        from scheduler import get_status
-        from safety import circuit_breaker
-        s = get_status(); s["circuit_breaker"] = circuit_breaker.status()
+        s = get_status()
+        s["circuit_breaker"] = circuit_breaker.status()
         return jsonify({**s, "env_mode": env.mode})
     except Exception as e:
-        return jsonify({"error":str(e)})
+        log.error(f"Scheduler status failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/cache/clear", methods=["POST"])
 def cache_clear_api():
     from auth import get_current_user
     from audit import log_event
-    user = get_current_user()
-    if not user or user.get("role") != "admin": return jsonify({"error":"Forbidden"}), 403
     from cache import cache_clear
+
+    user = get_current_user()
+    if not user or user.get("role") != "admin":
+        return jsonify({"error": "Forbidden"}), 403
+
     cache_clear()
     log_event(user["sub"], user["username"], "CACHE_CLEAR", "cache")
-    return jsonify({"ok":True})
+    return jsonify({"ok": True})
+
 
 @app.route("/api/performance/chart")
 def perf_chart():
     from auth import get_current_user
     from db import get_db, safe_query, T
+
     user = get_current_user()
-    if not user: return jsonify({"error":"Unauthorized"}), 401
-    rows = safe_query(lambda: get_db().table(T("bet_log")).select("date,pl").neq("result","PENDING").order("date").execute().data, []) or []
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    rows = safe_query(
+        lambda: get_db().table(T("bet_log")).select("date,pl")
+        .neq("result", "PENDING")
+        .order("date")
+        .execute()
+        .data,
+        [],
+    ) or []
+
     by_date = {}
-    for r in rows:
-        d = r.get("date","")
-        if d not in by_date: by_date[d] = {"pl":0,"bets":0}
-        by_date[d]["pl"] += r.get("pl") or 0; by_date[d]["bets"] += 1
-    cum, total = [], 0
+    for row in rows:
+        d = row.get("date", "")
+        if d not in by_date:
+            by_date[d] = {"pl": 0, "bets": 0}
+        by_date[d]["pl"] += row.get("pl") or 0
+        by_date[d]["bets"] += 1
+
+    cum = []
+    total = 0
     for d in sorted(by_date.keys())[-30:]:
         total += by_date[d]["pl"]
-        cum.append({"date":d,"pl":round(total,2),"bets":by_date[d]["bets"]})
+        cum.append(
+            {
+                "date": d,
+                "pl": round(total, 2),
+                "bets": by_date[d]["bets"],
+            }
+        )
+
     return jsonify(cum)
+
 
 @app.route("/api/export/csv")
 def export_csv():
     from auth import get_current_user
     from db import get_db, safe_query, T
+    from flask import Response
+    import csv
+    import io
+
     user = get_current_user()
-    if not user: return jsonify({"error":"Unauthorized"}), 401
-    import csv, io
-    bets = safe_query(lambda: get_db().table(T("bet_log")).select("*").order("created_at",desc=True).limit(500).execute().data, []) or []
-    if not bets: return jsonify({"error":"No bets"})
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    bets = safe_query(
+        lambda: get_db().table(T("bet_log")).select("*")
+        .order("created_at", desc=True)
+        .limit(500)
+        .execute()
+        .data,
+        [],
+    ) or []
+
+    if not bets:
+        return jsonify({"error": "No bets"}), 404
+
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=bets[0].keys())
-    writer.writeheader(); writer.writerows(bets)
-    from flask import Response
-    return Response(output.getvalue(), mimetype="text/csv",
-                    headers={"Content-Disposition":"attachment; filename=dpv8_bets.csv"})
+    writer.writeheader()
+    writer.writerows(bets)
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=dpv8_bets.csv"},
+    )
+
 
 # ─────────────────────────────────────────────────────────────────
 # V7 RETAINED ROUTES — manual override, notes, source health, cache stats
