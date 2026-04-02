@@ -9,7 +9,7 @@ Handles:
 
 import time
 import logging
-from datetime import datetime
+import threading
 
 from data_engine import full_sweep, rolling_refresh
 
@@ -23,6 +23,8 @@ FULL_SWEEP_ON_START = True
 
 REFRESH_INTERVAL = 150        # 2.5 minutes
 RESULT_CHECK_INTERVAL = 300   # 5 minutes
+
+_scheduler_started = False
 
 
 # --------------------------------------------------------
@@ -73,8 +75,23 @@ def run_scheduler():
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")
 
-        # prevent CPU burn
         time.sleep(10)
+
+
+# --------------------------------------------------------
+# STARTER FOR APP IMPORT
+# --------------------------------------------------------
+def start_scheduler():
+    global _scheduler_started
+
+    if _scheduler_started:
+        log.info("Scheduler already started")
+        return
+
+    thread = threading.Thread(target=run_scheduler, daemon=True)
+    thread.start()
+    _scheduler_started = True
+    log.info("Scheduler started (threaded)")
 
 
 # --------------------------------------------------------
