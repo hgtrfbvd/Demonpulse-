@@ -168,55 +168,82 @@ def reset_rate_limit(ip: str):
 # USER LOOKUPS
 # ─────────────────────────────────────────────────────────────────
 def get_user_by_username(username: str) -> dict | None:
-    try:
-        from db import get_db, safe_query, T
-        return safe_query(
-            lambda: get_db().table(T("users")).select("*")
-            .eq("username", username.lower()).single().execute().data
-        )
-    except Exception:
+    from db import get_db, T
+
+    if not username:
         return None
+
+    try:
+        rows = (
+            get_db()
+            .table(T("users"))
+            .select("*")
+            .eq("username", username.lower())
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return rows[0] if rows else None
+    except Exception as e:
+        log.error(f"User lookup failed for username={username}: {e}")
+        raise RuntimeError("USER_LOOKUP_FAILED") from e
 
 
 def get_user_by_id(user_id: str) -> dict | None:
-    try:
-        from db import get_db, safe_query, T
-        return safe_query(
-            lambda: get_db().table(T("users")).select("id,username,role,active,created_at")
-            .eq("id", user_id).single().execute().data
-        )
-    except Exception:
+    from db import get_db, T
+
+    if not user_id:
         return None
+
+    try:
+        rows = (
+            get_db()
+            .table(T("users"))
+            .select("id,username,role,active,created_at")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return rows[0] if rows else None
+    except Exception as e:
+        log.error(f"User lookup failed for id={user_id}: {e}")
+        raise RuntimeError("USER_LOOKUP_FAILED") from e
 
 
 def create_user(username: str, password: str, role: str = "operator") -> dict:
-    from db import get_db, safe_query, T
+    from db import get_db, T
     import uuid
 
     if role not in ROLE_PERMISSIONS:
         raise ValueError(f"Invalid role: {role}")
 
     user_id = str(uuid.uuid4())
-    result = safe_query(
-        lambda: get_db().table(T("users")).insert({
-            "id": user_id,
-            "username": username.lower(),
-            "password_hash": hash_password(password),
-            "role": role,
-            "active": True,
-            "created_at": datetime.utcnow().isoformat(),
-        }).execute()
-    )
 
-    if not result:
-        raise RuntimeError("Failed to create user")
+    try:
+        result = (
+            get_db()
+            .table(T("users"))
+            .insert({
+                "id": user_id,
+                "username": username.lower(),
+                "password_hash": hash_password(password),
+                "role": role,
+                "active": True,
+                "created_at": datetime.utcnow().isoformat(),
+            })
+            .execute()
+        )
+    except Exception as e:
+        log.error(f"Create user failed for username={username}: {e}")
+        raise RuntimeError("USER_CREATE_FAILED") from e
+
+    if not getattr(result, "data", None):
+        raise RuntimeError("USER_CREATE_FAILED")
 
     return {"id": user_id, "username": username.lower(), "role": role}
-
-
-# ─────────────────────────────────────────────────────────────────
-# BOOTSTRAP
-# ─────────────────────────────────────────────────────────────────
 def bootstrap_admin():
     """
     Ensure required default accounts exist.
