@@ -39,6 +39,9 @@ LIFECYCLE = [
 # ----------------------------------------------------------------
 def make_race_uid(race_date, code, track, race_num):
     return f"{race_date}_{code}_{track}_{race_num}"
+
+
+# ----------------------------------------------------------------
 # FETCH - with rate limiting and fallback
 # ----------------------------------------------------------------
 def fetch_page(url, use_playwright=False, wait_ms=2000):
@@ -96,7 +99,7 @@ def _fetch_playwright(url, wait_ms=2000):
             )
 
             page.goto(url, timeout=60000, wait_until="networkidle")
-            page.wait_for_selector("a[href*='/racing/']", timeout=10000)
+            page.wait_for_timeout(wait_ms)
 
             content = page.content()
 
@@ -153,7 +156,6 @@ def parse_html(html):
         return None
     try:
         from bs4 import BeautifulSoup
-
         return BeautifulSoup(html, "html.parser")
     except Exception as e:
         log.error(f"HTML parse failed: {e}")
@@ -233,57 +235,51 @@ def detect_state(track):
 # ----------------------------------------------------------------
 # FETCH MEETINGS
 # ----------------------------------------------------------------
-def fetch_meeting_races(meeting):
-    track = meeting["track"]
-    state = meeting["state"]
-    today = date.today().isoformat()
-
-    html = fetch_page(meeting["url"], use_playwright=True, wait_ms=2500)
+def fetch_meetings():
+    log.info("Fetching racecards...")
+    html = fetch_page(
+        "https://www.thedogs.com.au/racing/racecards",
+        use_playwright=True,
+        wait_ms=3000,
+    )
     soup = parse_html(html)
     if not soup:
+        log.error("Racecards failed")
         return []
 
-    races = []
+    meetings = []
     seen = set()
+    today = date.today().isoformat()
 
-    for link in soup.find_all("a"):
-        href = link.get("href", "")
+    for item in soup.find_all("a"):
+        href = item.get("href", "")
         if not href or "/racing/" not in href:
             continue
 
         parts = [p for p in href.strip("/").split("/") if p]
-        if len(parts) < 4 or parts[0] != "racing" or parts[1] != track:
-            continue
-        if not parts[3].isdigit():
+        if len(parts) < 3 or parts[0] != "racing":
             continue
 
-        race_num = int(parts[3])
-        if race_num in seen:
+        track = parts[1]
+        mdate = parts[2]
+
+        if mdate != today or track in seen:
             continue
-        seen.add(race_num)
 
-        race_name = parts[4] if len(parts) > 4 else ""
-        cell_text = link.get_text(strip=True)
-        has_result = any(c.isdigit() for c in cell_text) and len(cell_text) < 10
-        race_uid = make_race_uid(today, "GREYHOUND", track, race_num)
-
-        races.append(
+        seen.add(track)
+        state = detect_state(track)
+        meetings.append(
             {
-                "race_uid": race_uid,
                 "track": track,
+                "date": mdate,
                 "state": state,
-                "date": today,
-                "race_num": race_num,
-                "race_name": race_name,
-                "code": "GREYHOUND",
-                "status": "completed" if has_result else "upcoming",
-                "expert_form_url": f"https://www.thedogs.com.au/racing/{track}/{today}/{race_num}/{race_name}/expert-form",
-                "url": f"https://www.thedogs.com.au/racing/{track}/{today}/{race_num}/{race_name}?trial=false",
+                "url": f"https://www.thedogs.com.au/racing/{track}/{mdate}?trial=false",
             }
         )
 
-    races.sort(key=lambda x: x["race_num"])
-    return races
+    log.info(f"Found {len(meetings)} meetings")
+    return meetings
+
 
 # ----------------------------------------------------------------
 # FETCH SCRATCHINGS
@@ -344,10 +340,12 @@ def fetch_meeting_races(meeting):
     races = []
     seen = set()
 
-    for link in soup.select("a[href*='/racing/']"):
+    for link in soup.find_all("a"):
         href = link.get("href", "")
-        parts = [p for p in href.strip("/").split("/") if p]
+        if not href or "/racing/" not in href:
+            continue
 
+        parts = [p for p in href.strip("/").split("/") if p]
         if len(parts) < 4 or parts[0] != "racing" or parts[1] != track:
             continue
         if not parts[3].isdigit():
