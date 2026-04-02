@@ -162,9 +162,7 @@ def fetch_meetings():
         })
 
     log.info(f"Found {len(meetings)} meetings")
-    return meetings
-
-# ----------------------------------------------------------------
+    return meetings# ----------------------------------------------------------------
 # FETCH SCRATCHINGS
 # ----------------------------------------------------------------
 def fetch_scratchings():
@@ -183,28 +181,17 @@ def fetch_scratchings():
         cells = row.select("td")
         if len(cells) < 3:
             continue
-# ----------------------------------------------------------------
-def fetch_scratchings():
-    log.info("Fetching scratchings...")
-    html = fetch_page("https://www.thedogs.com.au/racing/scratchings")
-    soup = parse_html(html)
-    if not soup:
-        return {}
-
-    scratchings = {}
-    for row in soup.select("tr"):
-        cells = row.select("td")
-        if len(cells) < 3:
-            continue
         try:
             track = cells[0].get_text(strip=True).lower().replace(" ", "-")
             rnum = cells[1].get_text(strip=True)
             boxes = cells[2].get_text(strip=True)
             if not rnum.isdigit():
                 continue
+
             uid = make_race_uid(date.today().isoformat(), "GREYHOUND", track, int(rnum))
             if uid not in scratchings:
                 scratchings[uid] = []
+
             for b in boxes.split(","):
                 b = b.strip()
                 if b.isdigit():
@@ -214,6 +201,11 @@ def fetch_scratchings():
 
     log.info(f"Scratchings loaded for {len(scratchings)} races")
     return scratchings
+
+
+# ----------------------------------------------------------------
+# FETCH RACE LIST FOR MEETING
+# ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
 # FETCH RACE LIST FOR MEETING
