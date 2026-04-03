@@ -4,6 +4,7 @@
     let liveSignal = null;
     let liveSimulation = null;
     let countdownTimer = null;
+    let raceLocked = false;
 
     const q = (id) => document.getElementById(id);
 
@@ -71,6 +72,20 @@
         el.textContent = String(decision || "—").toUpperCase();
     }
 
+    function updateRaceLock() {
+        const countdown = formatCountdownText(liveRace?.jump_time || "");
+        const status = String(liveRace?.status || "").toLowerCase();
+        raceLocked = countdown === "Jumped / due" || ["closed", "completed", "resulted"].includes(status);
+
+        ["livePlaceBetBtn", "liveBetRaceUid", "liveBetRunner", "liveBetBox", "liveBetOdds", "liveBetStake", "liveBetType"]
+            .forEach(id => {
+                const el = q(id);
+                if (el) el.disabled = raceLocked;
+            });
+
+        setText("liveBetMeta", raceLocked ? "Betting locked for this race" : "Auto-fills from selection");
+    }
+
     function renderRaceMeta() {
         if (!liveRace) {
             setText("liveRaceTitle", "No race selected");
@@ -91,6 +106,15 @@
 
         setText("liveHeroCode", code);
         setText("liveHeroCountdown", formatCountdownText(liveRace.jump_time));
+        updateRaceLock();
+    }
+
+    function autofillBetForm() {
+        q("liveBetRaceUid").value = liveRace?.race_uid || getRaceUid() || "";
+        q("liveBetRunner").value = liveAnalysis?.selection || liveSignal?.top_runner || "";
+        q("liveBetBox").value = liveAnalysis?.box || liveSignal?.top_box || "";
+        q("liveBetOdds").value = liveSignal?.top_odds || liveAnalysis?.odds || "";
+        if (!q("liveBetStake").value) q("liveBetStake").value = "10";
     }
 
     function renderAnalysis() {
@@ -123,6 +147,8 @@
         setText("liveBeneficiary", liveAnalysis?.beneficiary || "—");
         setText("liveSeparation", liveAnalysis?.separation || "—");
         setText("liveShapeMeta", liveAnalysis ? "Local scoring loaded" : "Pending analysis");
+
+        autofillBetForm();
     }
 
     function renderFilters() {
@@ -152,7 +178,7 @@
         if (!runners.length) {
             q("liveRunnerRows").innerHTML = `
                 <tr>
-                    <td colspan="7" class="board-empty">No runner data loaded.</td>
+                    <td colspan="7" class="board-empty">No race loaded.</td>
                 </tr>
             `;
             setText("liveRunnerMeta", "No runner data");
@@ -218,6 +244,7 @@
     function updateCountdown() {
         if (!liveRace) return;
         setText("liveHeroCountdown", formatCountdownText(liveRace.jump_time));
+        updateRaceLock();
     }
 
     async function loadLiveRace() {
@@ -269,24 +296,83 @@
         }
     }
 
+    async function placeLiveBet() {
+        if (raceLocked) return;
+
+        const payload = {
+            race_uid: q("liveBetRaceUid").value.trim(),
+            runner: q("liveBetRunner").value.trim(),
+            box_num: q("liveBetBox").value.trim(),
+            odds: q("liveBetOdds").value.trim(),
+            stake: q("liveBetStake").value.trim(),
+            bet_type: q("liveBetType").value
+        };
+
+        if (!payload.race_uid || !payload.runner || !payload.odds || !payload.stake) {
+            setText("liveBetMeta", "Complete race, runner, odds and stake first");
+            return;
+        }
+
+        setText("liveBetMeta", "Placing bet...");
+
+        try {
+            await api("/api/betting/place", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            setText("liveBetMeta", `Bet placed: ${payload.runner} ${payload.bet_type}`);
+        } catch (error) {
+            console.error("Place bet failed:", error);
+            setText("liveBetMeta", "Bet place failed");
+        }
+    }
+
+    function clearBetForm() {
+        ["liveBetRunner", "liveBetBox", "liveBetOdds", "liveBetStake"].forEach(id => {
+            q(id).value = "";
+        });
+        q("liveBetType").value = "WIN";
+        setText("liveBetMeta", raceLocked ? "Betting locked for this race" : "Bet form cleared");
+    }
+
+    function openInSimulator() {
+        const raceUid = getRaceUid();
+        if (!raceUid) return;
+        window.location.href = `/simulator?race_uid=${encodeURIComponent(raceUid)}`;
+    }
+
+    async function markWatched() {
+        const raceUid = getRaceUid();
+        if (!raceUid) return;
+
+        try {
+            await api("/api/live/mark-watched", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ race_uid: raceUid })
+            });
+            setText("liveShapeMeta", "Marked watched");
+        } catch (error) {
+            console.error("Mark watched failed:", error);
+            setText("liveShapeMeta", "Mark watched failed");
+        }
+    }
+
     function bindEvents() {
         const watchBtn = q("liveWatchSimBtn");
         const refreshBtn = q("liveRefreshBtn");
-        const logBetBtn = q("liveLogBetBtn");
+        const placeBetBtn = q("livePlaceBetBtn");
+        const clearBetBtn = q("liveClearBetBtn");
+        const sendToSimulatorBtn = q("liveSendToSimulatorBtn");
+        const markWatchedBtn = q("liveMarkWatchedBtn");
 
-        if (watchBtn) {
-            watchBtn.addEventListener("click", runLiveSimulation);
-        }
-
-        if (refreshBtn) {
-            refreshBtn.addEventListener("click", loadLiveRace);
-        }
-
-        if (logBetBtn) {
-            logBetBtn.addEventListener("click", () => {
-                alert("Bet logging page will handle full execution flow. This button is a placeholder for now.");
-            });
-        }
+        if (watchBtn) watchBtn.addEventListener("click", runLiveSimulation);
+        if (refreshBtn) refreshBtn.addEventListener("click", loadLiveRace);
+        if (placeBetBtn) placeBetBtn.addEventListener("click", placeLiveBet);
+        if (clearBetBtn) clearBetBtn.addEventListener("click", clearBetForm);
+        if (sendToSimulatorBtn) sendToSimulatorBtn.addEventListener("click", openInSimulator);
+        if (markWatchedBtn) markWatchedBtn.addEventListener("click", markWatched);
     }
 
     function startCountdownLoop() {
