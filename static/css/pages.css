@@ -718,3 +718,175 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* ---------------------------------------------------------
+   SIMULATOR PAGE
+--------------------------------------------------------- */
+
+.sim-hero {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 18px;
+    align-items: stretch;
+}
+
+.sim-hero-right {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.sim-control-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+
+.sim-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.sim-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sim-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
+.sim-input {
+    width: 100%;
+    min-height: 42px;
+    padding: 0 14px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(20,20,20,0.96), rgba(12,12,12,1));
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text);
+    outline: none;
+}
+
+.sim-input:focus {
+    border-color: rgba(255, 60, 60, 0.28);
+    box-shadow: 0 0 0 1px rgba(255, 60, 60, 0.14);
+}
+
+.sim-control-actions {
+    gap: 10px;
+}
+
+.sim-main-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 18px;
+    align-items: start;
+}
+
+.sim-left-stack,
+.sim-right-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.sim-output-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.sim-output-item,
+.sim-scenario-item {
+    padding: 14px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(22,22,22,0.92), rgba(12,12,12,0.98));
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+.sim-output-label,
+.sim-scenario-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+
+.sim-output-value,
+.sim-scenario-value {
+    color: #fff;
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.sim-summary-box,
+.sim-guide-box {
+    min-height: 98px;
+    padding: 14px;
+    border-radius: 16px;
+    background:
+        radial-gradient(circle at top right, rgba(255,0,0,0.10), transparent 38%),
+        linear-gradient(180deg, rgba(22,22,22,0.96), rgba(10,10,10,1));
+    border: 1px solid rgba(255,255,255,0.05);
+    color: var(--text-soft);
+    line-height: 1.55;
+}
+
+.sim-scenario-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.sim-log-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sim-log-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(20,20,20,0.92), rgba(10,10,10,1));
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+.sim-log-race {
+    color: #fff;
+    font-weight: 700;
+}
+
+.sim-log-sub,
+.sim-log-side {
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+@media (max-width: 1180px) {
+    .sim-hero,
+    .sim-control-grid,
+    .sim-main-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 860px) {
+    .sim-hero-right,
+    .sim-form-grid,
+    .sim-output-grid,
+    .sim-scenario-grid {
+        grid-template-columns: 1fr;
+    }
+}
