@@ -40,7 +40,8 @@ def startup():
     log.info(f"DemonPulse startup complete in {env.mode} mode")
 
 
-startup()
+if os.environ.get("RUN_MAIN_STARTUP", "1") == "1":
+    startup()
 
 
 # ------------------------------------------------------------
@@ -70,6 +71,7 @@ def handle_500(exc):
 @app.route("/")
 def root():
     return redirect(url_for("page_home"))
+
 
 @app.route("/home")
 def page_home():
@@ -236,6 +238,53 @@ def api_auth_logout():
     response = jsonify({"ok": True})
     response.delete_cookie("dp_token")
     return response
+
+
+# ------------------------------------------------------------
+# DEBUG ROUTES
+# ------------------------------------------------------------
+@app.route("/api/debug/thedogs-meetings")
+def api_debug_thedogs_meetings():
+    try:
+        from connectors.thedogs_connector import TheDogsConnector
+        from datetime import date
+
+        conn = TheDogsConnector()
+        items = conn.fetch_meetings(date.today().isoformat()) or []
+
+        return jsonify({
+            "ok": True,
+            "count": len(items),
+            "items": [item.__dict__ if hasattr(item, "__dict__") else item for item in items],
+        })
+    except Exception as e:
+        log.exception(f"/api/debug/thedogs-meetings failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/debug/thedogs-races")
+def api_debug_thedogs_races():
+    try:
+        from connectors.thedogs_connector import TheDogsConnector
+        from datetime import date
+
+        conn = TheDogsConnector()
+        meetings = conn.fetch_meetings(date.today().isoformat()) or []
+        if not meetings:
+            return jsonify({"ok": True, "count": 0, "items": [], "note": "no meetings"})
+
+        first = meetings[0]
+        races = conn.fetch_meeting_races(first) or []
+
+        return jsonify({
+            "ok": True,
+            "meeting": first.__dict__ if hasattr(first, "__dict__") else first,
+            "count": len(races),
+            "items": [item.__dict__ if hasattr(item, "__dict__") else item for item in races],
+        })
+    except Exception as e:
+        log.exception(f"/api/debug/thedogs-races failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ------------------------------------------------------------
