@@ -2,9 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{% block title %}DemonPulse{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DemonPulse — {% block title %}{% endblock %}</title>
 
-    <!-- CSS -->
+    <link rel="icon" type="image/jpeg" href="/static/img/logo.jpeg">
+
     <link rel="stylesheet" href="/static/css/tokens.css">
     <link rel="stylesheet" href="/static/css/base.css">
     <link rel="stylesheet" href="/static/css/layout.css">
@@ -12,43 +14,61 @@
     <link rel="stylesheet" href="/static/css/tabs.css">
     <link rel="stylesheet" href="/static/css/pages.css">
 
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-
 <body>
+    <div class="app-shell">
 
-<div class="topbar">
-    <div class="logo">DEMONPULSE</div>
+        <header class="top-shell">
+            <div class="top-shell-left">
+                <a href="/home" class="brand-lockup">
+                    <img src="/static/img/logo.jpeg" alt="DemonPulse" class="brand-logo">
+                    <div class="brand-copy">
+                        <div class="brand-title">DEMONPULSE</div>
+                        <div class="brand-subtitle">LIVE RACE INTELLIGENCE TERMINAL</div>
+                    </div>
+                </a>
+            </div>
 
-    <div class="topbar-right">
-        <div id="envBadge" class="badge"></div>
-        <div id="shadowStatus" class="badge"></div>
-        <div id="userInfo"></div>
+            <div class="top-shell-center">
+                <nav class="top-nav">
+                    <a href="/home" class="top-nav-link {% if request.path in ['/', '/home'] %}active{% endif %}">Home</a>
+                    <a href="/live" class="top-nav-link {% if request.path == '/live' %}active{% endif %}">Live</a>
+                    <a href="/simulator" class="top-nav-link {% if request.path == '/simulator' %}active{% endif %}">Simulator</a>
+                    <a href="/betting" class="top-nav-link {% if request.path == '/betting' %}active{% endif %}">Betting</a>
+                    <a href="/reports" class="top-nav-link {% if request.path == '/reports' %}active{% endif %}">Reports</a>
+                    <a href="/learning" class="top-nav-link {% if request.path == '/learning' %}active{% endif %}">AI Learning</a>
+                    <a href="/backtesting" class="top-nav-link {% if request.path == '/backtesting' %}active{% endif %}">Backtesting</a>
+                    <a href="/settings" class="top-nav-link {% if request.path == '/settings' %}active{% endif %}">Settings</a>
+                </nav>
+            </div>
+
+            <div class="top-shell-right">
+                <div class="status-cluster">
+                    <div class="status-chip" id="topClockChip">
+                        <span class="status-chip-label">AEST</span>
+                        <span class="status-chip-value" id="topClockValue">--:--:--</span>
+                    </div>
+
+                    <div class="status-chip">
+                        <span class="status-chip-label">ENV</span>
+                        <span class="status-chip-value" id="envBadge">—</span>
+                    </div>
+
+                    <div class="status-chip">
+                        <span class="status-chip-label">SHADOW</span>
+                        <span class="status-chip-value" id="shadowStatus">—</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-shell">
+            {% block content %}{% endblock %}
+        </main>
     </div>
-</div>
 
-<div class="layout">
-
-    <div class="sidebar">
-        <a href="/" class="nav-item">Home</a>
-        <a href="/live" class="nav-item">Live</a>
-        <a href="/simulator" class="nav-item">Simulator</a>
-        <a href="/betting" class="nav-item">Betting</a>
-        <a href="/reports" class="nav-item">Reports</a>
-        <a href="/learning" class="nav-item">AI Learning</a>
-        <a href="/backtesting" class="nav-item">Backtesting</a>
-        <a href="/settings" class="nav-item">Settings</a>
-    </div>
-
-    <div class="content">
-        {% block content %}{% endblock %}
-    </div>
-
-</div>
-
-<script src="/static/js/core.js"></script>
-{% block scripts %}{% endblock %}
-
+    <script src="/static/js/core.js"></script>
+    {% block scripts %}{% endblock %}
 </body>
 </html>
