@@ -1,13 +1,13 @@
 import os
 import logging
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, render_template
 
 from env import env, EnvViolation, env_violation_response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DemonPulse] %(message)s")
 log = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder="static", static_url_path="/static")
+app = Flask(__name__, template_folder="templates", static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("FLASK_SECRET", "demonpulse-dev-secret-change-me")
 
 
@@ -55,7 +55,7 @@ def handle_env_violation(exc):
 def handle_404(_exc):
     if request.path.startswith("/api/"):
         return jsonify({"ok": False, "error": "Not found"}), 404
-    return send_from_directory(app.static_folder, "index.html")
+    return render_template("home.html")
 
 
 @app.errorhandler(500)
@@ -65,19 +65,47 @@ def handle_500(exc):
 
 
 # ------------------------------------------------------------
-# BASIC SPA / PAGE ROUTES
+# PAGE ROUTES
 # ------------------------------------------------------------
 @app.route("/")
 @app.route("/home")
+def page_home():
+    return render_template("home.html")
+
+
 @app.route("/live")
+def page_live():
+    return render_template("live.html")
+
+
 @app.route("/simulator")
+def page_simulator():
+    return render_template("simulator.html")
+
+
 @app.route("/betting")
+def page_betting():
+    return render_template("betting.html")
+
+
 @app.route("/reports")
+def page_reports():
+    return render_template("reports.html")
+
+
 @app.route("/learning")
+def page_learning():
+    return render_template("learning.html")
+
+
 @app.route("/backtesting")
+def page_backtesting():
+    return render_template("backtesting.html")
+
+
 @app.route("/settings")
-def serve_spa():
-    return send_from_directory(app.static_folder, "index.html")
+def page_settings():
+    return render_template("settings.html")
 
 
 # ------------------------------------------------------------
@@ -208,8 +236,7 @@ def api_auth_logout():
 
 
 # ------------------------------------------------------------
-# SAFE PLACEHOLDER HOME BOARD
-# prevents frontend from crashing before full Home build exists
+# HOME BOARD
 # ------------------------------------------------------------
 @app.route("/api/home/board", methods=["GET"])
 def api_home_board():
