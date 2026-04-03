@@ -595,3 +595,21 @@ def debug_scratchings_fetch(self) -> dict[str, Any]:
         debug_prefix="thedogs_debug_scratchings",
     )
     return result.to_dict()
+
+def debug_racecards_fetch(self):
+    result = self.browser.fetch_page(
+        RACECARDS_URL,
+        wait_selectors=self.default_wait_selectors,
+        save_debug=True,
+        debug_prefix="thedogs_debug_racecards",
+    )
+    return result.to_dict()
+
+def debug_scratchings_fetch(self):
+    result = self.browser.fetch_page(
+        SCRATCHINGS_URL,
+        wait_selectors=["body", "table", "tr"],
+        save_debug=True,
+        debug_prefix="thedogs_debug_scratchings",
+    )
+    return result.to_dict()
