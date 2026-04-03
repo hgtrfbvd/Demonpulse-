@@ -890,3 +890,70 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* ---------------------------------------------------------
+   BETTING PAGE
+--------------------------------------------------------- */
+
+.bet-hero {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 18px;
+}
+
+.bet-hero-right {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.bet-main-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 18px;
+}
+
+.bet-left-stack,
+.bet-right-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.bet-form-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.bet-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.bet-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+
+.bet-input {
+    background: #111;
+    border: 1px solid #333;
+    padding: 10px;
+    border-radius: 10px;
+    color: #fff;
+}
+
+@media (max-width: 1000px) {
+    .bet-main-grid,
+    .bet-hero {
+        grid-template-columns: 1fr;
+    }
+
+    .bet-form-grid {
+        grid-template-columns: 1fr;
+    }
+}
