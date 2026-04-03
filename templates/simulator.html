@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}Simulator{% endblock %}
+
+{% block content %}
+<div class="page-shell simulator-page">
+
+    <section class="sim-hero card">
+        <div class="sim-hero-left">
+            <div class="page-kicker">DEDICATED SIMULATION TERMINAL</div>
+            <h1 class="page-title">Race Simulator</h1>
+            <div class="page-subtitle">
+                Standalone Monte Carlo workspace. Use this page when you want full simulation focus, while Live keeps simulation optional for the race currently being watched.
+            </div>
+        </div>
+
+        <div class="sim-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">ACTIVE RACE</div>
+                <div class="hero-stat-value hero-stat-small" id="simHeroRace">—</div>
+                <div class="hero-stat-sub">Current loaded race</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">RUNS</div>
+                <div class="hero-stat-value hero-stat-small" id="simHeroRuns">—</div>
+                <div class="hero-stat-sub">Simulation depth</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">DECISION</div>
+                <div class="hero-stat-value hero-stat-small" id="simHeroDecision">—</div>
+                <div class="hero-stat-sub">Sim output</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">CHAOS</div>
+                <div class="hero-stat-value hero-stat-small" id="simHeroChaos">—</div>
+                <div class="hero-stat-sub">Race volatility</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="sim-control-grid">
+        <div class="card sim-control-card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">SIM INPUT</div>
+                    <h2 class="section-title">Race Selection + Controls</h2>
+                </div>
+                <div class="section-meta" id="simControlMeta">Ready</div>
+            </div>
+
+            <div class="sim-form-grid">
+                <div class="sim-field">
+                    <label class="sim-label" for="simRaceUid">Race UID</label>
+                    <input class="sim-input" id="simRaceUid" placeholder="Paste race_uid or open via ?race_uid=">
+                </div>
+
+                <div class="sim-field">
+                    <label class="sim-label" for="simRuns">Simulation Runs</label>
+                    <select class="sim-input" id="simRuns">
+                        <option value="100">100</option>
+                        <option value="200" selected>200</option>
+                        <option value="300">300</option>
+                        <option value="500">500</option>
+                    </select>
+                </div>
+
+                <div class="sim-field">
+                    <label class="sim-label" for="simMode">Engine</label>
+                    <select class="sim-input" id="simMode">
+                        <option value="monte_carlo" selected>Monte Carlo</option>
+                        <option value="legacy">Legacy</option>
+                    </select>
+                </div>
+
+                <div class="sim-field">
+                    <label class="sim-label" for="simCondition">Condition Override</label>
+                    <input class="sim-input" id="simCondition" placeholder="Optional">
+                </div>
+            </div>
+
+            <div class="inline-actions sim-control-actions">
+                <button class="dp-btn dp-btn-primary" id="runSimulatorBtn">Run Simulation</button>
+                <button class="dp-btn" id="loadSimulatorRaceBtn">Load Race</button>
+                <button class="dp-btn" id="clearSimulatorBtn">Clear</button>
+            </div>
+        </div>
+
+        <div class="card sim-race-card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">LOADED RACE</div>
+                    <h2 class="section-title">Race Context</h2>
+                </div>
+                <div class="section-meta" id="simRaceMeta">No race loaded</div>
+            </div>
+
+            <div class="live-meta-row">
+                <div class="live-meta-chip"><span class="live-meta-label">Track</span><span id="simTrack">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">Race</span><span id="simRaceNum">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">Code</span><span id="simCode">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">Distance</span><span id="simDistance">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">Jump</span><span id="simJump">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">Status</span><span id="simStatus">—</span></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="sim-main-grid">
+        <div class="sim-left-stack">
+            <div class="card sim-output-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">SIM OUTPUT</div>
+                        <h2 class="section-title">Topline Result</h2>
+                    </div>
+                    <div class="decision-pill decision-none" id="simDecisionPill">—</div>
+                </div>
+
+                <div class="sim-output-grid">
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Top Runner</div>
+                        <div class="sim-output-value" id="simTopRunner">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Top Win %</div>
+                        <div class="sim-output-value" id="simTopRunnerWinPct">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Confidence</div>
+                        <div class="sim-output-value" id="simConfidenceScore">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Chaos</div>
+                        <div class="sim-output-value" id="simChaosRating">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Pace</div>
+                        <div class="sim-output-value" id="simPaceType">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Collapse</div>
+                        <div class="sim-output-value" id="simCollapseRisk">—</div>
+                    </div>
+                </div>
+
+                <div class="sim-summary-box" id="simSummaryBox">
+                    No simulation run yet.
+                </div>
+            </div>
+
+            <div class="card sim-runner-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RUNNER DISTRIBUTION</div>
+                        <h2 class="section-title">Simulation Runner Table</h2>
+                    </div>
+                    <div class="section-meta" id="simRunnerMeta">No simulation data</div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="board-terminal-table sim-runner-table">
+                        <thead>
+                            <tr>
+                                <th>Runner</th>
+                                <th>Box</th>
+                                <th>Win %</th>
+                                <th>Place %</th>
+                                <th>Avg Finish</th>
+                                <th>Sim Edge</th>
+                                <th>Flags</th>
+                            </tr>
+                        </thead>
+                        <tbody id="simRunnerRows">
+                            <tr>
+                                <td colspan="7" class="board-empty">No simulation results yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="sim-right-stack">
+            <div class="card sim-scenario-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">SCENARIO READ</div>
+                        <h2 class="section-title">Scenario + Leader View</h2>
+                    </div>
+                    <div class="section-meta" id="simScenarioMeta">Waiting</div>
+                </div>
+
+                <div class="sim-scenario-grid">
+                    <div class="sim-scenario-item">
+                        <div class="sim-scenario-label">Most Common Scenario</div>
+                        <div class="sim-scenario-value" id="simMostCommonScenario">—</div>
+                    </div>
+                    <div class="sim-scenario-item">
+                        <div class="sim-scenario-label">Leader Frequency</div>
+                        <div class="sim-scenario-value" id="simLeaderFrequency">—</div>
+                    </div>
+                    <div class="sim-scenario-item">
+                        <div class="sim-scenario-label">Interference Rate</div>
+                        <div class="sim-scenario-value" id="simInterferenceRate">—</div>
+                    </div>
+                    <div class="sim-scenario-item">
+                        <div class="sim-scenario-label">Race Confidence</div>
+                        <div class="sim-scenario-value" id="simConfidenceRating">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card sim-guide-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">EXPERT GUIDE</div>
+                        <h2 class="section-title">Simulation Notes</h2>
+                    </div>
+                </div>
+
+                <div class="sim-guide-box" id="simGuideBox">
+                    No expert guide yet.
+                </div>
+            </div>
+
+            <div class="card sim-log-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RECENT RUNS</div>
+                        <h2 class="section-title">Simulation Log</h2>
+                    </div>
+                </div>
+
+                <div class="sim-log-list" id="simLogList">
+                    <div class="quick-feed-empty">No simulator history in this session.</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/simulator.js"></script>
+{% endblock %}
