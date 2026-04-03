@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block title %}AI Learning{% endblock %}
+
+{% block content %}
+<div class="page-shell learning-page">
+
+    <section class="learn-hero card">
+        <div class="learn-hero-left">
+            <div class="page-kicker">ADAPTATION / REVIEW / CONTROL</div>
+            <h1 class="page-title">AI Learning Terminal</h1>
+            <div class="page-subtitle">
+                Review what the system learned, reverse-engineer wins and losses, inspect discovered patterns, and control promotion of new logic and filters.
+            </div>
+        </div>
+
+        <div class="learn-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">EDGE PATTERNS</div>
+                <div class="hero-stat-value hero-stat-small" id="learnEdgeCount">—</div>
+                <div class="hero-stat-sub">Detected patterns</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">ERROR TAGS</div>
+                <div class="hero-stat-value hero-stat-small" id="learnErrorCount">—</div>
+                <div class="hero-stat-sub">Tagged learning issues</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">PROMOTIONS</div>
+                <div class="hero-stat-value hero-stat-small" id="learnPromotionCount">—</div>
+                <div class="hero-stat-sub">Approved adjustments</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">SHADOW MODE</div>
+                <div class="hero-stat-value hero-stat-small" id="learnShadowStatus">—</div>
+                <div class="hero-stat-sub">Paper learning state</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="report-tabs">
+            <button class="report-tab active" data-learn-tab="overview">Overview</button>
+            <button class="report-tab" data-learn-tab="reverse">Reverse Engineering</button>
+            <button class="report-tab" data-learn-tab="filters">Filters</button>
+            <button class="report-tab" data-learn-tab="promotions">Promotions</button>
+        </div>
+    </section>
+
+    <section class="learning-section" id="learn-overview">
+        <div class="learn-main-grid">
+            <div class="learn-left-stack">
+
+                <div class="card">
+                    <div class="section-head">
+                        <div>
+                            <div class="section-kicker">LEARNING OVERVIEW</div>
+                            <h2 class="section-title">System Learning Summary</h2>
+                        </div>
+                        <div class="section-meta" id="learnOverviewMeta">Loading…</div>
+                    </div>
+
+                    <div class="learn-summary-grid">
+                        <div class="learn-summary-box">
+                            <div class="learn-summary-label">Top Finding</div>
+                            <div class="learn-summary-value" id="learnTopFinding">—</div>
+                        </div>
+                        <div class="learn-summary-box">
+                            <div class="learn-summary-label">Weakest Area</div>
+                            <div class="learn-summary-value" id="learnWeakestArea">—</div>
+                        </div>
+                        <div class="learn-summary-box">
+                            <div class="learn-summary-label">Best Edge Type</div>
+                            <div class="learn-summary-value" id="learnBestEdgeType">—</div>
+                        </div>
+                        <div class="learn-summary-box">
+                            <div class="learn-summary-label">Current Focus</div>
+                            <div class="learn-summary-value" id="learnFocusArea">—</div>
+                        </div>
+                    </div>
+
+                    <div class="sim-guide-box" id="learnOverviewText">
+                        No learning summary loaded yet.
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="section-head">
+                        <div>
+                            <div class="section-kicker">EDGE PERFORMANCE</div>
+                            <h2 class="section-title">Edge / Pattern Table</h2>
+                        </div>
+                        <div class="section-meta" id="learnEdgeMeta">No data</div>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table class="board-terminal-table">
+                            <thead>
+                                <tr>
+                                    <th>Edge Type</th>
+                                    <th>Samples</th>
+                                    <th>ROI</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="learnEdgeRows">
+                                <tr><td colspan="5" class="board-empty">No edge data</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="learn-right-stack">
+
+                <div class="card">
+                    <div class="section-head">
+                        <div>
+                            <div class="section-kicker">ERROR BREAKDOWN</div>
+                            <h2 class="section-title">Learning Error Tags</h2>
+                        </div>
+                    </div>
+
+                    <div class="learn-chip-grid" id="learnErrorChips">
+                        <div class="quick-feed-empty">No error tags loaded.</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="section-head">
+                        <div>
+                            <div class="section-kicker">AUTO LEARNING STATUS</div>
+                            <h2 class="section-title">Paper Engine State</h2>
+                        </div>
+                    </div>
+
+                    <div class="learn-status-list" id="learnStatusList">
+                        <div class="sim-log-row">
+                            <div class="sim-log-main">
+                                <div class="sim-log-race">Status unavailable</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <section class="learning-section" id="learn-reverse" style="display:none;">
+        <div class="card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">REVERSE ENGINEERING</div>
+                    <h2 class="section-title">Why It Won / Why It Lost</h2>
+                </div>
+                <div class="section-meta" id="learnReverseMeta">No case loaded</div>
+            </div>
+
+            <div class="learn-reverse-grid">
+                <div class="learn-reverse-box">
+                    <div class="learn-reverse-title">Winning Pattern</div>
+                    <div class="learn-reverse-body" id="learnWhyWon">No winning case loaded.</div>
+                </div>
+                <div class="learn-reverse-box">
+                    <div class="learn-reverse-title">Losing Pattern</div>
+                    <div class="learn-reverse-body" id="learnWhyLost">No losing case loaded.</div>
+                </div>
+                <div class="learn-reverse-box">
+                    <div class="learn-reverse-title">Missed Winner</div>
+                    <div class="learn-reverse-body" id="learnMissedWinner">No missed-winner case loaded.</div>
+                </div>
+                <div class="learn-reverse-box">
+                    <div class="learn-reverse-title">Recommended Change</div>
+                    <div class="learn-reverse-body" id="learnRecommendedChange">No recommendation yet.</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="learning-section" id="learn-filters" style="display:none;">
+        <div class="card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">FILTER LAB</div>
+                    <h2 class="section-title">Discovered / Candidate Filters</h2>
+                </div>
+                <div class="section-meta" id="learnFilterMeta">No filters loaded</div>
+            </div>
+
+            <div class="table-wrap">
+                <table class="board-terminal-table">
+                    <thead>
+                        <tr>
+                            <th>Filter</th>
+                            <th>Type</th>
+                            <th>Effect</th>
+                            <th>Confidence</th>
+                            <th>State</th>
+                        </tr>
+                    </thead>
+                    <tbody id="learnFilterRows">
+                        <tr><td colspan="5" class="board-empty">No filter candidates</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="learning-section" id="learn-promotions" style="display:none;">
+        <div class="card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">PROMOTION CONTROL</div>
+                    <h2 class="section-title">AEEE / Adjustment Queue</h2>
+                </div>
+                <div class="section-meta" id="learnPromotionMeta">No promotions queued</div>
+            </div>
+
+            <div class="table-wrap">
+                <table class="board-terminal-table">
+                    <thead>
+                        <tr>
+                            <th>Adjustment</th>
+                            <th>Direction</th>
+                            <th>Amount</th>
+                            <th>Reason</th>
+                            <th>State</th>
+                        </tr>
+                    </thead>
+                    <tbody id="learnPromotionRows">
+                        <tr><td colspan="5" class="board-empty">No promotion data</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/learning.js"></script>
+{% endblock %}
