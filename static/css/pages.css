@@ -1139,4 +1139,61 @@
     }
 }
 
+/* ---------------------------------------------------------
+   BACKTESTING PAGE
+--------------------------------------------------------- */
 
+.backtest-hero {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 18px;
+    align-items: stretch;
+}
+
+.backtest-hero-right {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.backtest-control-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+
+.backtest-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.backtest-main-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 18px;
+    align-items: start;
+}
+
+.backtest-left-stack,
+.backtest-right-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+@media (max-width: 1180px) {
+    .backtest-hero,
+    .backtest-control-grid,
+    .backtest-main-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 860px) {
+    .backtest-hero-right,
+    .backtest-form-grid {
+        grid-template-columns: 1fr;
+    }
+}
