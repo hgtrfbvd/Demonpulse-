@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block title %}Live{% endblock %}
+
+{% block content %}
+<div class="page-shell live-page">
+
+    <section class="live-hero card">
+        <div class="live-hero-left">
+            <div class="page-kicker">ACTIVE RACE WORKSPACE</div>
+            <h1 class="page-title">Live Race Terminal</h1>
+            <div class="page-subtitle">
+                Focused screen for the race currently being viewed. Simulation is available here, but only runs when you choose to watch it.
+            </div>
+        </div>
+
+        <div class="live-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">CODE</div>
+                <div class="hero-stat-value hero-stat-small" id="liveHeroCode">—</div>
+                <div class="hero-stat-sub">Active race code</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">COUNTDOWN</div>
+                <div class="hero-stat-value hero-stat-small" id="liveHeroCountdown">—</div>
+                <div class="hero-stat-sub">Until jump</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">SIGNAL</div>
+                <div class="hero-stat-value hero-stat-small" id="liveHeroSignal">—</div>
+                <div class="hero-stat-sub">Current signal state</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">DECISION</div>
+                <div class="hero-stat-value hero-stat-small" id="liveHeroDecision">—</div>
+                <div class="hero-stat-sub">System recommendation</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="live-race-header card">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">SELECTED RACE</div>
+                <h2 class="section-title" id="liveRaceTitle">No race selected</h2>
+            </div>
+            <div class="section-meta" id="liveRaceMeta">Open from Home board or use ?race_uid=...</div>
+        </div>
+
+        <div class="live-meta-row">
+            <div class="live-meta-chip"><span class="live-meta-label">Track</span><span id="liveTrack">—</span></div>
+            <div class="live-meta-chip"><span class="live-meta-label">Race</span><span id="liveRaceNum">—</span></div>
+            <div class="live-meta-chip"><span class="live-meta-label">Distance</span><span id="liveDistance">—</span></div>
+            <div class="live-meta-chip"><span class="live-meta-label">Grade</span><span id="liveGrade">—</span></div>
+            <div class="live-meta-chip"><span class="live-meta-label">Jump</span><span id="liveJump">—</span></div>
+            <div class="live-meta-chip"><span class="live-meta-label">Status</span><span id="liveStatus">—</span></div>
+        </div>
+    </section>
+
+    <section class="live-terminal-grid">
+        <div class="live-left-stack">
+
+            <div class="card decision-terminal-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">SYSTEM DECISION</div>
+                        <h2 class="section-title">Signal / Confidence / Selection</h2>
+                    </div>
+                    <div class="decision-pill decision-none" id="liveDecisionPill">—</div>
+                </div>
+
+                <div class="live-decision-grid">
+                    <div class="live-decision-item">
+                        <div class="live-decision-label">Selection</div>
+                        <div class="live-decision-value" id="liveSelection">—</div>
+                    </div>
+                    <div class="live-decision-item">
+                        <div class="live-decision-label">Box</div>
+                        <div class="live-decision-value" id="liveBox">—</div>
+                    </div>
+                    <div class="live-decision-item">
+                        <div class="live-decision-label">Signal</div>
+                        <div class="live-decision-value" id="liveSignal">—</div>
+                    </div>
+                    <div class="live-decision-item">
+                        <div class="live-decision-label">Confidence</div>
+                        <div class="live-decision-value" id="liveConfidence">—</div>
+                    </div>
+                    <div class="live-decision-item">
+                        <div class="live-decision-label">EV</div>
+                        <div class="live-decision-value" id="liveEV">—</div>
+                    </div>
+                    <div class="live-decision-item">
+                        <div class="live-decision-label">Collapse Risk</div>
+                        <div class="live-decision-value" id="liveCollapseRisk">—</div>
+                    </div>
+                </div>
+
+                <div class="live-reason-box" id="liveReasonBox">
+                    Waiting for race analysis.
+                </div>
+
+                <div class="inline-actions live-inline-actions">
+                    <button class="dp-btn dp-btn-primary" id="liveWatchSimBtn">Watch Sim</button>
+                    <button class="dp-btn" id="liveRefreshBtn">Refresh Race</button>
+                    <button class="dp-btn" id="liveLogBetBtn">Log Bet</button>
+                </div>
+            </div>
+
+            <div class="card runners-terminal-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RUNNER BOARD</div>
+                        <h2 class="section-title">Runners</h2>
+                    </div>
+                    <div class="section-meta" id="liveRunnerMeta">No runner data</div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="board-terminal-table live-runner-table">
+                        <thead>
+                            <tr>
+                                <th>Box</th>
+                                <th>Runner</th>
+                                <th>Odds</th>
+                                <th>Speed</th>
+                                <th>Style</th>
+                                <th>Score</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="liveRunnerRows">
+                            <tr>
+                                <td colspan="7" class="board-empty">No race loaded.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="live-right-stack">
+
+            <div class="card race-shape-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RACE SHAPE</div>
+                        <h2 class="section-title">Shape + Filters</h2>
+                    </div>
+                    <div class="section-meta" id="liveShapeMeta">Pending analysis</div>
+                </div>
+
+                <div class="live-shape-grid">
+                    <div class="live-shape-stat">
+                        <div class="live-shape-label">Pace</div>
+                        <div class="live-shape-value" id="livePace">—</div>
+                    </div>
+                    <div class="live-shape-stat">
+                        <div class="live-shape-label">Pressure</div>
+                        <div class="live-shape-value" id="livePressure">—</div>
+                    </div>
+                    <div class="live-shape-stat">
+                        <div class="live-shape-label">Beneficiary</div>
+                        <div class="live-shape-value" id="liveBeneficiary">—</div>
+                    </div>
+                    <div class="live-shape-stat">
+                        <div class="live-shape-label">Separation</div>
+                        <div class="live-shape-value" id="liveSeparation">—</div>
+                    </div>
+                </div>
+
+                <div class="live-filter-list" id="liveFilterList">
+                    <div class="quick-feed-empty">No filter data yet.</div>
+                </div>
+            </div>
+
+            <div class="card live-sim-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">OPTIONAL SIMULATION</div>
+                        <h2 class="section-title">Live Sim Panel</h2>
+                    </div>
+                    <div class="section-meta" id="liveSimMeta">Idle</div>
+                </div>
+
+                <div class="live-sim-idle" id="liveSimIdle">
+                    Simulation is not automatic on the Live page. Click <strong>Watch Sim</strong> to run the active race through the simulator.
+                </div>
+
+                <div class="live-sim-results" id="liveSimResults" style="display:none;">
+                    <div class="live-sim-topline">
+                        <div class="live-sim-top-item">
+                            <div class="live-sim-top-label">Decision</div>
+                            <div class="live-sim-top-value" id="liveSimDecision">—</div>
+                        </div>
+                        <div class="live-sim-top-item">
+                            <div class="live-sim-top-label">Confidence</div>
+                            <div class="live-sim-top-value" id="liveSimConfidence">—</div>
+                        </div>
+                        <div class="live-sim-top-item">
+                            <div class="live-sim-top-label">Chaos</div>
+                            <div class="live-sim-top-value" id="liveSimChaos">—</div>
+                        </div>
+                        <div class="live-sim-top-item">
+                            <div class="live-sim-top-label">Top Win %</div>
+                            <div class="live-sim-top-value" id="liveSimTopWin">—</div>
+                        </div>
+                    </div>
+
+                    <div class="live-sim-summary" id="liveSimSummary">—</div>
+
+                    <div class="table-wrap">
+                        <table class="board-terminal-table live-sim-table">
+                            <thead>
+                                <tr>
+                                    <th>Runner</th>
+                                    <th>Box</th>
+                                    <th>Win %</th>
+                                    <th>Place %</th>
+                                    <th>Avg Finish</th>
+                                    <th>Sim Edge</th>
+                                </tr>
+                            </thead>
+                            <tbody id="liveSimRows">
+                                <tr>
+                                    <td colspan="6" class="board-empty">No simulation run yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/live.js"></script>
+{% endblock %}
