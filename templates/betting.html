@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Betting{% endblock %}
+
+{% block content %}
+<div class="page-shell betting-page">
+
+    <!-- HERO -->
+    <section class="bet-hero card">
+        <div class="bet-hero-left">
+            <div class="page-kicker">PAPER / LIVE EXECUTION</div>
+            <h1 class="page-title">Betting Terminal</h1>
+            <div class="page-subtitle">
+                Execute, track and manage all bets. Live page handles fast race bets — this is your full control panel.
+            </div>
+        </div>
+
+        <div class="bet-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">BANK</div>
+                <div class="hero-stat-value" id="betBank">—</div>
+                <div class="hero-stat-sub">Current balance</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">EXPOSURE</div>
+                <div class="hero-stat-value" id="betExposure">—</div>
+                <div class="hero-stat-sub">Open risk</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">TODAY P/L</div>
+                <div class="hero-stat-value" id="betPL">—</div>
+                <div class="hero-stat-sub">Session performance</div>
+            </div>
+
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">STRIKE</div>
+                <div class="hero-stat-value" id="betStrike">—</div>
+                <div class="hero-stat-sub">Win rate</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- MAIN GRID -->
+    <section class="bet-main-grid">
+
+        <!-- LEFT SIDE -->
+        <div class="bet-left-stack">
+
+            <!-- CREATE BET -->
+            <div class="card bet-create-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">CREATE BET</div>
+                        <h2 class="section-title">Manual / System Entry</h2>
+                    </div>
+                    <div class="section-meta" id="betCreateMeta">Ready</div>
+                </div>
+
+                <div class="bet-form-grid">
+
+                    <div class="bet-field">
+                        <label class="bet-label">Race UID</label>
+                        <input id="betRaceUid" class="bet-input" placeholder="race_uid">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Runner</label>
+                        <input id="betRunner" class="bet-input" placeholder="Runner name">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Box</label>
+                        <input id="betBox" class="bet-input" placeholder="Box">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Odds</label>
+                        <input id="betOdds" class="bet-input" placeholder="e.g. 3.50">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Stake</label>
+                        <input id="betStake" class="bet-input" placeholder="$">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Bet Type</label>
+                        <select id="betType" class="bet-input">
+                            <option value="WIN">Win</option>
+                            <option value="PLACE">Place</option>
+                            <option value="EACHWAY">Each Way</option>
+                        </select>
+                    </div>
+
+                </div>
+
+                <div class="inline-actions">
+                    <button class="dp-btn dp-btn-primary" id="placeBetBtn">Place Bet</button>
+                    <button class="dp-btn" id="clearBetBtn">Clear</button>
+                </div>
+            </div>
+
+            <!-- OPEN BETS -->
+            <div class="card bet-open-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">OPEN BETS</div>
+                        <h2 class="section-title">Pending / Unsettled</h2>
+                    </div>
+                    <div class="section-meta" id="betOpenMeta">—</div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="board-terminal-table">
+                        <thead>
+                            <tr>
+                                <th>Race</th>
+                                <th>Runner</th>
+                                <th>Type</th>
+                                <th>Odds</th>
+                                <th>Stake</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="openBetsRows">
+                            <tr><td colspan="6" class="board-empty">No open bets</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT SIDE -->
+        <div class="bet-right-stack">
+
+            <!-- HISTORY -->
+            <div class="card bet-history-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">BET HISTORY</div>
+                        <h2 class="section-title">Recent Bets</h2>
+                    </div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="board-terminal-table">
+                        <thead>
+                            <tr>
+                                <th>Race</th>
+                                <th>Runner</th>
+                                <th>Type</th>
+                                <th>Odds</th>
+                                <th>Stake</th>
+                                <th>Result</th>
+                                <th>P/L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="betHistoryRows">
+                            <tr><td colspan="7" class="board-empty">No history</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- SESSION CONTROL -->
+            <div class="card bet-session-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">SESSION CONTROL</div>
+                        <h2 class="section-title">Bank / Reset</h2>
+                    </div>
+                </div>
+
+                <div class="inline-actions">
+                    <button class="dp-btn" id="resetBankBtn">Reset Bank</button>
+                    <button class="dp-btn" id="exportBetsBtn">Export</button>
+                </div>
+            </div>
+
+        </div>
+
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/betting.js"></script>
+{% endblock %}
