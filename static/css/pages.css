@@ -957,3 +957,22 @@
         grid-template-columns: 1fr;
     }
 }
+
+.live-bet-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.live-bet-card .bet-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+@media (max-width: 860px) {
+    .live-bet-grid {
+        grid-template-columns: 1fr;
+    }
+}
