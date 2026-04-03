@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Backtesting{% endblock %}
+
+{% block content %}
+<div class="page-shell backtesting-page">
+
+    <section class="backtest-hero card">
+        <div class="backtest-hero-left">
+            <div class="page-kicker">HISTORICAL VALIDATION</div>
+            <h1 class="page-title">Backtesting Terminal</h1>
+            <div class="page-subtitle">
+                Replay historical races, compare decisions to actual outcomes, and validate whether changes improve or damage live performance before promotion.
+            </div>
+        </div>
+
+        <div class="backtest-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">TEST RUNS</div>
+                <div class="hero-stat-value hero-stat-small" id="btRunCount">—</div>
+                <div class="hero-stat-sub">Historical samples</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">HIT RATE</div>
+                <div class="hero-stat-value hero-stat-small" id="btHitRate">—</div>
+                <div class="hero-stat-sub">Correct outcomes</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">ROI</div>
+                <div class="hero-stat-value hero-stat-small" id="btROI">—</div>
+                <div class="hero-stat-sub">Replay performance</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">STATUS</div>
+                <div class="hero-stat-value hero-stat-small" id="btStatus">IDLE</div>
+                <div class="hero-stat-sub">Engine state</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="backtest-control-grid">
+        <div class="card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">BACKTEST CONTROLS</div>
+                    <h2 class="section-title">Historical Replay Setup</h2>
+                </div>
+                <div class="section-meta" id="btControlMeta">Ready</div>
+            </div>
+
+            <div class="backtest-form-grid">
+                <div class="sim-field">
+                    <label class="sim-label">Date From</label>
+                    <input id="btDateFrom" class="sim-input" type="date">
+                </div>
+                <div class="sim-field">
+                    <label class="sim-label">Date To</label>
+                    <input id="btDateTo" class="sim-input" type="date">
+                </div>
+                <div class="sim-field">
+                    <label class="sim-label">Code</label>
+                    <select id="btCode" class="sim-input">
+                        <option value="ALL">All</option>
+                        <option value="GREYHOUND">Greyhound</option>
+                        <option value="HORSE">Horse</option>
+                        <option value="HARNESS">Harness</option>
+                    </select>
+                </div>
+                <div class="sim-field">
+                    <label class="sim-label">Batch Size</label>
+                    <select id="btBatchSize" class="sim-input">
+                        <option value="25">25</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                        <option value="250">250</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="inline-actions">
+                <button class="dp-btn dp-btn-primary" id="runBacktestBtn">Run Backtest</button>
+                <button class="dp-btn" id="clearBacktestBtn">Clear</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">CURRENT TEST WINDOW</div>
+                    <h2 class="section-title">Replay Scope</h2>
+                </div>
+                <div class="section-meta" id="btScopeMeta">No backtest run yet</div>
+            </div>
+
+            <div class="live-meta-row">
+                <div class="live-meta-chip"><span class="live-meta-label">From</span><span id="btScopeFrom">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">To</span><span id="btScopeTo">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">Code</span><span id="btScopeCode">—</span></div>
+                <div class="live-meta-chip"><span class="live-meta-label">Batch</span><span id="btScopeBatch">—</span></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="backtest-main-grid">
+        <div class="backtest-left-stack">
+            <div class="card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RESULT SUMMARY</div>
+                        <h2 class="section-title">Backtest Topline</h2>
+                    </div>
+                    <div class="decision-pill decision-none" id="btDecisionPill">—</div>
+                </div>
+
+                <div class="sim-output-grid">
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Samples</div>
+                        <div class="sim-output-value" id="btSamples">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Correct</div>
+                        <div class="sim-output-value" id="btCorrect">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Wrong</div>
+                        <div class="sim-output-value" id="btWrong">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Profit</div>
+                        <div class="sim-output-value" id="btProfit">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Avg Confidence</div>
+                        <div class="sim-output-value" id="btAvgConfidence">—</div>
+                    </div>
+                    <div class="sim-output-item">
+                        <div class="sim-output-label">Promotion Verdict</div>
+                        <div class="sim-output-value" id="btVerdict">—</div>
+                    </div>
+                </div>
+
+                <div class="sim-summary-box" id="btSummaryBox">
+                    No backtest run yet.
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">BACKTEST TABLE</div>
+                        <h2 class="section-title">Race-by-Race Replay</h2>
+                    </div>
+                    <div class="section-meta" id="btTableMeta">No rows</div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="board-terminal-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Race</th>
+                                <th>Selection</th>
+                                <th>Actual</th>
+                                <th>Decision</th>
+                                <th>Confidence</th>
+                                <th>P/L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="btRows">
+                            <tr><td colspan="7" class="board-empty">No backtest results yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="backtest-right-stack">
+            <div class="card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">ERROR REVIEW</div>
+                        <h2 class="section-title">Failure Breakdown</h2>
+                    </div>
+                </div>
+
+                <div class="learn-chip-grid" id="btErrorChips">
+                    <div class="quick-feed-empty">No backtest error data.</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RECOMMENDATION</div>
+                        <h2 class="section-title">What This Means</h2>
+                    </div>
+                </div>
+
+                <div class="sim-guide-box" id="btRecommendationBox">
+                    No recommendation yet.
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RUN HISTORY</div>
+                        <h2 class="section-title">Recent Backtests</h2>
+                    </div>
+                </div>
+
+                <div class="sim-log-list" id="btLogList">
+                    <div class="quick-feed-empty">No backtest history this session.</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/backtesting.js"></script>
+{% endblock %}
