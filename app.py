@@ -68,6 +68,9 @@ def handle_500(exc):
 # PAGE ROUTES
 # ------------------------------------------------------------
 @app.route("/")
+def root():
+    return redirect(url_for("page_home"))
+
 @app.route("/home")
 def page_home():
     return render_template("home.html")
