@@ -1,23 +1,21 @@
-# FILE: connectors/thedogs_connector.py
-
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-import requests
 from bs4 import BeautifulSoup
+
+from connectors.browser_client import BrowserClient
 
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://www.thedogs.com.au"
 RACECARDS_URL = f"{BASE_URL}/racing/racecards"
 SCRATCHINGS_URL = f"{BASE_URL}/racing/scratchings"
-
-TIMEOUT = 20
 
 TRACK_STATES = {
     "casino": "NSW",
@@ -148,27 +146,43 @@ class TheDogsConnector:
     source_name = "thedogs"
     supported_codes = ("GREYHOUND",)
 
+    def __init__(self):
+        self.browser = BrowserClient()
+        self.default_wait_selectors = [
+            "body",
+            "a[href*='/racing/']",
+            "table",
+            "tr",
+        ]
+
     def is_enabled(self) -> bool:
         return True
 
     def healthcheck(self) -> dict[str, Any]:
-        try:
-            html = self._fetch(RACECARDS_URL)
-            return {
-                "ok": bool(html),
-                "source": self.source_name,
-                "url": RACECARDS_URL,
-                "html_len": len(html or ""),
-            }
-        except Exception as e:
-            return {"ok": False, "source": self.source_name, "error": str(e)}
+        result = self.browser.fetch_page(
+            RACECARDS_URL,
+            wait_selectors=self.default_wait_selectors,
+            save_debug=True,
+            debug_prefix="thedogs_healthcheck",
+        )
+        return result.to_dict()
 
     def fetch_meetings(self, target_date: str | None = None) -> list[MeetingRecord]:
         if not target_date:
             return []
 
-        html = self._fetch(RACECARDS_URL)
-        soup = self._parse_html(html)
+        result = self.browser.fetch_page(
+            RACECARDS_URL,
+            wait_selectors=self.default_wait_selectors,
+            save_debug=True,
+            debug_prefix=f"thedogs_meetings_{target_date}",
+        )
+
+        if not result.ok:
+            log.warning("TheDogs meetings blocked/failed: %s", result.reason)
+            return []
+
+        soup = self._parse_html(result.html)
         if not soup:
             return []
 
@@ -202,8 +216,18 @@ class TheDogsConnector:
         return meetings
 
     def fetch_meeting_races(self, meeting: MeetingRecord) -> list[RaceRecord]:
-        html = self._fetch(meeting.url)
-        soup = self._parse_html(html)
+        result = self.browser.fetch_page(
+            meeting.url,
+            wait_selectors=self.default_wait_selectors,
+            save_debug=True,
+            debug_prefix=f"thedogs_races_{meeting.track}_{meeting.meeting_date}",
+        )
+
+        if not result.ok:
+            log.warning("TheDogs meeting page failed %s: %s", meeting.track, result.reason)
+            return []
+
+        soup = self._parse_html(result.html)
         if not soup:
             return []
 
@@ -228,6 +252,7 @@ class TheDogsConnector:
 
             race_name = parsed["race_name"] or ""
             race_uid = self._make_race_uid(meeting.meeting_date, "GREYHOUND", meeting.track, race_num)
+
             race_url = f"{BASE_URL}/racing/{meeting.track}/{meeting.meeting_date}/{race_num}"
             if race_name:
                 race_url += f"/{race_name}"
@@ -261,25 +286,37 @@ class TheDogsConnector:
         race: RaceRecord,
         scratchings: dict[str, list[int]] | None = None,
     ) -> tuple[RaceRecord, list[RunnerRecord]]:
-        html = self._fetch(race.expert_form_url or race.source_url)
-        soup = self._parse_html(html)
+        url = race.expert_form_url or race.source_url
+        result = self.browser.fetch_page(
+            url,
+            wait_selectors=["body", "table", "tr"],
+            save_debug=True,
+            debug_prefix=f"thedogs_race_{race.track}_{race.race_num}",
+        )
+
+        if not result.ok:
+            log.warning("TheDogs race detail failed %s: %s", race.race_uid, result.reason)
+            return race, []
+
+        soup = self._parse_html(result.html)
         if not soup:
             return race, []
 
-        text = soup.get_text(" ", strip=True)
+        page_text = soup.get_text(" ", strip=True)
+
         jump_time = None
         grade = ""
         distance = ""
 
-        time_match = re.search(r"\b(\d{1,2}:\d{2})\b", text)
+        time_match = re.search(r"\b(\d{1,2}:\d{2})\b", page_text)
         if time_match:
             jump_time = time_match.group(1)
 
-        dist_match = re.search(r"\b(\d{3,4}m)\b", text.lower())
+        dist_match = re.search(r"\b(\d{3,4}m)\b", page_text.lower())
         if dist_match:
             distance = dist_match.group(1)
 
-        grade_match = re.search(r"\b(grade\s*[0-9a-z+\- ]+)\b", text, flags=re.IGNORECASE)
+        grade_match = re.search(r"\b(grade\s*[0-9a-z+\- ]+)\b", page_text, flags=re.IGNORECASE)
         if grade_match:
             grade = grade_match.group(1)[:80]
 
@@ -321,6 +358,7 @@ class TheDogsConnector:
                             weight = num
                     except ValueError:
                         pass
+
                 if career is None and ((":" in value and "-" in value) or value.count("-") >= 2):
                     career = value[:40]
 
@@ -351,8 +389,18 @@ class TheDogsConnector:
         if not target_date:
             return {}
 
-        html = self._fetch(SCRATCHINGS_URL)
-        soup = self._parse_html(html)
+        result = self.browser.fetch_page(
+            SCRATCHINGS_URL,
+            wait_selectors=["body", "table", "tr"],
+            save_debug=True,
+            debug_prefix=f"thedogs_scratchings_{target_date}",
+        )
+
+        if not result.ok:
+            log.warning("TheDogs scratchings failed: %s", result.reason)
+            return {}
+
+        soup = self._parse_html(result.html)
         if not soup:
             return {}
 
@@ -389,13 +437,23 @@ class TheDogsConnector:
         return output
 
     def fetch_result(self, race: RaceRecord) -> ResultRecord | None:
-        html = self._fetch(race.source_url)
-        soup = self._parse_html(html)
+        result = self.browser.fetch_page(
+            race.source_url,
+            wait_selectors=["body", "table", "tr"],
+            save_debug=True,
+            debug_prefix=f"thedogs_result_{race.track}_{race.race_num}",
+        )
+
+        if not result.ok:
+            log.warning("TheDogs result fetch failed %s: %s", race.race_uid, result.reason)
+            return None
+
+        soup = self._parse_html(result.html)
         if not soup:
             return None
 
         positions: dict[str, dict[str, Any]] = {}
-        text = soup.get_text(" ", strip=True)
+        page_text = soup.get_text(" ", strip=True)
 
         for row in soup.select("tr"):
             cells = row.select("td")
@@ -451,7 +509,7 @@ class TheDogsConnector:
 
         if "1" not in positions:
             log.warning("No winner parsed for %s", race.race_uid)
-            log.debug("Result text preview: %s", text[:1000])
+            log.debug("Result text preview: %s", page_text[:1000])
             return None
 
         return ResultRecord(
@@ -467,27 +525,6 @@ class TheDogsConnector:
             place_3=positions.get("3", {}).get("name"),
             source=self.source_name,
         )
-
-    def _fetch(self, url: str) -> str:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-AU,en;q=0.9",
-            "Referer": BASE_URL,
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        }
-        response = requests.get(url, headers=headers, timeout=TIMEOUT)
-        response.raise_for_status()
-        html = response.text or ""
-        if "403 Forbidden" in html or "captcha" in html.lower():
-            log.warning("TheDogs blocking suspected for %s", url)
-            return ""
-        return html
 
     def _parse_html(self, html: str) -> BeautifulSoup | None:
         if not html:
@@ -514,10 +551,12 @@ class TheDogsConnector:
         match = RACE_PATH_RE.match(path)
         if not match:
             return None
+
         track = match.group(1)
         race_date = match.group(2)
         race_num = match.group(3)
         race_name = match.group(4)
+
         return {
             "track": track,
             "date": race_date,
@@ -535,6 +574,5 @@ class TheDogsConnector:
         return f"{race_date}_{code}_{track}_{race_num}"
 
     def _make_hash(self, *parts: Any) -> str:
-        import hashlib
         raw = "|".join("" if p is None else str(p) for p in parts)
         return hashlib.md5(raw.encode()).hexdigest()[:12]
