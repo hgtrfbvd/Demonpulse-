@@ -1,11 +1,44 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
 body {
     margin: 0;
-    background: var(--bg);
+    padding: 0;
+    min-height: 100%;
+    background:
+        radial-gradient(circle at top center, rgba(255, 0, 0, 0.08), transparent 28%),
+        linear-gradient(180deg, #070707 0%, #050505 100%);
     color: var(--text);
-    font-family: Arial, sans-serif;
+    font-family: Inter, Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+body {
+    min-height: 100vh;
 }
 
 a {
-    text-decoration: none;
     color: inherit;
+    text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+img {
+    max-width: 100%;
+    display: block;
+}
+
+.app-shell {
+    min-height: 100vh;
 }
