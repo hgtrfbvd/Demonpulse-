@@ -9,7 +9,7 @@
             <div class="page-kicker">ACTIVE RACE WORKSPACE</div>
             <h1 class="page-title">Live Race Terminal</h1>
             <div class="page-subtitle">
-                Focused screen for the race currently being viewed. Simulation is available here, but only runs when you choose to watch it.
+                Focused screen for the race being viewed. Simulation is optional, betting is race-specific, and workflow actions are all in one place.
             </div>
         </div>
 
@@ -104,8 +104,60 @@
 
                 <div class="inline-actions live-inline-actions">
                     <button class="dp-btn dp-btn-primary" id="liveWatchSimBtn">Watch Sim</button>
+                    <button class="dp-btn" id="liveSendToSimulatorBtn">Open in Simulator</button>
                     <button class="dp-btn" id="liveRefreshBtn">Refresh Race</button>
-                    <button class="dp-btn" id="liveLogBetBtn">Log Bet</button>
+                    <button class="dp-btn" id="liveMarkWatchedBtn">Mark Watched</button>
+                </div>
+            </div>
+
+            <div class="card live-bet-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">QUICK BET</div>
+                        <h2 class="section-title">Race Bet Module</h2>
+                    </div>
+                    <div class="section-meta" id="liveBetMeta">Auto-fills from selection</div>
+                </div>
+
+                <div class="live-bet-grid">
+                    <div class="bet-field">
+                        <label class="bet-label">Race UID</label>
+                        <input id="liveBetRaceUid" class="bet-input" placeholder="race_uid">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Runner</label>
+                        <input id="liveBetRunner" class="bet-input" placeholder="Runner">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Box</label>
+                        <input id="liveBetBox" class="bet-input" placeholder="Box">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Odds</label>
+                        <input id="liveBetOdds" class="bet-input" placeholder="Odds">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Stake</label>
+                        <input id="liveBetStake" class="bet-input" placeholder="Stake">
+                    </div>
+
+                    <div class="bet-field">
+                        <label class="bet-label">Bet Type</label>
+                        <select id="liveBetType" class="bet-input">
+                            <option value="WIN">Win</option>
+                            <option value="PLACE">Place</option>
+                            <option value="EACHWAY">Each Way</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="inline-actions live-inline-actions">
+                    <button class="dp-btn dp-btn-primary" id="livePlaceBetBtn">Place Bet</button>
+                    <button class="dp-btn" id="liveClearBetBtn">Clear Bet Form</button>
                 </div>
             </div>
 
