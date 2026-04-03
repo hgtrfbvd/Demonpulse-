@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+
+{% block content %}
+<div class="page-shell reports-page">
+
+    <!-- HERO -->
+    <section class="report-hero card">
+        <div class="report-hero-left">
+            <div class="page-kicker">SYSTEM REPORTING</div>
+            <h1 class="page-title">Performance & Analytics</h1>
+            <div class="page-subtitle">
+                Full breakdown of betting performance, AI accuracy, and system behaviour. Split into actionable sections.
+            </div>
+        </div>
+
+        <div class="report-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">TOTAL BETS</div>
+                <div class="hero-stat-value" id="reportTotalBets">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">WIN RATE</div>
+                <div class="hero-stat-value" id="reportWinRate">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">PROFIT</div>
+                <div class="hero-stat-value" id="reportProfit">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">ROI</div>
+                <div class="hero-stat-value" id="reportROI">—</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- TABS -->
+    <section class="card">
+        <div class="report-tabs">
+            <button class="report-tab active" data-tab="performance">Performance</button>
+            <button class="report-tab" data-tab="ai">AI Analysis</button>
+            <button class="report-tab" data-tab="system">System Logs</button>
+        </div>
+    </section>
+
+    <!-- PERFORMANCE -->
+    <section class="card report-section" id="report-performance">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">BETTING PERFORMANCE</div>
+                <h2 class="section-title">Results Breakdown</h2>
+            </div>
+        </div>
+
+        <canvas id="profitChart" height="120"></canvas>
+
+        <div class="table-wrap">
+            <table class="board-terminal-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Race</th>
+                        <th>Selection</th>
+                        <th>Odds</th>
+                        <th>Stake</th>
+                        <th>Result</th>
+                        <th>P/L</th>
+                    </tr>
+                </thead>
+                <tbody id="reportTable">
+                    <tr><td colspan="7" class="board-empty">No data</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- AI ANALYSIS -->
+    <section class="card report-section" id="report-ai" style="display:none;">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">AI LEARNING</div>
+                <h2 class="section-title">Decision Accuracy</h2>
+            </div>
+        </div>
+
+        <div class="report-ai-grid">
+            <div class="report-ai-box">
+                <div class="report-ai-label">Correct Picks</div>
+                <div class="report-ai-value" id="aiCorrect">—</div>
+            </div>
+
+            <div class="report-ai-box">
+                <div class="report-ai-label">False Bets</div>
+                <div class="report-ai-value" id="aiFalse">—</div>
+            </div>
+
+            <div class="report-ai-box">
+                <div class="report-ai-label">Missed Winners</div>
+                <div class="report-ai-value" id="aiMissed">—</div>
+            </div>
+
+            <div class="report-ai-box">
+                <div class="report-ai-label">Edge Accuracy</div>
+                <div class="report-ai-value" id="aiEdge">—</div>
+            </div>
+        </div>
+
+        <div class="report-ai-log" id="aiLog">
+            No learning logs yet.
+        </div>
+    </section>
+
+    <!-- SYSTEM LOGS -->
+    <section class="card report-section" id="report-system" style="display:none;">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">SYSTEM STATUS</div>
+                <h2 class="section-title">Logs & Diagnostics</h2>
+            </div>
+        </div>
+
+        <div class="report-log-list" id="systemLogs">
+            <div class="quick-feed-empty">No logs yet.</div>
+        </div>
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/reports.js"></script>
+{% endblock %}
