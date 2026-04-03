@@ -325,6 +325,26 @@ def api_home_board():
         log.warning(f"/api/home/board fallback used: {e}")
         return jsonify({"ok": True, "items": []})
 
+@app.route("/api/debug/thedogs-fetch")
+def api_debug_thedogs_fetch():
+    try:
+        from connectors.thedogs_connector import TheDogsConnector
+        conn = TheDogsConnector()
+        return jsonify({"ok": True, "result": conn.debug_racecards_fetch()})
+    except Exception as e:
+        log.exception(f"/api/debug/thedogs-fetch failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/debug/thedogs-scratchings-fetch")
+def api_debug_thedogs_scratchings_fetch():
+    try:
+        from connectors.thedogs_connector import TheDogsConnector
+        conn = TheDogsConnector()
+        return jsonify({"ok": True, "result": conn.debug_scratchings_fetch()})
+    except Exception as e:
+        log.exception(f"/api/debug/thedogs-scratchings-fetch failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
 # HEALTH
