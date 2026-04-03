@@ -3,18 +3,19 @@
     let activeCodeFilter = "ALL";
     let countdownTimer = null;
 
-    const els = {
-        envValue: document.getElementById("homeEnvValue"),
-        shadowValue: document.getElementById("homeShadowValue"),
-        raceCount: document.getElementById("homeRaceCount"),
-        nextUp: document.getElementById("summaryNextUp"),
-        nextUpSub: document.getElementById("summaryNextUpSub"),
-        hotCount: document.getElementById("summaryHotCount"),
-        codeMix: document.getElementById("summaryCodeMix"),
-        boardMeta: document.getElementById("boardMeta"),
-        boardBody: document.getElementById("homeBoardBody"),
-        refreshBtn: document.getElementById("refreshBoardBtn"),
-        filterButtons: document.querySelectorAll(".dp-filter-btn"),
+    const el = {
+        refreshBtn: document.getElementById("refreshHomeBoardBtn"),
+        clearBtn: document.getElementById("clearHomeFilterBtn"),
+        filterButtons: Array.from(document.querySelectorAll(".terminal-filter-btn")),
+        boardRows: document.getElementById("homeBoardRows"),
+        boardMeta: document.getElementById("boardTerminalMeta"),
+        visibleRaceCount: document.getElementById("visibleRaceCount"),
+        hotRaceCount: document.getElementById("hotRaceCount"),
+        nextUpMain: document.getElementById("nextUpMain"),
+        nextUpSub: document.getElementById("nextUpSub"),
+        codeMixValue: document.getElementById("codeMixValue"),
+        quickFeedList: document.getElementById("quickFeedList"),
+        priorityFocusBox: document.getElementById("priorityFocusBox"),
     };
 
     function normaliseCode(code) {
@@ -23,7 +24,7 @@
         return raw;
     }
 
-    function codeBadgeClass(code) {
+    function codeClass(code) {
         const c = normaliseCode(code);
         if (c === "GREYHOUND") return "code-gh";
         if (c === "HORSE") return "code-horse";
@@ -31,7 +32,7 @@
         return "code-default";
     }
 
-    function signalBadgeClass(signal) {
+    function signalClass(signal) {
         const s = String(signal || "").toUpperCase();
         if (s === "SNIPER") return "signal-sniper";
         if (s === "VALUE") return "signal-value";
@@ -42,9 +43,8 @@
         return "signal-none";
     }
 
-    function parseJumpToDate(jumpTime) {
+    function parseJumpTimeToDate(jumpTime) {
         if (!jumpTime || typeof jumpTime !== "string") return null;
-
         const parts = jumpTime.split(":");
         if (parts.length < 2) return null;
 
@@ -54,31 +54,18 @@
         if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
 
         const now = new Date();
-        const target = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-            hour,
-            minute,
-            0,
-            0
-        );
-
-        return target;
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
     }
 
     function formatCountdownText(jumpTime) {
-        const target = parseJumpToDate(jumpTime);
+        const target = parseJumpTimeToDate(jumpTime);
         if (!target) return "—";
 
-        const now = new Date();
-        const diffMs = target.getTime() - now.getTime();
-        const diffSec = Math.floor(diffMs / 1000);
+        const diffSeconds = Math.floor((target.getTime() - Date.now()) / 1000);
+        if (diffSeconds <= 0) return "Jumped / due";
 
-        if (diffSec <= 0) return "Jumped / due";
-
-        const mins = Math.floor(diffSec / 60);
-        const secs = diffSec % 60;
+        const mins = Math.floor(diffSeconds / 60);
+        const secs = diffSeconds % 60;
 
         if (mins >= 60) {
             const hrs = Math.floor(mins / 60);
@@ -89,124 +76,157 @@
         return `${mins}m ${String(secs).padStart(2, "0")}s`;
     }
 
-    function filteredItems() {
+    function setFilter(nextFilter) {
+        activeCodeFilter = nextFilter;
+        el.filterButtons.forEach(btn => {
+            btn.classList.toggle("active", btn.dataset.code === nextFilter);
+        });
+        renderHomeBoard();
+    }
+
+    function getFilteredItems() {
         if (activeCodeFilter === "ALL") return [...allBoardItems];
         return allBoardItems.filter(item => normaliseCode(item.code) === activeCodeFilter);
     }
 
-    function sortItems(items) {
+    function sortByJumpTime(items) {
         return items.sort((a, b) => {
-            const aDate = parseJumpToDate(a.jump_time);
-            const bDate = parseJumpToDate(b.jump_time);
+            const aDate = parseJumpTimeToDate(a.jump_time);
+            const bDate = parseJumpTimeToDate(b.jump_time);
 
             if (!aDate && !bDate) return 0;
             if (!aDate) return 1;
             if (!bDate) return -1;
-
             return aDate.getTime() - bDate.getTime();
         });
     }
 
-    function getActionHref(item) {
-        return item.race_uid ? `/live?race_uid=${encodeURIComponent(item.race_uid)}` : "/live";
+    function isHotSignal(signal) {
+        const s = String(signal || "").toUpperCase();
+        return s === "SNIPER" || s === "VALUE";
     }
 
-    function renderBoard() {
-        const items = sortItems(filteredItems());
-
+    function renderBoardRows(items) {
         if (!items.length) {
-            els.boardBody.innerHTML = `
+            el.boardRows.innerHTML = `
                 <tr>
-                    <td colspan="9" class="board-empty">No races for this filter.</td>
+                    <td colspan="9" class="board-empty">No races available for this filter.</td>
                 </tr>
             `;
-            els.boardMeta.textContent = "No visible races";
-            els.raceCount.textContent = "0";
-            els.nextUp.textContent = "—";
-            els.nextUpSub.textContent = "No race loaded";
-            els.hotCount.textContent = "0";
-            els.codeMix.textContent = "0 / 0 / 0";
             return;
         }
 
-        const hotCount = items.filter(item => {
-            const signal = String(item.signal || "").toUpperCase();
-            return signal === "SNIPER" || signal === "VALUE";
-        }).length;
-
-        const gh = items.filter(i => normaliseCode(i.code) === "GREYHOUND").length;
-        const horse = items.filter(i => normaliseCode(i.code) === "HORSE").length;
-        const harness = items.filter(i => normaliseCode(i.code) === "HARNESS").length;
-
-        const next = items[0];
-
-        els.raceCount.textContent = String(items.length);
-        els.hotCount.textContent = String(hotCount);
-        els.codeMix.textContent = `${gh} / ${horse} / ${harness}`;
-        els.boardMeta.textContent = `${items.length} visible race${items.length === 1 ? "" : "s"}`;
-        els.nextUp.textContent = `${next.track || "Unknown"} R${next.race_num || "?"}`;
-        els.nextUpSub.textContent = `${normaliseCode(next.code)} • ${next.jump_time || "No jump time"}`;
-
-        els.boardBody.innerHTML = items.map(item => {
+        el.boardRows.innerHTML = items.map(item => {
             const code = normaliseCode(item.code);
             const signal = item.signal || "—";
             const confidence = item.confidence || "—";
-            const status = item.status || "upcoming";
+            const actionHref = item.race_uid
+                ? `/live?race_uid=${encodeURIComponent(item.race_uid)}`
+                : "/live";
 
             return `
                 <tr>
-                    <td>
-                        <span class="code-badge ${codeBadgeClass(code)}">${code}</span>
-                    </td>
+                    <td><span class="code-badge ${codeClass(code)}">${code}</span></td>
                     <td>${item.track || "—"}</td>
                     <td>R${item.race_num || "—"}</td>
                     <td>${item.jump_time || "—"}</td>
-                    <td class="countdown-cell" data-jump-time="${item.jump_time || ""}">
-                        ${formatCountdownText(item.jump_time)}
-                    </td>
-                    <td><span class="status-pill">${status}</span></td>
-                    <td><span class="signal-pill ${signalBadgeClass(signal)}">${signal}</span></td>
+                    <td class="countdown-cell" data-jump="${item.jump_time || ""}">${formatCountdownText(item.jump_time)}</td>
+                    <td><span class="status-pill">${(item.status || "upcoming").toUpperCase()}</span></td>
+                    <td><span class="signal-pill ${signalClass(signal)}">${signal}</span></td>
                     <td>${confidence}</td>
-                    <td>
-                        <a class="dp-btn dp-btn-small" href="${getActionHref(item)}">Open Live</a>
-                    </td>
+                    <td><a class="dp-btn dp-btn-small" href="${actionHref}">Open Live</a></td>
                 </tr>
             `;
         }).join("");
+    }
 
-        refreshCountdowns();
+    function renderQuickFeed(items) {
+        if (!items.length) {
+            el.quickFeedList.innerHTML = `<div class="quick-feed-empty">No board data yet.</div>`;
+            return;
+        }
+
+        const top = items.slice(0, 6);
+        el.quickFeedList.innerHTML = top.map(item => {
+            const code = normaliseCode(item.code);
+            const signal = item.signal || "—";
+            return `
+                <a class="quick-feed-row" href="${item.race_uid ? `/live?race_uid=${encodeURIComponent(item.race_uid)}` : '/live'}">
+                    <div class="quick-feed-main">
+                        <span class="code-badge ${codeClass(code)}">${code}</span>
+                        <span class="quick-feed-track">${item.track || "—"} R${item.race_num || "—"}</span>
+                    </div>
+                    <div class="quick-feed-side">
+                        <span class="quick-feed-time">${item.jump_time || "—"}</span>
+                        <span class="signal-pill ${signalClass(signal)}">${signal}</span>
+                    </div>
+                </a>
+            `;
+        }).join("");
+    }
+
+    function renderPriority(items) {
+        const hot = items.find(item => isHotSignal(item.signal));
+        if (!hot) {
+            el.priorityFocusBox.innerHTML = `No SNIPER or VALUE race visible right now.`;
+            return;
+        }
+
+        el.priorityFocusBox.innerHTML = `
+            <div class="priority-code-line">
+                <span class="code-badge ${codeClass(hot.code)}">${normaliseCode(hot.code)}</span>
+                <span class="signal-pill ${signalClass(hot.signal)}">${hot.signal || "—"}</span>
+            </div>
+            <div class="priority-race-line">${hot.track || "—"} R${hot.race_num || "—"}</div>
+            <div class="priority-sub-line">Jump ${hot.jump_time || "—"} • Confidence ${hot.confidence || "—"}</div>
+            <a class="dp-btn dp-btn-primary priority-open-btn" href="${hot.race_uid ? `/live?race_uid=${encodeURIComponent(hot.race_uid)}` : '/live'}">Open Live Race</a>
+        `;
+    }
+
+    function updateSummary(items) {
+        const visibleCount = items.length;
+        const hotCount = items.filter(item => isHotSignal(item.signal)).length;
+        const next = items[0] || null;
+
+        const ghCount = items.filter(item => normaliseCode(item.code) === "GREYHOUND").length;
+        const horseCount = items.filter(item => normaliseCode(item.code) === "HORSE").length;
+        const harnessCount = items.filter(item => normaliseCode(item.code) === "HARNESS").length;
+
+        el.visibleRaceCount.textContent = String(visibleCount);
+        el.hotRaceCount.textContent = String(hotCount);
+        el.codeMixValue.textContent = `${ghCount} / ${horseCount} / ${harnessCount}`;
+
+        if (next) {
+            el.nextUpMain.textContent = `${next.track || "—"} R${next.race_num || "—"}`;
+            el.nextUpSub.textContent = `${normaliseCode(next.code)} • ${next.jump_time || "—"}`;
+        } else {
+            el.nextUpMain.textContent = "—";
+            el.nextUpSub.textContent = "Waiting for board";
+        }
+
+        el.boardMeta.textContent = visibleCount
+            ? `${visibleCount} race${visibleCount === 1 ? "" : "s"} visible`
+            : "No races visible";
     }
 
     function refreshCountdowns() {
-        const countdownEls = document.querySelectorAll(".countdown-cell");
-        countdownEls.forEach(el => {
-            const jumpTime = el.getAttribute("data-jump-time");
-            el.textContent = formatCountdownText(jumpTime);
+        document.querySelectorAll(".countdown-cell").forEach(cell => {
+            cell.textContent = formatCountdownText(cell.dataset.jump || "");
         });
     }
 
-    function setFilter(nextFilter) {
-        activeCodeFilter = nextFilter;
-        els.filterButtons.forEach(btn => {
-            btn.classList.toggle("active", btn.dataset.code === nextFilter);
-        });
-        renderBoard();
+    function renderHomeBoard() {
+        const items = sortByJumpTime(getFilteredItems());
+        renderBoardRows(items);
+        renderQuickFeed(items);
+        renderPriority(items);
+        updateSummary(items);
+        refreshCountdowns();
     }
 
-    async function loadSystemSummary() {
-        try {
-            const status = await api("/api/system/status");
-            els.envValue.textContent = status.env || "—";
-            els.shadowValue.textContent = status.shadow_active ? "ON" : "OFF";
-        } catch (_err) {
-            els.envValue.textContent = "ERR";
-            els.shadowValue.textContent = "ERR";
-        }
-    }
-
-    async function loadBoard() {
-        els.boardMeta.textContent = "Loading board…";
-        els.boardBody.innerHTML = `
+    async function loadHomeBoard() {
+        el.boardMeta.textContent = "Loading board…";
+        el.boardRows.innerHTML = `
             <tr>
                 <td colspan="9" class="board-empty">Loading board…</td>
             </tr>
@@ -215,39 +235,42 @@
         try {
             const data = await api("/api/home/board");
             allBoardItems = Array.isArray(data.items) ? data.items : [];
-            renderBoard();
-        } catch (err) {
-            console.error("Board load failed:", err);
-            els.boardMeta.textContent = "Board load failed";
-            els.boardBody.innerHTML = `
+            renderHomeBoard();
+        } catch (error) {
+            console.error("Home board load failed:", error);
+            el.boardMeta.textContent = "Board load failed";
+            el.boardRows.innerHTML = `
                 <tr>
                     <td colspan="9" class="board-empty">Failed to load board.</td>
                 </tr>
             `;
+            el.quickFeedList.innerHTML = `<div class="quick-feed-empty">Failed to load board.</div>`;
+            el.priorityFocusBox.innerHTML = `Board load failed.`;
         }
     }
 
-    function bindEvents() {
-        if (els.refreshBtn) {
-            els.refreshBtn.addEventListener("click", loadBoard);
+    function bindHomeEvents() {
+        if (el.refreshBtn) {
+            el.refreshBtn.addEventListener("click", loadHomeBoard);
         }
 
-        els.filterButtons.forEach(btn => {
+        if (el.clearBtn) {
+            el.clearBtn.addEventListener("click", () => setFilter("ALL"));
+        }
+
+        el.filterButtons.forEach(btn => {
             btn.addEventListener("click", () => setFilter(btn.dataset.code));
         });
     }
 
-    function startCountdownLoop() {
+    function startHomeCountdownLoop() {
         if (countdownTimer) clearInterval(countdownTimer);
         countdownTimer = setInterval(refreshCountdowns, 1000);
     }
 
-    async function initHomePage() {
-        bindEvents();
-        startCountdownLoop();
-        await loadSystemSummary();
-        await loadBoard();
-    }
-
-    document.addEventListener("DOMContentLoaded", initHomePage);
+    document.addEventListener("DOMContentLoaded", () => {
+        bindHomeEvents();
+        startHomeCountdownLoop();
+        loadHomeBoard();
+    });
 })();
