@@ -277,7 +277,7 @@ class BaseConnector(ABC):
         """Return True if this connector is properly configured and usable."""
 
     @abstractmethod
-    def health_check(self) -> dict[str, Any]:
+    def healthcheck(self) -> dict[str, Any]:
         """
         Check connector availability.
         Must return a dict with at least:

@@ -8,7 +8,7 @@ Purpose:
 Confidence bands:
   0.85 – 1.00  => VALIDATED  (can build board)
   0.65 – 0.84  => CAUTION    (partial / flagged)
-  0.00 – 0.64  => BLOCKED    (do not build board)
+  0.00 – 0.64  => BLOCKED    (do not build board)  [< THRESHOLD_CAUTION]
 
 Key rule:
   If validation cannot confirm enough real data, it must return
@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------
 THRESHOLD_VALIDATED = 0.85
 THRESHOLD_CAUTION = 0.65
+MAX_BLOCKED_SCORE = THRESHOLD_CAUTION - 0.01  # Maximum score allowed in blocked state
 
 # ---------------------------------------------------------------
 # VALIDATION REASON CODES
@@ -317,7 +318,7 @@ def validate_race_sources(
         can_build_board = False
         if status == "validated":
             status = "blocked"
-            score = min(score, 0.64)
+            score = min(score, MAX_BLOCKED_SCORE)
 
     summary = (
         f"status={status} score={score} "

@@ -372,7 +372,7 @@ def api_health_engine():
         return jsonify({"ok": True, **engine_health})
     except Exception as e:
         log.exception(f"/api/health/engine failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "Engine health check unavailable"}), 500
 
 
 @app.route("/api/health/scheduler")
@@ -384,7 +384,7 @@ def api_health_scheduler():
         return jsonify({"ok": True, "scheduler": status})
     except Exception as e:
         log.exception(f"/api/health/scheduler failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "Scheduler status unavailable"}), 500
 
 
 @app.route("/api/health/connectors")
@@ -397,7 +397,7 @@ def api_health_connectors():
         return jsonify({"ok": overall_ok, "connectors": results})
     except Exception as e:
         log.exception(f"/api/health/connectors failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "Connector health check unavailable"}), 500
 
 
 # ------------------------------------------------------------

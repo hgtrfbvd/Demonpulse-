@@ -76,7 +76,9 @@ _scheduler_status = {
     # Config echo
     "meetings_refresh_interval": MEETINGS_REFRESH_INTERVAL,
     "race_detail_refresh_interval": RACE_DETAIL_REFRESH_INTERVAL,
+    "scratchings_refresh_interval": SCRATCHINGS_REFRESH_INTERVAL,
     "result_check_interval": RESULT_CHECK_INTERVAL,
+    "health_check_interval": HEALTH_CHECK_INTERVAL,
 }
 
 
