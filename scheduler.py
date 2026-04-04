@@ -20,6 +20,7 @@ Safety rules:
   - no duplicate cycle execution within the same interval
 """
 
+import os
 import time
 import logging
 import threading
@@ -425,6 +426,10 @@ def _scheduler_runner():
 # --------------------------------------------------------
 def start_scheduler():
     global _scheduler_started, _scheduler_thread
+
+    if os.getenv("SCHEDULER_ENABLED", "true") != "true":
+        log.info("Scheduler disabled by SCHEDULER_ENABLED env var — not starting")
+        return
 
     with _scheduler_lock:
         if _scheduler_thread and _scheduler_thread.is_alive():

@@ -78,6 +78,10 @@ LIVE_STATUSES = {
 # Statuses that indicate a race is settled (remove from board)
 SETTLED_STATUSES = {STATUS_FINAL, STATUS_PAYING, STATUS_ABANDONED, STATUS_RESULT_POSTED}
 
+# Authoritative terminal states — result-confirmed races must never be downgraded
+# by time-based logic. Always return immediately if a race holds one of these states.
+FINAL_STATES = {STATUS_FINAL, STATUS_PAYING, STATUS_ABANDONED}
+
 # All statuses known to Phase 2
 ALL_STATUSES = LIVE_STATUSES | SETTLED_STATUSES | {STATUS_BLOCKED, STATUS_STALE_UNKNOWN}
 
@@ -261,7 +265,13 @@ def compute_race_status(race: dict[str, Any]) -> str:
     if current == STATUS_BLOCKED or race.get("blocked"):
         return STATUS_BLOCKED
 
-    # Preserve authoritative OddsPro terminal states
+    # Explicit guard: authoritative terminal states are never overridden by time-based logic.
+    # FINAL_STATES is intentionally checked first and separately from SETTLED_STATUSES to
+    # make the protection of result-confirmed races unambiguous at the call site.
+    if current in FINAL_STATES:
+        return current
+
+    # Preserve other OddsPro settled states (e.g. result_posted)
     if current in SETTLED_STATUSES:
         return current
 
