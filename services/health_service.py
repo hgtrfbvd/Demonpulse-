@@ -43,6 +43,14 @@ _state: dict[str, Any] = {
     "blocked_race_count": 0,
     "stale_race_count": 0,
     "result_confirmation_count": 0,
+    # Phase 3 — intelligence layer
+    "last_prediction_run_at": None,
+    "last_prediction_run_count": 0,
+    "last_backtest_run_at": None,
+    "last_backtest_run_id": None,
+    "last_evaluation_run_at": None,
+    "last_evaluation_run_count": 0,
+    "active_model_version": "baseline_v1",
 }
 
 
@@ -98,6 +106,37 @@ def record_formfav_overlay(*, ok: bool) -> None:
         last_formfav_overlay_ok=ok,
     )
     log.debug(f"health_service: formfav_overlay recorded ok={ok}")
+
+
+# ---------------------------------------------------------------------------
+# PHASE 3 — INTELLIGENCE LAYER RECORD HELPERS
+# ---------------------------------------------------------------------------
+
+def record_prediction_run(*, count: int = 0) -> None:
+    """Record completion of a prediction generation run."""
+    _update(
+        last_prediction_run_at=_now(),
+        last_prediction_run_count=count,
+    )
+    log.debug(f"health_service: prediction_run recorded count={count}")
+
+
+def record_backtest_run(*, run_id: str = "") -> None:
+    """Record completion of a backtest run."""
+    _update(
+        last_backtest_run_at=_now(),
+        last_backtest_run_id=run_id,
+    )
+    log.debug(f"health_service: backtest_run recorded run_id={run_id}")
+
+
+def record_evaluation_run(*, count: int = 0) -> None:
+    """Record completion of a prediction evaluation pass."""
+    _update(
+        last_evaluation_run_at=_now(),
+        last_evaluation_run_count=count,
+    )
+    log.debug(f"health_service: evaluation_run recorded count={count}")
 
 
 def update_snapshot(

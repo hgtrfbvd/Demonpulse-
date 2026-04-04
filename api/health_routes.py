@@ -98,3 +98,40 @@ def health_db():
     except Exception as e:
         log.error(f"DB healthcheck error: {e}")
         return jsonify({"ok": False, "error": "Database unavailable"}), 500
+
+
+@health_bp.route("/intelligence", methods=["GET"])
+def health_intelligence():
+    """
+    Intelligence layer health — prediction and backtest observability.
+
+    Reports:
+      - last prediction run timestamp + count
+      - last backtest run timestamp + run_id
+      - last evaluation run timestamp + count
+      - stored prediction snapshot count
+      - evaluated prediction count
+      - active model version
+    """
+    try:
+        from services.health_service import get_health
+        from ai.learning_store import get_prediction_counts
+
+        health = get_health()
+        counts = get_prediction_counts()
+
+        return jsonify({
+            "ok": True,
+            "last_prediction_run_at": health.get("last_prediction_run_at"),
+            "last_prediction_run_count": health.get("last_prediction_run_count", 0),
+            "last_backtest_run_at": health.get("last_backtest_run_at"),
+            "last_backtest_run_id": health.get("last_backtest_run_id"),
+            "last_evaluation_run_at": health.get("last_evaluation_run_at"),
+            "last_evaluation_run_count": health.get("last_evaluation_run_count", 0),
+            "prediction_snapshots_stored": counts.get("prediction_snapshots", 0),
+            "evaluations_stored": counts.get("learning_evaluations", 0),
+            "active_model_version": health.get("active_model_version", "baseline_v1"),
+        })
+    except Exception as e:
+        log.error(f"/api/health/intelligence failed: {e}")
+        return jsonify({"ok": False, "error": "Intelligence health unavailable"}), 500

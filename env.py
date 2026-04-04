@@ -72,6 +72,13 @@ _TESTABLE_TABLES = {
     "user_sessions",
     "user_activity",
     "simulation_log",     # 005: persist simulation runs
+    # Phase 3 — Intelligence layer tables (prediction, learning, backtest)
+    "feature_snapshots",
+    "prediction_snapshots",
+    "prediction_runner_outputs",
+    "learning_evaluations",
+    "backtest_runs",
+    "backtest_run_items",
 }
 
 

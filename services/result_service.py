@@ -84,6 +84,26 @@ def confirm_race_result(race_uid: str, oddspro_race_id: str) -> dict[str, Any]:
         _write_result(confirmed)
         log.info(f"result_service: result confirmed and written for {race_uid}")
 
+        # Evaluate any outstanding predictions for this race
+        try:
+            from ai.learning_store import evaluate_prediction
+            from database import get_result
+            stored_result = get_result(race_uid)
+            if stored_result:
+                eval_result = evaluate_prediction(race_uid, stored_result)
+                eval_count = eval_result.get("evaluated", 0)
+                if eval_count > 0:
+                    from services.health_service import record_evaluation_run
+                    record_evaluation_run(count=eval_count)
+                    log.info(
+                        f"result_service: evaluated {eval_count} predictions "
+                        f"for {race_uid}"
+                    )
+        except Exception as eval_err:
+            log.warning(
+                f"result_service: prediction evaluation failed for {race_uid}: {eval_err}"
+            )
+
         # Update state for this race only
         try:
             from database import get_race
