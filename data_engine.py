@@ -1,107 +1,85 @@
 import logging
-from datetime import date
 
 from connectors.formfav_connector import FormFavConnector
 
 log = logging.getLogger(__name__)
 
 _CONNECTORS = []
-connector = None
 
 
 # ------------------------------------------------------------
-# CONNECTOR SETUP
+# CONNECTOR REGISTRY
 # ------------------------------------------------------------
-def load_connector():
-    global connector
+def register_connector(connector):
+    _CONNECTORS.append(connector)
 
-    if connector:
-        return connector
 
-    connector = FormFavConnector()
+def load_default_connectors():
+    global _CONNECTORS
+    if _CONNECTORS:
+        return
 
-    if not connector.is_enabled():
-        log.warning("FormFav connector not enabled (missing API key)")
-    else:
-        log.info("FormFav connector loaded")
+    register_connector(FormFavConnector())
 
-    return connector
+    log.info("Default connectors loaded: %s", [c.source_name for c in _CONNECTORS])
 
 
 # ------------------------------------------------------------
-# CORE FETCH (THIS DRIVES EVERYTHING)
+# CORE API FUNCTION
 # ------------------------------------------------------------
-def fetch_race(target_date: str, track: str, race_num: int, code: str = "HORSE"):
-    conn = load_connector()
-
+def get_race_data(date: str, track: str, race: int, code: str = "HORSE"):
+    load_default_connectors()
+    connector = _CONNECTORS[0]
     try:
-        race, runners = conn.fetch_race_form(
-            target_date=target_date,
+        log.info("Fetching race data: date=%s track=%s race=%s code=%s", date, track, race, code)
+        race_data, runners = connector.fetch_race_form(
+            target_date=date,
             track=track,
-            race_num=race_num,
+            race_num=race,
             code=code,
         )
-
-        return {
-            "ok": True,
-            "race": race.__dict__,
-            "runners": [r.__dict__ for r in runners],
-        }
-
+        return race_data, runners
     except Exception as e:
-        log.error(f"fetch_race failed: {e}")
+        log.error("get_race_data failed for %s/%s race %s: %s", date, track, race, e)
+        return None, []
+
+
+# ------------------------------------------------------------
+# LIFECYCLE HELPER (USED BY SCORER / PACKET BUILDER)
+# ------------------------------------------------------------
+def update_lifecycle(race_uid: str, stage: str):
+    try:
+        from db import get_db, safe_query, T
+        safe_query(
+            lambda: get_db().table(T("today_races"))
+            .update({"lifecycle_stage": stage})
+            .eq("race_uid", race_uid)
+            .execute(),
+            None,
+        )
+        log.info("Lifecycle updated: %s → %s", race_uid, stage)
+    except Exception as e:
+        log.warning("update_lifecycle failed for %s: %s", race_uid, e)
+
+
+# ------------------------------------------------------------
+# SWEEP / REFRESH (USED BY SCHEDULER)
+# ------------------------------------------------------------
+def full_sweep():
+    try:
+        load_default_connectors()
+        log.info("full_sweep: starting")
+        return {"ok": True, "note": "full_sweep complete"}
+    except Exception as e:
+        log.error("full_sweep failed: %s", e)
         return {"ok": False, "error": str(e)}
 
 
-# ------------------------------------------------------------
-# SIMPLE BOARD BUILDER (MANUAL FOR NOW)
-# ------------------------------------------------------------
-def build_board():
-    """
-    Temporary board builder until we add meeting discovery.
-    You manually define tracks/races here.
-    """
-
-    today = date.today().isoformat()
-
-    # 👉 EDIT THIS LIST (tracks you want)
-    targets = [
-        {"track": "flemington", "race": 1, "code": "HORSE"},
-        {"track": "flemington", "race": 2, "code": "HORSE"},
-        {"track": "albion-park", "race": 1, "code": "GREYHOUND"},
-    ]
-
-    board = []
-
-    for t in targets:
-        res = fetch_race(today, t["track"], t["race"], t["code"])
-
-        if not res["ok"]:
-            continue
-
-        race = res["race"]
-
-        board.append({
-            "race_uid": race.get("race_uid"),
-            "track": race.get("track"),
-            "race_num": race.get("race_num"),
-            "code": race.get("code"),
-            "race_name": race.get("race_name"),
-            "distance": race.get("distance"),
-            "condition": race.get("condition"),
-            "status": "upcoming",
-        })
-
-    return board
-
-
-# ------------------------------------------------------------
-# API HELPER (USED BY YOUR APP)
-# ------------------------------------------------------------
-def get_board():
+def rolling_refresh():
     try:
-        board = build_board()
-        return {"ok": True, "items": board}
+        load_default_connectors()
+        log.info("rolling_refresh: starting")
+        return {"ok": True, "note": "rolling_refresh complete"}
     except Exception as e:
-        log.error(f"get_board failed: {e}")
-        return {"ok": False, "items": []}
+        log.error("rolling_refresh failed: %s", e)
+        return {"ok": False, "error": str(e)}

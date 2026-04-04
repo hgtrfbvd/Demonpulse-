@@ -241,53 +241,6 @@ def api_auth_logout():
 
 
 # ------------------------------------------------------------
-# DEBUG ROUTES
-# ------------------------------------------------------------
-@app.route("/api/debug/thedogs-meetings")
-def api_debug_thedogs_meetings():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        from datetime import date
-
-        conn = TheDogsConnector()
-        items = conn.fetch_meetings(date.today().isoformat()) or []
-
-        return jsonify({
-            "ok": True,
-            "count": len(items),
-            "items": [item.__dict__ if hasattr(item, "__dict__") else item for item in items],
-        })
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-meetings failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/debug/thedogs-races")
-def api_debug_thedogs_races():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        from datetime import date
-
-        conn = TheDogsConnector()
-        meetings = conn.fetch_meetings(date.today().isoformat()) or []
-        if not meetings:
-            return jsonify({"ok": True, "count": 0, "items": [], "note": "no meetings"})
-
-        first = meetings[0]
-        races = conn.fetch_meeting_races(first) or []
-
-        return jsonify({
-            "ok": True,
-            "meeting": first.__dict__ if hasattr(first, "__dict__") else first,
-            "count": len(races),
-            "items": [item.__dict__ if hasattr(item, "__dict__") else item for item in races],
-        })
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-races failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-# ------------------------------------------------------------
 # HOME BOARD
 # ------------------------------------------------------------
 @app.route("/api/home/board", methods=["GET"])
@@ -325,26 +278,6 @@ def api_home_board():
         log.warning(f"/api/home/board fallback used: {e}")
         return jsonify({"ok": True, "items": []})
 
-@app.route("/api/debug/thedogs-fetch")
-def api_debug_thedogs_fetch():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        conn = TheDogsConnector()
-        return jsonify({"ok": True, "result": conn.debug_racecards_fetch()})
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-fetch failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/debug/thedogs-scratchings-fetch")
-def api_debug_thedogs_scratchings_fetch():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        conn = TheDogsConnector()
-        return jsonify({"ok": True, "result": conn.debug_scratchings_fetch()})
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-scratchings-fetch failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
 # HEALTH
