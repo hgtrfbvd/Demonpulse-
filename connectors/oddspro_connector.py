@@ -249,7 +249,13 @@ class OddsProConnector:
     source_name = "oddspro"
 
     def __init__(self):
-        self.base_url = os.getenv("ODDSPRO_BASE_URL", "").rstrip("/")
+        raw_base = os.getenv("ODDSPRO_BASE_URL", "").rstrip("/")
+        # Strip /api/external suffix if accidentally included in the env var.
+        # The connector appends /api/external/* to all endpoint paths, so the
+        # base URL must be the server root only (e.g. https://oddspro.com.au).
+        if raw_base.endswith("/api/external"):
+            raw_base = raw_base[: -len("/api/external")]
+        self.base_url = raw_base
         self.api_key = os.getenv("ODDSPRO_API_KEY", "").strip()
         self.timeout = int(os.getenv("ODDSPRO_TIMEOUT", "30"))
         self.country = os.getenv("ODDSPRO_COUNTRY", "au").strip().lower()
