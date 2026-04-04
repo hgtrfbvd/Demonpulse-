@@ -207,23 +207,33 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
         return {"ok": False, "error": "Data engine error", "date": today}
 
     written = 0
+    skipped = 0
     for result in results:
         try:
-            # Single-race confirmation before writing
+            # Single-race confirmation before writing — never write without confirmation
             confirmed = conn.fetch_race_result(result.oddspro_race_id)
             if confirmed:
                 _write_result(confirmed)
+                written += 1
             else:
-                _write_result(result)
-            written += 1
+                log.warning(
+                    f"check_results: single-race confirmation failed for "
+                    f"{result.race_uid} — result not written"
+                )
+                skipped += 1
         except Exception as e:
             log.error(f"check_results: failed for race {result.race_uid}: {e}")
+            skipped += 1
 
-    log.info(f"check_results: {written} results confirmed and written for {today}")
+    log.info(
+        f"check_results: {written} results confirmed and written, "
+        f"{skipped} skipped (no confirmation) for {today}"
+    )
     return {
         "ok": True,
         "date": today,
         "results_written": written,
+        "results_skipped": skipped,
         "source": "oddspro",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
