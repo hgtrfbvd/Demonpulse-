@@ -37,6 +37,10 @@ log = logging.getLogger(__name__)
 
 MODEL_VERSION = "baseline_v1"
 
+# Default box position used when box_num is missing in the baseline tiebreak.
+# Represents a mid-field position; actual box numbers start at 1.
+_DEFAULT_BOX_NUM = 8
+
 
 def predict_race(race_uid: str) -> dict[str, Any]:
     """
@@ -200,7 +204,7 @@ def _baseline_score(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
         win_odds = feat.get("win_odds") or 0.0
         implied_prob = (1.0 / win_odds) if win_odds > 1.0 else 0.0
         # Tiny box bias (weight = 0.5% per box position): greyhounds slight inside rail bias
-        box_factor = 1.0 / (1.0 + (feat.get("box_num") or 8) * 0.005)
+        box_factor = 1.0 / (1.0 + (feat.get("box_num") or _DEFAULT_BOX_NUM) * 0.005)
         raw_score = implied_prob * box_factor
         raw_scored.append({
             "box_num": feat.get("box_num"),
