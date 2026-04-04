@@ -145,7 +145,8 @@ class OddsProConnector:
                 "base_url": self.base_url,
             }
         except Exception as e:
-            return {"ok": False, "source": self.source_name, "error": str(e)}
+            log.error(f"OddsPro healthcheck failed: {e}")
+            return {"ok": False, "source": self.source_name, "error": "OddsPro connectivity check failed"}
 
     # -----------------------------------------------------------------------
     # PRIMARY ENDPOINTS
@@ -365,7 +366,7 @@ class OddsProConnector:
             "dogs": "GREYHOUND",
         }
         key = (raw or "").strip().lower()
-        return mapping.get(key, raw.upper())
+        return mapping.get(key, (raw or "HORSE").upper())
 
     def _parse_race(self, item: dict, meeting: MeetingRecord | None) -> RaceRecord | None:
         race_id = str(item.get("id") or item.get("raceId") or "")

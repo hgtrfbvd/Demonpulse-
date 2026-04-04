@@ -20,7 +20,7 @@ Architecture rules enforced here:
   - Blocked races tracked explicitly in database
 """
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         meetings = conn.fetch_meetings(today)
     except Exception as e:
         log.error(f"full_sweep: fetch_meetings failed: {e}")
-        return {"ok": False, "error": str(e), "date": today}
+        return {"ok": False, "error": "Data engine error", "date": today}
 
     if not meetings:
         log.info(f"full_sweep: no meetings returned for {today}")
@@ -108,7 +108,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "meetings": len(meetings),
         "races": races_written,
         "source": "oddspro",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -166,7 +166,7 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
 
     except Exception as e:
         log.error(f"rolling_refresh: outer error: {e}")
-        return {"ok": False, "error": str(e), "date": today}
+        return {"ok": False, "error": "Data engine error", "date": today}
 
     log.info(
         f"rolling_refresh: {races_refreshed} races refreshed, "
@@ -178,7 +178,7 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
         "races_refreshed": races_refreshed,
         "formfav_overlays": overlay_count,
         "source": "oddspro",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -205,7 +205,7 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
         results = conn.fetch_results(today)
     except Exception as e:
         log.error(f"check_results: fetch_results failed: {e}")
-        return {"ok": False, "error": str(e), "date": today}
+        return {"ok": False, "error": "Data engine error", "date": today}
 
     written = 0
     for result in results:
@@ -226,7 +226,7 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
         "date": today,
         "results_written": written,
         "source": "oddspro",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 

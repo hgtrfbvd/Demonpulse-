@@ -119,8 +119,8 @@ def validate_runner(runner: dict[str, Any]) -> tuple[bool, float, list[str]]:
         issues.append("MISSING_NUMBER")
         score -= 0.2
 
-    source = (runner.get("source_confidence") or "api").lower()
-    if source not in ("official", "api"):
+    source_confidence = (runner.get("source_confidence") or "api").lower()
+    if source_confidence not in ("official", "api"):
         score -= 0.05
         issues.append("SOURCE_UNVERIFIED")
 
