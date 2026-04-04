@@ -14,7 +14,7 @@ import logging
 import threading
 from datetime import datetime
 
-from data_engine import full_sweep, rolling_refresh
+from data_engine import full_sweep, rolling_refresh, check_results
 
 log = logging.getLogger(__name__)
 
@@ -101,12 +101,12 @@ def _run_refresh():
 
 def _run_result_check():
     """
-    Separate status bucket for result-check pass.
-    For now this still uses rolling_refresh(), but keeps result-check
-    telemetry distinct so it can be split later without changing app.py.
+    Run OddsPro result sweep to confirm settled races.
+    Uses check_results() which calls /api/external/results then
+    confirms each via /api/races/:id/results before writing.
     """
     log.info("Running result check...")
-    result = rolling_refresh()
+    result = check_results()
     log.info(f"Result check: {result}")
     _set_status(
         last_result_check_at=_utc_now(),
