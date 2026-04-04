@@ -352,10 +352,15 @@ def admin_bootstrap_day():
         raw_diag = {}
 
     # 3. REQUEST CONSTRUCTION
+    # Normalise the base URL for the fallback diagnostic: strip /api/external
+    # suffix if accidentally included (connector does the same at init time).
+    _fallback_base = (config["ODDSPRO_BASE_URL"] or "").rstrip("/")
+    if _fallback_base.endswith("/api/external"):
+        _fallback_base = _fallback_base[: -len("/api/external")]
     request_diag = {
         "final_url": raw_diag.get("final_url") or (
-            f"{config['ODDSPRO_BASE_URL']}/api/external/meetings"
-            if config["ODDSPRO_BASE_URL"] else None
+            f"{_fallback_base}/api/external/meetings"
+            if _fallback_base else None
         ),
         "params": raw_diag.get("params") or {
             "country": config["oddspro_country"],
