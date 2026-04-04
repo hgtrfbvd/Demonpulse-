@@ -26,7 +26,7 @@ Existing column migrations (today_races / today_runners):
     - price             NUMERIC
     - rating            NUMERIC
     - run_style         TEXT  (already in schema, keep for safety)
-    - scratch_reason    TEXT  (already in schema, keep for safety)
+    - scratch_reason    TEXT  (added here; was noted in comment but missing from list)
     - source_confidence TEXT
 
   results_log:
@@ -69,6 +69,9 @@ _MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("today_runners", "price",             "NUMERIC",  ""),
     ("today_runners", "rating",            "NUMERIC",  ""),
     ("today_runners", "source_confidence", "TEXT",     "DEFAULT 'official'"),
+    # scratch_reason is the canonical column; migration 001 used scratch_timing.
+    # Both the SQL migration and this Python fallback must add it.
+    ("today_runners", "scratch_reason",    "TEXT",     "DEFAULT ''"),
 ]
 
 

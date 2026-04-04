@@ -181,6 +181,10 @@ ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS driver            TEXT       
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS price             NUMERIC(10,4);
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS rating            NUMERIC(10,4);
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS source_confidence TEXT                 DEFAULT 'official';
+-- scratch_reason replaces scratch_timing as the canonical column name.
+-- Migration 001 used scratch_timing; the application now writes scratch_reason.
+-- Add both so old and new schemas are fully compatible.
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS scratch_reason    TEXT                 DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_today_runners_race_id    ON today_runners(race_id);
 CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid   ON today_runners(race_uid);
@@ -1333,6 +1337,57 @@ CREATE TABLE IF NOT EXISTS test_training_logs (   LIKE training_logs   INCLUDING
 -- without a pre-generated race_uid
 ALTER TABLE test_today_races ALTER COLUMN race_uid DROP NOT NULL;
 
+-- ----------------------------------------------------------------
+-- Backfill new columns into test_ tables that were created by migration 003
+-- (before 006 added new columns to their source tables).
+-- The CREATE TABLE IF NOT EXISTS above is a no-op when these tables already
+-- exist, so every new column must be added individually with ADD COLUMN IF
+-- NOT EXISTS.
+-- ----------------------------------------------------------------
+
+-- test_today_races — new columns from 006 not present in 003-era table
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS oddspro_race_id   TEXT         DEFAULT '';
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS block_code        TEXT         DEFAULT '';
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS source            TEXT         DEFAULT 'oddspro';
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS condition         TEXT         DEFAULT '';
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS race_name         TEXT         DEFAULT '';
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ  DEFAULT NOW();
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS completed_at      TIMESTAMPTZ;
+
+-- test_today_runners — new columns from 006 not present in 003-era table
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS oddspro_race_id  TEXT                 DEFAULT '';
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS number           INTEGER;
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS barrier          INTEGER;
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS jockey           TEXT                 DEFAULT '';
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS driver           TEXT                 DEFAULT '';
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS price            NUMERIC(10,4);
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS rating           NUMERIC(10,4);
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS source_confidence TEXT                DEFAULT 'official';
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS scratch_reason   TEXT                 DEFAULT '';
+
+-- test_bet_log — user_id was added by migration 004 to bet_log; test_ table
+-- from 003 predates that and needs the FK column added.
+ALTER TABLE test_bet_log ADD COLUMN IF NOT EXISTS user_id             UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE test_bet_log ADD COLUMN IF NOT EXISTS placed_by           TEXT;
+ALTER TABLE test_bet_log ADD COLUMN IF NOT EXISTS signal              TEXT;
+ALTER TABLE test_bet_log ADD COLUMN IF NOT EXISTS exotic_type         TEXT;
+ALTER TABLE test_bet_log ADD COLUMN IF NOT EXISTS manual_tag_override BOOLEAN DEFAULT FALSE;
+
+-- test_etg_tags — session_id added by 006; 003-era table predates it
+ALTER TABLE test_etg_tags ADD COLUMN IF NOT EXISTS session_id      UUID REFERENCES sessions(id) ON DELETE SET NULL;
+ALTER TABLE test_etg_tags ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
+
+-- test_aeee_adjustments — session_id added by 006; 003-era table predates it
+ALTER TABLE test_aeee_adjustments ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES sessions(id) ON DELETE SET NULL;
+
+-- test_epr_data — meeting_state and condition added by 006
+ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS meeting_state TEXT;
+ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS condition     TEXT;
+ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS date          DATE DEFAULT CURRENT_DATE;
+
+-- test_source_log — call_num added by 006
+ALTER TABLE test_source_log ADD COLUMN IF NOT EXISTS call_num INTEGER;
+
 -- Seed test_system_state row
 INSERT INTO test_system_state (id, bankroll, current_pl, bank_mode, active_code,
     posture, sys_state, variance, session_type, time_anchor)
@@ -1416,6 +1471,9 @@ ON CONFLICT DO NOTHING;
 --                      all backfills moved before their indexes
 --   today_runners    — added race_uid, oddspro_race_id, number, barrier,
 --                      jockey, driver, price, rating, source_confidence;
+--                      added scratch_reason (migration 001 used scratch_timing;
+--                      app now writes scratch_reason — was missing from backfill
+--                      list in all prior versions of this migration);
 --                      backfills moved before their indexes
 --   results_log      — ensured (date,track,race_num,code) unique constraint;
 --                      race_uid backfill moved before its index
@@ -1443,5 +1501,16 @@ ON CONFLICT DO NOTHING;
 --                      moved manual_override backfill to before all indexes
 --                      (same root cause as aeee_adjustments.session_id)
 --   All Phase 3/4/4.5/4.6 intelligence tables fully defined
---   All test_ mirror tables ensured for TEST mode isolation
+--   All test_ mirror tables ensured for TEST mode isolation:
+--     test_today_races     — backfilled oddspro_race_id, block_code, source,
+--                            condition, race_name, updated_at, completed_at
+--     test_today_runners   — backfilled oddspro_race_id, number, barrier,
+--                            jockey, driver, price, rating, source_confidence,
+--                            scratch_reason
+--     test_bet_log         — backfilled user_id, placed_by, signal, exotic_type,
+--                            manual_tag_override
+--     test_etg_tags        — backfilled session_id, manual_override
+--     test_aeee_adjustments— backfilled session_id
+--     test_epr_data        — backfilled meeting_state, condition, date
+--     test_source_log      — backfilled call_num
 -- ================================================================
