@@ -40,6 +40,7 @@ ODDSPRO_AUTHORITATIVE_FIELDS = {
     "race_uid", "oddspro_race_id",
     "track", "race_num", "date", "code", "jump_time",
     "status", "race_name", "distance", "grade",
+    "source", "source_url",
 }
 
 

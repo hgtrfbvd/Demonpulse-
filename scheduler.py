@@ -78,11 +78,15 @@ def get_status():
 def _run_full_sweep():
     log.info("Running initial full sweep...")
     result = full_sweep()
-    log.info(f"Initial sweep complete: {result}")
+    ok = result.get("ok", False)
+    if ok:
+        log.info(f"Initial sweep complete: {result}")
+    else:
+        log.warning(f"Initial sweep returned not-ok: {result}")
     _set_status(
         last_full_sweep_at=_utc_now(),
         last_full_sweep_result=result,
-        last_error=None,
+        last_error=None if ok else (result.get("error") or result.get("reason") or "full_sweep_not_ok"),
     )
     return result
 
@@ -90,11 +94,15 @@ def _run_full_sweep():
 def _run_refresh():
     log.info("Running rolling refresh...")
     result = rolling_refresh()
-    log.info(f"Refresh result: {result}")
+    ok = result.get("ok", False)
+    if ok:
+        log.info(f"Refresh result: {result}")
+    else:
+        log.warning(f"Refresh returned not-ok: {result}")
     _set_status(
         last_refresh_at=_utc_now(),
         last_refresh_result=result,
-        last_error=None,
+        last_error=None if ok else (result.get("error") or result.get("reason") or "refresh_not_ok"),
     )
     return result
 
@@ -107,11 +115,15 @@ def _run_result_check():
     """
     log.info("Running result check...")
     result = check_results()
-    log.info(f"Result check: {result}")
+    ok = result.get("ok", False)
+    if ok:
+        log.info(f"Result check: {result}")
+    else:
+        log.warning(f"Result check returned not-ok: {result}")
     _set_status(
         last_result_check_at=_utc_now(),
         last_result_check_result=result,
-        last_error=None,
+        last_error=None if ok else (result.get("error") or result.get("reason") or "result_check_not_ok"),
     )
     return result
 

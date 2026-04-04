@@ -104,7 +104,8 @@ class FormFavConnector:
 
     def _make_race_uid(self, race_date: str, code: str, track: str, race_num: int) -> str:
         clean_track = (track or "").strip().lower().replace(" ", "-")
-        return f"{race_date}_{code}_{clean_track}_{race_num}"
+        clean_code = (code or "HORSE").upper()
+        return f"{race_date}_{clean_code}_{clean_track}_{race_num}"
 
     def _request_form(
         self,
