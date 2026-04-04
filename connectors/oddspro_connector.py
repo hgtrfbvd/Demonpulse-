@@ -43,6 +43,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote as url_quote
 
 import requests
 
@@ -607,15 +608,19 @@ class OddsProConnector:
         )
         return meetings
 
-    def fetch_meeting(self, meeting_id: str) -> MeetingRecord | None:
+    def fetch_meeting(self, meeting_id: str, meeting_date: str | None = None) -> MeetingRecord | None:
         """
         GET /api/external/meeting/:meetingId
         Refresh a single meeting record.
 
         Response shape: {"data": {...}, "meta": {...}}
         """
+        params: dict[str, Any] = self._meeting_params(meeting_date)
         try:
-            resp = self._get(f"/api/external/meeting/{meeting_id}")
+            resp = self._get(
+                f"/api/external/meeting/{url_quote(str(meeting_id), safe='')}",
+                params=params,
+            )
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting({meeting_id}) failed: {e}")
@@ -651,8 +656,12 @@ class OddsProConnector:
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         Also accepts: races / events / meetingsRaces as the race list key.
         """
+        params: dict[str, Any] = self._meeting_params(meeting.meeting_date)
         try:
-            resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
+            resp = self._get(
+                f"/api/external/meeting/{url_quote(str(meeting.meeting_id), safe='')}",
+                params=params,
+            )
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting_races({meeting.meeting_id}) failed: {e}")
@@ -682,11 +691,20 @@ class OddsProConnector:
         Used by full_sweep (bootstrap) when races are not already embedded
         in the /meetings response.
 
+        Passes ``date`` and ``country`` query parameters so the endpoint can
+        resolve the correct meeting when the meeting identifier is a name
+        (e.g. "Caulfield") rather than a numeric ID — as is the case when the
+        /meetings response omits ``id``/``meetingId`` fields.
+
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         Also accepts: races / events / meetingsRaces as the race list key.
         """
+        params: dict[str, Any] = self._meeting_params(meeting.meeting_date)
         try:
-            resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
+            resp = self._get(
+                f"/api/external/meeting/{url_quote(str(meeting.meeting_id), safe='')}",
+                params=params,
+            )
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) failed: {e}")
@@ -1088,6 +1106,17 @@ class OddsProConnector:
     # -----------------------------------------------------------------------
     # INTERNAL HELPERS
     # -----------------------------------------------------------------------
+
+    def _meeting_params(self, meeting_date: str | None = None) -> dict[str, Any]:
+        """
+        Build the standard query-parameter dict for individual meeting endpoint
+        requests (``/api/external/meeting/:id``).  Always includes ``country``
+        so the server can resolve the correct meeting; adds ``date`` when known.
+        """
+        params: dict[str, Any] = {"country": self.country}
+        if meeting_date:
+            params["date"] = meeting_date
+        return params
 
     def _extract_races_list(self, raw: Any) -> list:
         """
