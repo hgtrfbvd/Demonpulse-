@@ -6,11 +6,12 @@ OddsPro is the authoritative source of record for DemonPulse.
 Documented base URL: https://oddspro.com.au  (set as ODDSPRO_BASE_URL)
 
 Endpoints used (full documented paths):
-  GET /api/external/meetings              - daily bootstrap (list today's meetings)
+  GET /api/meetings                       - discovery: all meetings with race IDs
+  GET /api/external/meetings              - daily bootstrap (list today's meetings, supports type/location filters)
   GET /api/external/meeting/:meetingId    - meeting refresh + races + runners
   GET /api/external/race/:raceId          - single race refresh + runners
-  GET /api/external/results               - day-level result sweep
-  GET /api/external/tracks                - optional track support only
+  GET /api/external/results               - day-level result sweep (supports type/location filters)
+  GET /api/external/tracks                - optional track support (supports code/location filters)
   GET /api/races/:id/results              - single-race official results (NOT under /external)
   GET /api/external/top-favs             - shortest-priced favorites across all bookmakers
   GET /api/external/leaderboard          - bookmaker performance statistics
@@ -305,10 +306,46 @@ class OddsProConnector:
     # PRIMARY ENDPOINTS
     # -----------------------------------------------------------------------
 
-    def fetch_meetings(self, target_date: str | None = None) -> list[MeetingRecord]:
+    def fetch_meetings_discovery(self) -> list[dict[str, Any]]:
+        """
+        GET /api/meetings
+        Simple discovery endpoint — returns all meetings with their race IDs.
+        This is the first step in the discovery flow and does not require
+        date or type filters.
+
+        Response shape: {"data": [...], "meta": {...}} or bare list.
+        Returns the raw list of meeting dicts from the response.
+        """
+        try:
+            resp = self._get("/api/meetings")
+            payload = resp.json()
+        except Exception as e:
+            log.error(f"OddsPro fetch_meetings_discovery failed: {e}")
+            return []
+
+        if isinstance(payload, dict):
+            data = payload.get("data") or payload.get("meetings") or []
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                return [data]
+            return []
+        return payload if isinstance(payload, list) else []
+
+    def fetch_meetings(
+        self,
+        target_date: str | None = None,
+        type_: str | None = None,
+        location: str | None = None,
+    ) -> list[MeetingRecord]:
         """
         GET /api/external/meetings
         Daily bootstrap — list all meetings for the given date.
+
+        Parameters:
+          target_date - YYYY-MM-DD date filter
+          type_       - race type filter: T (thoroughbred), H (harness), G (greyhound)
+          location    - domestic, international, all
 
         Supported response shapes (all handled):
           A. {"data": [...], ...}     - data is a list of meetings
@@ -326,6 +363,10 @@ class OddsProConnector:
         params: dict[str, Any] = {"country": self.country}
         if target_date:
             params["date"] = target_date
+        if type_:
+            params["type"] = type_
+        if location:
+            params["location"] = location
 
         url_requested = f"{self.base_url}/api/external/meetings"
 
@@ -802,16 +843,30 @@ class OddsProConnector:
         runners = self._parse_runners(item, race)
         return race, runners
 
-    def fetch_results(self, target_date: str | None = None) -> list[RaceResult]:
+    def fetch_results(
+        self,
+        target_date: str | None = None,
+        type_: str | None = None,
+        location: str | None = None,
+    ) -> list[RaceResult]:
         """
         GET /api/external/results
         Day-level result sweep. Returns settled race results.
+
+        Parameters:
+          target_date - YYYY-MM-DD date filter
+          type_       - race type filter: T (thoroughbred), H (harness), G (greyhound)
+          location    - domestic, international, all
 
         Response shape: {"data": [...], "meta": {...}}
         """
         params: dict[str, Any] = {"country": self.country}
         if target_date:
             params["date"] = target_date
+        if type_:
+            params["type"] = type_
+        if location:
+            params["location"] = location
 
         try:
             resp = self._get("/api/external/results", params=params)
@@ -861,13 +916,26 @@ class OddsProConnector:
             item = item[0] if item else {}
         return self._parse_result(item)
 
-    def fetch_tracks(self) -> list[dict[str, Any]]:
+    def fetch_tracks(
+        self,
+        code: str | None = None,
+        location: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         GET /api/external/tracks
         Optional track support — metadata only.
+
+        Parameters:
+          code     - race type code: T (thoroughbred), H (harness), G (greyhound)
+          location - location filter (e.g. AUS, domestic)
         """
+        params: dict[str, Any] = {"country": self.country}
+        if code:
+            params["code"] = code
+        if location:
+            params["location"] = location
         try:
-            resp = self._get("/api/external/tracks", params={"country": self.country})
+            resp = self._get("/api/external/tracks", params=params)
             payload = resp.json()
             # Documented response shape: {"data": [...], "meta": {...}}
             if isinstance(payload, dict):
