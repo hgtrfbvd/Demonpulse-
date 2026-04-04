@@ -7,6 +7,7 @@ or official board state.
 
 Core functions:
   full_sweep()          - OddsPro daily bootstrap via /api/external/meetings
+                          (with /api/meetings discovery fallback for meeting ID resolution)
   rolling_refresh()     - OddsPro meeting/race refresh via /api/external/meeting/:id
   near_jump_refresh()   - OddsPro near-jump refresh + FormFav provisional overlay
   check_results()       - OddsPro result sweep via /api/external/results
@@ -134,6 +135,14 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     GET /api/external/meeting/:id when races are NOT present in the
     /meetings response for a given meeting.
 
+    When the /api/external/meetings response returns meetings without
+    numeric IDs and without embedded races (e.g. only meetingName/racingCode),
+    calls GET /api/meetings (the discovery endpoint) to resolve numeric meeting
+    IDs and/or embedded race data before fetching per-meeting detail.
+    This follows the documented OddsPro discovery flow:
+      1. GET /api/meetings          → all meetings with IDs and race IDs
+      2. GET /api/external/meeting/:id → full meeting/race/runner detail
+
     Writes official data to the database.  FormFav is NOT called here.
 
     Returns diagnostics:
@@ -204,6 +213,36 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     runners_stored = 0
     races_blocked = 0
 
+    # When the /api/external/meetings response contains meeting name-only items
+    # (no numeric id and no embedded races), the discovery endpoint /api/meetings
+    # is used to resolve numeric meeting IDs and/or obtain embedded race data.
+    # This matches the documented discovery flow in the OddsPro API documentation:
+    #   1. GET /api/meetings          → all meetings with IDs and race IDs
+    #   2. GET /api/external/meeting/:id → full meeting/race/runner detail
+    _disc_by_track: dict[str, dict] = {}
+    _needs_discovery = bool(meetings) and all(
+        not m.extra.get("raw", {}).get("races")
+        and not str(m.extra.get("raw", {}).get("id") or "").isdigit()
+        and not str(m.extra.get("raw", {}).get("meetingId") or "").isdigit()
+        for m in meetings
+    )
+    if _needs_discovery:
+        try:
+            for dm in conn.fetch_meetings_discovery():
+                if not isinstance(dm, dict):
+                    continue
+                dm_track = conn._clean_track(
+                    dm.get("track") or dm.get("meetingName") or ""
+                )
+                if dm_track:
+                    _disc_by_track[dm_track] = dm
+            log.info(
+                f"full_sweep: discovery loaded {len(_disc_by_track)} meetings "
+                f"(meetings from /external/meetings lacked embedded races and numeric IDs)"
+            )
+        except Exception as _disc_exc:
+            log.warning(f"full_sweep: discovery fallback failed: {_disc_exc}")
+
     for meeting in meetings:
         try:
             # Prefer races embedded in the /meetings response (extra["raw"]["races"]).
@@ -217,6 +256,41 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                     f"full_sweep: meeting {meeting.meeting_id} — "
                     f"used embedded races ({len(races)} races)"
                 )
+            elif _needs_discovery:
+                # Use discovery data to resolve numeric meeting ID or embedded races.
+                disc_raw = _disc_by_track.get(meeting.track)
+                if disc_raw:
+                    disc_races = disc_raw.get("races")
+                    disc_id = disc_raw.get("id") or disc_raw.get("meetingId")
+                    if disc_races:
+                        # Races are embedded in the discovery response — parse directly.
+                        races, runners = conn.parse_meeting_races_with_runners(
+                            meeting, disc_raw
+                        )
+                        log.debug(
+                            f"full_sweep: meeting {meeting.meeting_id} — "
+                            f"used discovery embedded races ({len(races)} races)"
+                        )
+                    elif disc_id:
+                        # Use numeric meeting ID from discovery to call /meeting/:id.
+                        meeting.meeting_id = str(disc_id)
+                        races, runners = conn.fetch_meeting_races_with_runners(meeting)
+                        log.debug(
+                            f"full_sweep: meeting {meeting.meeting_id} — "
+                            f"fetched via discovery ID ({len(races)} races)"
+                        )
+                    else:
+                        races, runners = conn.fetch_meeting_races_with_runners(meeting)
+                        log.debug(
+                            f"full_sweep: meeting {meeting.meeting_id} — "
+                            f"fetched via /meeting/:id ({len(races)} races)"
+                        )
+                else:
+                    races, runners = conn.fetch_meeting_races_with_runners(meeting)
+                    log.debug(
+                        f"full_sweep: meeting {meeting.meeting_id} — "
+                        f"fetched via /meeting/:id ({len(races)} races)"
+                    )
             else:
                 races, runners = conn.fetch_meeting_races_with_runners(meeting)
                 log.debug(
