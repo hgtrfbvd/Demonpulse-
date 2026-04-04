@@ -1,12 +1,18 @@
 """
-scheduler.py - DemonPulse Scheduler (Render Safe)
+scheduler.py - DemonPulse V8 Scheduler (Render Safe)
 
 Handles:
 - Full sweep on startup
-- Rolling refresh loop
-- Result checks
+- Separate rolling refresh loop (meetings + near-start races)
+- Separate scratchings refresh loop
+- Separate result detection loop
+- Connector health check loop
 - Thread-safe scheduler status reporting
 - Safer startup / restart behaviour
+
+Law 6: A refresh cycle is not considered successful unless at least one
+       approved production-safe external source fetch succeeded and
+       validation rules passed.
 """
 
 import time
@@ -14,7 +20,7 @@ import logging
 import threading
 from datetime import datetime
 
-from data_engine import full_sweep, rolling_refresh
+from data_engine import full_sweep, rolling_refresh, check_results, check_connector_health
 
 log = logging.getLogger(__name__)
 
@@ -23,8 +29,14 @@ log = logging.getLogger(__name__)
 # CONFIG
 # --------------------------------------------------------
 FULL_SWEEP_ON_START = True
-REFRESH_INTERVAL = 150          # 2.5 minutes
-RESULT_CHECK_INTERVAL = 300     # 5 minutes
+
+# Separate interval constants (seconds)
+MEETINGS_REFRESH_INTERVAL = 180      # 3 minutes — meeting discovery
+RACE_DETAIL_REFRESH_INTERVAL = 90    # 1.5 minutes — near-start race detail
+SCRATCHINGS_REFRESH_INTERVAL = 90    # 1.5 minutes — scratchings
+RESULT_CHECK_INTERVAL = 180          # 3 minutes — result detection
+HEALTH_CHECK_INTERVAL = 300          # 5 minutes — connector availability
+
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -41,15 +53,32 @@ _scheduler_status = {
     "thread_alive": False,
     "started_at": None,
     "last_loop_at": None,
+    # Full sweep
     "last_full_sweep_at": None,
     "last_full_sweep_result": None,
-    "last_refresh_at": None,
-    "last_refresh_result": None,
+    # Meetings refresh
+    "last_meetings_refresh_at": None,
+    "last_meetings_refresh_result": None,
+    # Race detail refresh
+    "last_race_detail_refresh_at": None,
+    "last_race_detail_refresh_result": None,
+    # Scratchings
+    "last_scratchings_refresh_at": None,
+    "last_scratchings_refresh_result": None,
+    # Results
     "last_result_check_at": None,
     "last_result_check_result": None,
+    # Connector health
+    "last_health_check_at": None,
+    "last_health_check_result": None,
+    # Error tracking
     "last_error": None,
-    "refresh_interval": REFRESH_INTERVAL,
+    # Config echo
+    "meetings_refresh_interval": MEETINGS_REFRESH_INTERVAL,
+    "race_detail_refresh_interval": RACE_DETAIL_REFRESH_INTERVAL,
+    "scratchings_refresh_interval": SCRATCHINGS_REFRESH_INTERVAL,
     "result_check_interval": RESULT_CHECK_INTERVAL,
+    "health_check_interval": HEALTH_CHECK_INTERVAL,
 }
 
 
@@ -75,43 +104,99 @@ def get_status():
     return status
 
 
+# --------------------------------------------------------
+# INDIVIDUAL CYCLE RUNNERS
+# --------------------------------------------------------
+
 def _run_full_sweep():
-    log.info("Running initial full sweep...")
+    log.info("[scheduler] Running full sweep...")
     result = full_sweep()
-    log.info(f"Initial sweep complete: {result}")
+    ok = result.get("ok", False)
+    log.info("[scheduler] Full sweep complete: ok=%s meetings=%d", ok, result.get("meetings_found", 0))
     _set_status(
         last_full_sweep_at=_utc_now(),
         last_full_sweep_result=result,
-        last_error=None,
+        last_error=None if ok else f"full_sweep: {result.get('reason', 'unknown')}",
     )
     return result
 
 
-def _run_refresh():
-    log.info("Running rolling refresh...")
+def _run_meetings_refresh():
+    """Refresh meeting discovery from all sources."""
+    log.info("[scheduler] Running meetings refresh...")
     result = rolling_refresh()
-    log.info(f"Refresh result: {result}")
+    ok = result.get("ok", False)
+    log.info("[scheduler] Meetings refresh: ok=%s", ok)
     _set_status(
-        last_refresh_at=_utc_now(),
-        last_refresh_result=result,
-        last_error=None,
+        last_meetings_refresh_at=_utc_now(),
+        last_meetings_refresh_result=result,
+        last_error=None if ok else f"meetings_refresh: {result.get('reason', 'unknown')}",
+    )
+    return result
+
+
+def _run_race_detail_refresh():
+    """
+    Refresh near-start race details (odds, scratchings, runner status).
+
+    Uses rolling_refresh() which re-fetches from all active sources.
+    When dedicated race-detail and scratchings endpoints are added to
+    the data engine, this function should call them directly instead.
+    """
+    log.info("[scheduler] Running race detail refresh...")
+    result = rolling_refresh()
+    ok = result.get("ok", False)
+    log.info("[scheduler] Race detail refresh: ok=%s", ok)
+    _set_status(
+        last_race_detail_refresh_at=_utc_now(),
+        last_race_detail_refresh_result=result,
+        last_error=None if ok else f"race_detail_refresh: {result.get('reason', 'unknown')}",
+    )
+    return result
+
+
+def _run_scratchings_refresh():
+    """
+    Refresh scratchings for active races.
+
+    Uses rolling_refresh() which re-fetches from all active sources.
+    When a dedicated scratchings endpoint is added to the data engine,
+    this function should call it directly instead.
+    """
+    log.info("[scheduler] Running scratchings refresh...")
+    result = rolling_refresh()
+    ok = result.get("ok", False)
+    log.info("[scheduler] Scratchings refresh: ok=%s", ok)
+    _set_status(
+        last_scratchings_refresh_at=_utc_now(),
+        last_scratchings_refresh_result=result,
+        last_error=None if ok else f"scratchings_refresh: {result.get('reason', 'unknown')}",
     )
     return result
 
 
 def _run_result_check():
-    """
-    Separate status bucket for result-check pass.
-    For now this still uses rolling_refresh(), but keeps result-check
-    telemetry distinct so it can be split later without changing app.py.
-    """
-    log.info("Running result check...")
-    result = rolling_refresh()
-    log.info(f"Result check: {result}")
+    """Check for new race results."""
+    log.info("[scheduler] Running result check...")
+    result = check_results()
+    ok = result.get("ok", False)
+    log.info("[scheduler] Result check: ok=%s captured=%d", ok, result.get("results_captured", 0))
     _set_status(
         last_result_check_at=_utc_now(),
         last_result_check_result=result,
-        last_error=None,
+        last_error=None if ok else f"result_check: {result.get('reason', 'unknown')}",
+    )
+    return result
+
+
+def _run_health_check():
+    """Check connector availability."""
+    log.info("[scheduler] Running health check...")
+    result = check_connector_health()
+    log.info("[scheduler] Health check: %s", {k: v.get("ok") for k, v in result.items()})
+    _set_status(
+        last_health_check_at=_utc_now(),
+        last_health_check_result=result,
     )
     return result
 
@@ -122,7 +207,7 @@ def _run_result_check():
 def run_scheduler():
     global _scheduler_thread
 
-    log.info("=== SCHEDULER STARTED ===")
+    log.info("[scheduler] === SCHEDULER STARTED ===")
     _set_status(
         running=True,
         thread_alive=True,
@@ -131,19 +216,25 @@ def run_scheduler():
     )
 
     now = time.time()
-    last_refresh = now
+    last_meetings_refresh = now
+    last_race_detail_refresh = now
+    last_scratchings_refresh = now
     last_result_check = now
+    last_health_check = now
 
     if FULL_SWEEP_ON_START:
         try:
             _run_full_sweep()
-            # After full sweep, reset timers so we do not immediately
-            # hammer refresh + result check again on first loop tick.
+            # After full sweep, reset all timers so we don't immediately
+            # trigger every loop on first tick.
             now = time.time()
-            last_refresh = now
+            last_meetings_refresh = now
+            last_race_detail_refresh = now
+            last_scratchings_refresh = now
             last_result_check = now
+            last_health_check = now
         except Exception as e:
-            log.error(f"Initial full sweep failed: {e}")
+            log.error("[scheduler] Initial full sweep failed: %s", e)
             _set_status(
                 last_full_sweep_at=_utc_now(),
                 last_full_sweep_result={"ok": False, "error": str(e)},
@@ -160,16 +251,33 @@ def run_scheduler():
 
             now = time.time()
 
-            if now - last_refresh >= REFRESH_INTERVAL:
-                _run_refresh()
-                last_refresh = now
+            # Meetings refresh — every 3 minutes
+            if now - last_meetings_refresh >= MEETINGS_REFRESH_INTERVAL:
+                _run_meetings_refresh()
+                last_meetings_refresh = now
 
+            # Race detail refresh — every 1.5 minutes
+            if now - last_race_detail_refresh >= RACE_DETAIL_REFRESH_INTERVAL:
+                _run_race_detail_refresh()
+                last_race_detail_refresh = now
+
+            # Scratchings refresh — every 1.5 minutes
+            if now - last_scratchings_refresh >= SCRATCHINGS_REFRESH_INTERVAL:
+                _run_scratchings_refresh()
+                last_scratchings_refresh = now
+
+            # Result check — every 3 minutes
             if now - last_result_check >= RESULT_CHECK_INTERVAL:
                 _run_result_check()
                 last_result_check = now
 
+            # Health check — every 5 minutes
+            if now - last_health_check >= HEALTH_CHECK_INTERVAL:
+                _run_health_check()
+                last_health_check = now
+
         except Exception as e:
-            log.error(f"Scheduler loop error: {e}")
+            log.error("[scheduler] Loop error: %s", e)
             _set_status(last_error=f"scheduler_loop: {e}")
 
         time.sleep(LOOP_SLEEP_SECONDS)
@@ -183,7 +291,7 @@ def _scheduler_runner():
     try:
         run_scheduler()
     except Exception as e:
-        log.exception(f"Scheduler thread crashed fatally: {e}")
+        log.exception("[scheduler] Scheduler thread crashed fatally: %s", e)
         _set_status(
             running=False,
             thread_alive=False,
@@ -205,7 +313,7 @@ def start_scheduler():
 
     with _scheduler_lock:
         if _scheduler_thread and _scheduler_thread.is_alive():
-            log.info("Scheduler already started")
+            log.info("[scheduler] Already started")
             return
 
         _scheduler_thread = threading.Thread(
@@ -221,7 +329,7 @@ def start_scheduler():
         thread_alive=True,
         last_error=None,
     )
-    log.info("Scheduler started (threaded)")
+    log.info("[scheduler] Scheduler started (threaded)")
 
 
 # --------------------------------------------------------
@@ -233,5 +341,5 @@ if __name__ == "__main__":
             _scheduler_runner()
             break
         except Exception as e:
-            log.exception(f"Standalone scheduler crashed, restarting in {RESTART_BACKOFF_SECONDS}s: {e}")
+            log.exception("[scheduler] Standalone scheduler crashed, restarting in %ds: %s", RESTART_BACKOFF_SECONDS, e)
             time.sleep(RESTART_BACKOFF_SECONDS)

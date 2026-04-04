@@ -358,6 +358,48 @@ def api_health():
     })
 
 
+@app.route("/api/health/engine")
+def api_health_engine():
+    """
+    Full data engine health — connector status, validation counts,
+    integrity block counts, scheduler heartbeat.
+
+    Exposes system truth, not just uptime.
+    """
+    try:
+        from data_engine import get_health
+        engine_health = get_health()
+        return jsonify({"ok": True, **engine_health})
+    except Exception as e:
+        log.exception(f"/api/health/engine failed: {e}")
+        return jsonify({"ok": False, "error": "Engine health check unavailable"}), 500
+
+
+@app.route("/api/health/scheduler")
+def api_health_scheduler():
+    """Scheduler loop status — last run times and success flags."""
+    try:
+        from scheduler import get_status
+        status = get_status()
+        return jsonify({"ok": True, "scheduler": status})
+    except Exception as e:
+        log.exception(f"/api/health/scheduler failed: {e}")
+        return jsonify({"ok": False, "error": "Scheduler status unavailable"}), 500
+
+
+@app.route("/api/health/connectors")
+def api_health_connectors():
+    """Per-connector availability check."""
+    try:
+        from data_engine import check_connector_health
+        results = check_connector_health()
+        overall_ok = any(v.get("ok") for v in results.values())
+        return jsonify({"ok": overall_ok, "connectors": results})
+    except Exception as e:
+        log.exception(f"/api/health/connectors failed: {e}")
+        return jsonify({"ok": False, "error": "Connector health check unavailable"}), 500
+
+
 # ------------------------------------------------------------
 # MAIN
 # ------------------------------------------------------------
