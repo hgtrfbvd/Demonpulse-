@@ -72,6 +72,26 @@ _MIGRATIONS: list[tuple[str, str, str, str]] = [
     # scratch_reason is the canonical column; migration 001 used scratch_timing.
     # Both the SQL migration and this Python fallback must add it.
     ("today_runners", "scratch_reason",    "TEXT",     "DEFAULT ''"),
+
+    # Migration 006 — session_id backfill
+    # epr_data: session_id may be absent on databases seeded from a pre-006
+    # version of migration 001 that did not yet include the column.
+    # epr_data uses TEXT (no FK) to allow flexible session identifiers
+    # including non-UUID tokens written by the learning engine.
+    ("epr_data",          "session_id", "TEXT",    ""),
+    # aeee_adjustments and etg_tags: migration 001 created these tables without
+    # session_id; the column must exist before any index on it can be created.
+    # These tables use UUID FK to sessions(id) for referential integrity since
+    # they record structured adjustments/tags tied to formal betting sessions.
+    ("aeee_adjustments",  "session_id", "UUID",    "REFERENCES sessions(id) ON DELETE SET NULL"),
+    ("etg_tags",          "session_id", "UUID",    "REFERENCES sessions(id) ON DELETE SET NULL"),
+    ("etg_tags",          "manual_override", "BOOLEAN", "DEFAULT FALSE"),
+    # test_ mirrors: created by migration 003 with LIKE <source> INCLUDING ALL,
+    # so they also predate session_id and need the same backfill.
+    ("test_epr_data",         "session_id", "TEXT",    ""),
+    ("test_aeee_adjustments", "session_id", "UUID",    "REFERENCES sessions(id) ON DELETE SET NULL"),
+    ("test_etg_tags",         "session_id", "UUID",    "REFERENCES sessions(id) ON DELETE SET NULL"),
+    ("test_etg_tags",         "manual_override", "BOOLEAN", "DEFAULT FALSE"),
 ]
 
 

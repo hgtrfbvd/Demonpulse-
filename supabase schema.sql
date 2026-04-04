@@ -891,6 +891,7 @@ CREATE TABLE IF NOT EXISTS epr_data (
 
 -- Backfill any missing columns on epr_data BEFORE creating indexes that
 -- reference them. On existing databases the CREATE TABLE above is skipped.
+ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS session_id    TEXT;
 ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS meeting_state TEXT;
 ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS condition     TEXT;
 ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS date         DATE DEFAULT CURRENT_DATE;
@@ -1380,7 +1381,8 @@ ALTER TABLE test_etg_tags ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAU
 -- test_aeee_adjustments — session_id added by 006; 003-era table predates it
 ALTER TABLE test_aeee_adjustments ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES sessions(id) ON DELETE SET NULL;
 
--- test_epr_data — meeting_state and condition added by 006
+-- test_epr_data — meeting_state, condition and session_id added by 006
+ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS session_id    TEXT;
 ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS meeting_state TEXT;
 ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS condition     TEXT;
 ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS date          DATE DEFAULT CURRENT_DATE;
