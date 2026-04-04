@@ -7,13 +7,27 @@ stored jump_time. No bookmaker or external scraping is used here.
 Architecture rules:
   - NTJ is calculated internally from the stored jump_time column
   - No bookmaker NTJ scraping in the core path
-  - Status transitions: upcoming → open → interim → final / abandoned
+  - Status transitions driven by stored data and authoritative OddsPro updates
 
 NTJ Windows (seconds before jump_time):
   IMMINENT  : 0 – 120 s  (< 2 min)
   NEAR      : 120 – 600 s  (2–10 min)
   UPCOMING  : 600+ s (> 10 min)
   PAST      : jump_time is in the past
+
+Phase 2 Race Status Machine:
+  upcoming           → standard pre-race state
+  near_jump          → < NTJ_NEAR_MAX seconds from jump (FormFav overlay eligible)
+  open               → OddsPro-confirmed open/active
+  interim            → interim result
+  jumped_estimated   → jump_time passed, no OddsPro result yet (estimated)
+  awaiting_result    → jump_time passed > 30 min ago, no result (waiting)
+  result_posted      → OddsPro result confirmed and written
+  final              → OddsPro terminal state
+  paying             → OddsPro paying dividends state
+  abandoned          → OddsPro abandoned
+  blocked            → hard-blocked by integrity filter
+  stale_unknown      → no jump_time and data is stale
 """
 from __future__ import annotations
 
@@ -32,7 +46,10 @@ NTJ_IMMINENT_MAX = 120      # < 2 minutes
 NTJ_NEAR_MAX = 600          # < 10 minutes
 NTJ_OVERLAY_TRIGGER = 600   # FormFav overlay triggered when NTJ < 10 min
 
-# Status constants
+# Seconds past jump_time before a race is considered awaiting_result
+_AWAITING_RESULT_THRESHOLD = 1800  # 30 minutes
+
+# Status constants — Phase 1 originals
 STATUS_UPCOMING = "upcoming"
 STATUS_OPEN = "open"
 STATUS_INTERIM = "interim"
@@ -40,11 +57,29 @@ STATUS_FINAL = "final"
 STATUS_ABANDONED = "abandoned"
 STATUS_PAYING = "paying"
 
+# Status constants — Phase 2 additions
+STATUS_NEAR_JUMP = "near_jump"              # < 10 min to jump, overlay eligible
+STATUS_JUMPED_ESTIMATED = "jumped_estimated"  # jump_time passed, no result yet
+STATUS_AWAITING_RESULT = "awaiting_result"   # 30+ min past jump, still no result
+STATUS_RESULT_POSTED = "result_posted"       # OddsPro result confirmed and written
+STATUS_BLOCKED = "blocked"                   # hard-blocked by integrity filter
+STATUS_STALE_UNKNOWN = "stale_unknown"       # no/unparseable jump_time, data stale
+
 # Statuses that indicate a race is still live (may appear on board)
-LIVE_STATUSES = {STATUS_UPCOMING, STATUS_OPEN, STATUS_INTERIM}
+LIVE_STATUSES = {
+    STATUS_UPCOMING,
+    STATUS_OPEN,
+    STATUS_INTERIM,
+    STATUS_NEAR_JUMP,
+    STATUS_JUMPED_ESTIMATED,
+    STATUS_AWAITING_RESULT,
+}
 
 # Statuses that indicate a race is settled (remove from board)
-SETTLED_STATUSES = {STATUS_FINAL, STATUS_PAYING, STATUS_ABANDONED}
+SETTLED_STATUSES = {STATUS_FINAL, STATUS_PAYING, STATUS_ABANDONED, STATUS_RESULT_POSTED}
+
+# All statuses known to Phase 2
+ALL_STATUSES = LIVE_STATUSES | SETTLED_STATUSES | {STATUS_BLOCKED, STATUS_STALE_UNKNOWN}
 
 
 def parse_jump_time(jump_time: str | None, race_date: str | None = None) -> datetime | None:
@@ -62,6 +97,15 @@ def parse_jump_time(jump_time: str | None, race_date: str | None = None) -> date
     jump_time = jump_time.strip()
 
     # ISO datetime formats
+    # Try Python's built-in fromisoformat first — handles microseconds, offsets, etc.
+    try:
+        dt = datetime.fromisoformat(jump_time.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, AttributeError):
+        pass
+
     for fmt in (
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S",
@@ -186,3 +230,95 @@ def get_active_race_uids_from_db(db_client, table_name: str, target_date: str) -
     except Exception as e:
         log.error(f"race_status: get_active_race_uids_from_db failed: {e}")
         return []
+
+
+# ---------------------------------------------------------------------------
+# PHASE 2 — AUTOMATED STATE MACHINE
+# ---------------------------------------------------------------------------
+
+def compute_race_status(race: dict[str, Any]) -> str:
+    """
+    Compute the appropriate race status from stored data and current time.
+
+    Drives automated status transitions without external scraping.
+    OddsPro-authoritative terminal states (final, paying, abandoned) are
+    always preserved. Transitions for non-terminal races are derived from
+    stored jump_time.
+
+    Transition logic:
+      blocked           → preserved (never changed here)
+      stale_unknown     → re-evaluated from jump_time
+      settled states    → preserved (final/paying/abandoned/result_posted)
+      no jump_time      → stale_unknown
+      secs > NTJ_NEAR   → upcoming or open (from OddsPro)
+      0 < secs <= NTJ_NEAR → near_jump
+      secs <= 0 (< 30 min)  → jumped_estimated
+      secs <= 0 (>= 30 min) → awaiting_result
+    """
+    current = (race.get("status") or STATUS_UPCOMING).lower()
+
+    # Preserve hard block — never auto-transition away from blocked
+    if current == STATUS_BLOCKED or race.get("blocked"):
+        return STATUS_BLOCKED
+
+    # Preserve authoritative OddsPro terminal states
+    if current in SETTLED_STATUSES:
+        return current
+
+    # Derive status from stored jump_time
+    ntj = compute_ntj(race.get("jump_time"), race.get("date"))
+    secs = ntj.get("seconds_to_jump")
+
+    if secs is None:
+        # No parseable jump_time — cannot determine state
+        return STATUS_STALE_UNKNOWN
+
+    if secs > NTJ_NEAR_MAX:
+        # More than 10 min away — keep OddsPro status or default to upcoming
+        if current in (STATUS_OPEN, STATUS_UPCOMING, STATUS_NEAR_JUMP):
+            return STATUS_OPEN if current == STATUS_OPEN else STATUS_UPCOMING
+        return STATUS_UPCOMING
+
+    if 0 <= secs <= NTJ_NEAR_MAX:
+        # Within 10 min of jump — near_jump
+        return STATUS_NEAR_JUMP
+
+    # Jump time has passed (secs < 0)
+    if secs >= -_AWAITING_RESULT_THRESHOLD:
+        # Less than 30 min past jump — estimated
+        return STATUS_JUMPED_ESTIMATED
+
+    # More than 30 min past jump — actively awaiting OddsPro result
+    return STATUS_AWAITING_RESULT
+
+
+def update_race_state(race: dict[str, Any]) -> tuple[str, bool]:
+    """
+    Compute the new status for a race and return (new_status, changed).
+
+    Does NOT write to the database — caller is responsible for persisting.
+    Returns (new_status, True) when the status would change, (current, False) if not.
+    """
+    current = (race.get("status") or STATUS_UPCOMING).lower()
+    new_status = compute_race_status(race)
+    changed = new_status != current
+    return new_status, changed
+
+
+def bulk_update_race_states(races: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """
+    Compute status transitions for a list of races.
+
+    Returns list of (race_uid, old_status, new_status) for races that changed.
+    Does NOT write to the database.
+    """
+    changes: list[tuple[str, str, str]] = []
+    for race in races:
+        race_uid = race.get("race_uid") or ""
+        if not race_uid:
+            continue
+        new_status, changed = update_race_state(race)
+        if changed:
+            old_status = (race.get("status") or STATUS_UPCOMING).lower()
+            changes.append((race_uid, old_status, new_status))
+    return changes
