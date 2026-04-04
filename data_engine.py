@@ -62,8 +62,12 @@ def get_provisional_overlays() -> dict[str, dict[str, Any]]:
         return dict(_provisional_overlays)
 
 
-def clear_provisional_overlay(race_uid: str) -> None:
-    """Clear a specific provisional overlay (e.g. after OddsPro authoritative sweep)."""
+def clear_provisional_overlay_for_race(race_uid: str) -> None:
+    """
+    Clear the provisional overlay for a specific race.
+    Must only be called after that race has been successfully refreshed from OddsPro
+    AND validation + integrity checks have passed.
+    """
     with _provisional_overlay_lock:
         _provisional_overlays.pop(race_uid, None)
 
@@ -267,12 +271,14 @@ def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
                 # OddsPro authoritative refresh for near-jump race
                 fresh_race, _runners = conn.fetch_race_with_runners(oddspro_race_id)
                 if fresh_race:
-                    _store_with_pipeline(fresh_race)
+                    integrity_ok = _store_with_pipeline(fresh_race)
                     races_refreshed += 1
                     fresh_dict = _race_to_dict(fresh_race)
 
-                    # Clear any stale overlay before applying fresh one
-                    clear_provisional_overlay(fresh_dict.get("race_uid", ""))
+                    # Clear stale overlay ONLY after successful OddsPro refresh
+                    # AND validation + integrity passed (not blocked)
+                    if integrity_ok:
+                        clear_provisional_overlay_for_race(fresh_dict.get("race_uid", ""))
 
                     # FormFav provisional overlay — near-jump eligible only
                     if should_trigger_formfav_overlay(fresh_dict):
@@ -421,7 +427,7 @@ def _write_race(race: Any) -> None:
         log.error(f"data_engine: _write_race failed: {e}")
 
 
-def _store_with_pipeline(race: Any) -> None:
+def _store_with_pipeline(race: Any) -> bool:
     """
     Enforce pipeline order before storing an OddsPro race record:
       1. Normalize  (already done by connector)
@@ -432,6 +438,8 @@ def _store_with_pipeline(race: Any) -> None:
     Board building (step 5) happens separately in board_builder.py using
     the stored records. Blocked races are stored with status='blocked' so
     they are tracked explicitly rather than silently dropped.
+
+    Returns True if the race passed integrity (not blocked), False otherwise.
     """
     try:
         from database import upsert_race
@@ -460,9 +468,11 @@ def _store_with_pipeline(race: Any) -> None:
 
         # Step 4 — Store
         upsert_race(race_dict)
+        return bool(allowed)
 
     except Exception as e:
         log.error(f"data_engine: _store_with_pipeline failed: {e}")
+        return False
 
 
 def _write_result(result: Any) -> None:
