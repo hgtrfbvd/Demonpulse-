@@ -352,7 +352,7 @@ class OddsProConnector:
                 response_preview=response_preview,
             )
 
-        if "text/html" in content_type or raw_text.lstrip().startswith("<"):
+        if "text/html" in content_type or response_preview.lstrip().startswith("<"):
             log.error(
                 f"[ODDSPRO] HTML/interstitial response — "
                 f"URL: {url_requested} HTTP {status_code} "
@@ -809,7 +809,7 @@ class OddsProConnector:
         url = f"{self.base_url}{path}"
         headers: dict[str, str] = {
             "Accept": "application/json",
-            "User-Agent": "Mozilla/5.0 (DemonPulse)",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (DemonPulse)",
             "Referer": "https://oddspro.com.au/",
             "Cache-Control": "no-cache",
         }
