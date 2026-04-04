@@ -198,7 +198,7 @@ def _extract_race_meta(race: dict[str, Any]) -> dict[str, Any]:
         "oddspro_race_id": race.get("oddspro_race_id") or "",
         "race_date": str(race.get("date") or ""),
         "track": (race.get("track") or "").upper(),
-        "code": (race.get("code") or "GREYHOUND").upper(),
+        "code": (race.get("code") or "").upper(),
         "distance_m": _parse_distance(race.get("distance")),
         "grade": (race.get("grade") or "").upper(),
         "condition": (race.get("condition") or "").upper(),

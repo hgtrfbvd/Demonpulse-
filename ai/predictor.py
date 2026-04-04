@@ -151,8 +151,11 @@ def predict_from_snapshot_v2(
     """
     Generate a v2_feature_engine prediction from in-memory race + runner data.
 
+    Hybrid model: combines market (OddsPro) + feature signals.
+
     Uses the full feature set: sectionals, race shape, collision, enrichment.
     Saves prediction results and feature lineage via learning_store.
+    Falls back to baseline_v1 if features are missing or insufficient.
 
     Args:
         race             : authoritative race record
@@ -183,7 +186,21 @@ def predict_from_snapshot_v2(
             "race_uid": race_uid,
         }
 
-    scored = _v2_feature_score(features)
+    # Fallback to baseline_v1 if feature signals are too sparse
+    has_rich_features = any(
+        f.get("has_sectionals") or f.get("has_enrichment") or f.get("early_speed_score")
+        for f in features
+    )
+    if not has_rich_features:
+        log.warning(
+            f"predictor v2: features sparse for {race_uid} — falling back to baseline_v1"
+        )
+        scored = _baseline_score(features)
+        effective_model = MODEL_VERSION
+    else:
+        scored = _v2_feature_score(features)
+        effective_model = MODEL_VERSION_V2
+
     prediction_snapshot_id = _make_snapshot_id(race_uid)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -192,7 +209,7 @@ def predict_from_snapshot_v2(
         "race_uid": race_uid,
         "oddspro_race_id": oddspro_race_id,
         "prediction_snapshot_id": prediction_snapshot_id,
-        "model_version": MODEL_VERSION_V2,
+        "model_version": effective_model,
         "feature_count": len(features),
         "runner_predictions": scored,
         "created_at": now,
@@ -274,8 +291,8 @@ def _baseline_score(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     Algorithm:
       1. Primary score = implied probability (1 / win_odds)
-      2. Small box-position tiebreak (lower boxes very slightly preferred —
-         common greyhound track bias; negligible weight so odds dominate)
+      2. Small box-position tiebreak applied only for greyhound races
+         (inside boxes slightly preferred on Australian ovals; negligible weight)
       3. Normalize scores to sum to 1.0 within the field
       4. Rank runners 1 (top pick) to N by score descending
 
@@ -286,12 +303,19 @@ def _baseline_score(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not features:
         return []
 
+    # Determine race type from features (all runners in a race share the same code)
+    race_code = (features[0].get("code") or "").upper()
+    is_greyhound = "GREY" in race_code or race_code in ("GR", "DOG", "GREYHOUND", "DOGS")
+
     raw_scored = []
     for feat in features:
         win_odds = feat.get("win_odds") or 0.0
         implied_prob = (1.0 / win_odds) if win_odds > 1.0 else 0.0
-        # Tiny box bias (weight = 0.5% per box position): greyhounds slight inside rail bias
-        box_factor = 1.0 / (1.0 + (feat.get("box_num") or _DEFAULT_BOX_NUM) * 0.005)
+        if is_greyhound:
+            # Tiny box bias (weight = 0.5% per box position): greyhound inside rail bias
+            box_factor = 1.0 / (1.0 + (feat.get("box_num") or _DEFAULT_BOX_NUM) * 0.005)
+        else:
+            box_factor = 1.0
         raw_score = implied_prob * box_factor
         raw_scored.append({
             "box_num": feat.get("box_num"),
@@ -321,6 +345,8 @@ def _v2_feature_score(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Weighted multi-signal scoring (v2_feature_engine model).
 
+    Hybrid model: combines market (OddsPro) + feature signals.
+
     Uses the full feature set from feature_builder.  Falls back gracefully
     to implied_probability when richer features are absent.
 
@@ -338,6 +364,10 @@ def _v2_feature_score(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     if not features:
         return []
+
+    # Determine race type from features (all runners in a race share the same code)
+    race_code = (features[0].get("code") or "").upper()
+    is_greyhound = "GREY" in race_code or race_code in ("GR", "DOG", "GREYHOUND", "DOGS")
 
     # Normalise FormFav enrichment_win_pct to 0-1 across field
     win_pcts = [
@@ -357,7 +387,8 @@ def _v2_feature_score(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
             float(feat.get("enrichment_win_pct") or 0.0) / max_win_pct
             if max_win_pct > 0 else 0.0
         )
-        col_risk      = float(feat.get("collision_risk_score") or 0.0)
+        # Collision risk subtracted only for greyhound races
+        col_risk = float(feat.get("collision_risk_score") or 0.0) if is_greyhound else 0.0
 
         raw_score = (
             ip           * _V2_WEIGHTS["implied_probability"]
@@ -367,7 +398,7 @@ def _v2_feature_score(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
             + shape_fit  * _V2_WEIGHTS["race_shape_fit"]
             + class_fit  * _V2_WEIGHTS["enrichment_race_class_fit"]
             + win_pct_norm * _V2_WEIGHTS["enrichment_win_pct_norm"]
-            + col_risk   * _V2_WEIGHTS["collision_risk_score"]   # negative weight
+            + col_risk   * _V2_WEIGHTS["collision_risk_score"]   # negative weight; greyhound only
         )
         raw_score = max(raw_score, 0.0)   # clamp — collision subtraction can go negative
 

@@ -59,16 +59,24 @@ def build_race_shape(
 
     Returns:
         Race shape dict with all outputs described in the module docstring.
+
+    Race-code-specific behaviour:
+        - Greyhound : standard box/traffic logic; tighter collision pressure
+        - Harness   : leader/position pressure emphasis; no collision model
+        - Gallops   : tempo + class + late sectionals emphasis; no collision model
     """
     if not runner_features:
         return _null_shape(race)
 
-    race_uid       = race.get("race_uid") or ""
+    race_uid        = race.get("race_uid") or ""
     oddspro_race_id = race.get("oddspro_race_id") or ""
     race_code       = (race.get("code") or "").upper()
     field_size      = len(runner_features)
 
-    is_greyhound = "GREY" in race_code or race_code in ("GR", "DOG", "GREYHOUND")
+    is_greyhound = "GREY" in race_code or race_code in ("GR", "DOG", "GREYHOUND", "DOGS")
+    is_harness   = "HARNESS" in race_code or race_code in ("HAR", "TROTS", "HARN")
+    # Gallops: anything that is not greyhound or harness
+    is_gallops   = not is_greyhound and not is_harness
 
     # ── Step 1: build early-speed profile per runner ──────────────
     runner_profiles = _build_runner_speed_profiles(
@@ -84,7 +92,7 @@ def build_race_shape(
 
     # ── Step 4: identify likely leaders ───────────────────────────
     likely_leaders, leader_pressure, conflict_score = _find_leaders(
-        runner_profiles, is_greyhound
+        runner_profiles, is_greyhound, is_harness
     )
 
     # ── Step 5: collapse risk ──────────────────────────────────────
@@ -93,13 +101,15 @@ def build_race_shape(
     )
 
     # ── Step 6: closer advantage ──────────────────────────────────
+    # Gallops: late sectionals weighted more heavily for closer advantage
     closer_advantage = _compute_closer_advantage(
-        runner_profiles, early_speed_density, collapse_risk
+        runner_profiles, early_speed_density, collapse_risk, is_gallops
     )
 
     shape = {
         "race_uid":                   race_uid,
         "oddspro_race_id":            oddspro_race_id,
+        "race_code":                  race_code,
         "field_size":                 field_size,
         "pace_scenario":              pace_scenario,
         "early_speed_density":        round(early_speed_density, 4),
@@ -109,11 +119,13 @@ def build_race_shape(
         "collapse_risk":              round(collapse_risk, 4),
         "closer_advantage_score":     round(closer_advantage, 4),
         "is_greyhound":               is_greyhound,
+        "is_harness":                 is_harness,
+        "is_gallops":                 is_gallops,
         "sectionals_used":            bool(sectional_metrics),
         "formfav_enrichment_used":    bool(formfav_speed_map),
     }
     log.debug(
-        f"race_shape: {race_uid} → {pace_scenario} "
+        f"race_shape: {race_uid} [{race_code}] → {pace_scenario} "
         f"density={early_speed_density:.2f} collapse={collapse_risk:.2f}"
     )
     return shape
@@ -228,9 +240,16 @@ def _classify_pace(early_speed_density: float, is_greyhound: bool) -> str:
 def _find_leaders(
     profiles: list[dict[str, Any]],
     is_greyhound: bool,
+    is_harness: bool = False,
 ) -> tuple[list[int], float, float]:
     """
     Identify likely leaders and compute leader pressure and conflict scores.
+
+    Race-code-specific adjustments:
+        - Greyhound: inside box pressure penalty on conflict score
+        - Harness  : leader/position pressure weighted up (leaders dictate tempo
+                     more than in greyhound; barrier draws matter less)
+        - Gallops  : standard logic (tempo driven by jockey tactics + class)
 
     Returns:
         (likely_leader_box_nums, leader_pressure_0_1, conflict_score_0_1)
@@ -259,12 +278,20 @@ def _find_leaders(
     n = min(len(profiles), _MAX_FIELD)
     conflict_score = len(contenders) / max(n, 1)
 
-    # Greyhound penalty: box 1 / 2 pressure in crowded inside rail
     if is_greyhound:
+        # Greyhound: box 1 / 2 pressure in crowded inside rail
         inside_count = sum(
             1 for p in contenders if p.get("box_num") in (1, 2, 3)
         )
         conflict_score = min(conflict_score + inside_count * 0.05, 1.0)
+    elif is_harness:
+        # Harness: emphasise leader/position pressure — the single leader
+        # controls tempo more decisively; boost leader_pressure accordingly
+        if leader_pressure > 0.80:
+            # When two runners are closely matched on speed, pressure is very high
+            leader_pressure = min(leader_pressure * 1.15, 1.0)
+        # Also boost conflict score slightly to reflect positional tactics
+        conflict_score = min(conflict_score * 1.10, 1.0)
 
     return likely_leaders, round(leader_pressure, 4), round(conflict_score, 4)
 
@@ -288,23 +315,46 @@ def _compute_closer_advantage(
     profiles: list[dict[str, Any]],
     early_speed_density: float,
     collapse_risk: float,
+    is_gallops: bool = False,
 ) -> float:
     """
     Score how much closers benefit from the current race shape.
     High pace density + high collapse risk = big closer advantage.
+
+    Gallops: late sectionals (closing_delta) are weighted more heavily,
+    reflecting that gallops closers rely heavily on late acceleration.
     """
-    # Count runners with negative closing_delta (they finish faster than they start)
+    # Count runners with positive closing_delta (they finish faster than they start)
     closers = [p for p in profiles if p.get("closing_delta", 0.0) > 0]
     closer_ratio = len(closers) / max(len(profiles), 1)
-    advantage = (early_speed_density * 0.4 + collapse_risk * 0.4 + closer_ratio * 0.2)
+
+    if is_gallops:
+        # Gallops: emphasise late sectional strength (closing_delta) in the calculation
+        avg_closing = (
+            sum(p.get("closing_delta", 0.0) for p in closers) / len(closers)
+            if closers else 0.0
+        )
+        closing_factor = min(avg_closing, 1.0)
+        advantage = (
+            early_speed_density * 0.30
+            + collapse_risk     * 0.35
+            + closer_ratio      * 0.20
+            + closing_factor    * 0.15
+        )
+    else:
+        advantage = (early_speed_density * 0.4 + collapse_risk * 0.4 + closer_ratio * 0.2)
     return round(min(advantage, 1.0), 4)
 
 
 def _null_shape(race: dict[str, Any]) -> dict[str, Any]:
     """Return a null-safe race shape when there are no runners."""
+    race_code = (race.get("code") or "").upper()
+    is_greyhound = "GREY" in race_code or race_code in ("GR", "DOG", "GREYHOUND", "DOGS")
+    is_harness   = "HARNESS" in race_code or race_code in ("HAR", "TROTS", "HARN")
     return {
         "race_uid":                   race.get("race_uid") or "",
         "oddspro_race_id":            race.get("oddspro_race_id") or "",
+        "race_code":                  race_code,
         "field_size":                 0,
         "pace_scenario":              "UNKNOWN",
         "early_speed_density":        0.0,
@@ -313,7 +363,9 @@ def _null_shape(race: dict[str, Any]) -> dict[str, Any]:
         "early_speed_conflict_score": 0.0,
         "collapse_risk":              0.0,
         "closer_advantage_score":     0.0,
-        "is_greyhound":               False,
+        "is_greyhound":               is_greyhound,
+        "is_harness":                 is_harness,
+        "is_gallops":                 not is_greyhound and not is_harness,
         "sectionals_used":            False,
         "formfav_enrichment_used":    False,
     }

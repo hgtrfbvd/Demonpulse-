@@ -43,12 +43,15 @@ def extract_sectionals_from_race_payload(payload: dict[str, Any]) -> dict[str, A
     """
     Extract raw sectional data from an OddsPro live-race payload.
 
+    These are PRE-RACE sectionals (from prior runs / form data).
+    source_type is set to "pre_race" to distinguish from post-result data.
+
     Args:
         payload: raw OddsPro race payload (from /api/external/race/:id)
 
     Returns:
         Dict with keys:
-          race_uid, oddspro_race_id, has_sectionals (bool),
+          race_uid, oddspro_race_id, has_sectionals (bool), source_type,
           runners (list of per-runner raw-sectional dicts)
     """
     if not payload:
@@ -70,7 +73,7 @@ def extract_sectionals_from_race_payload(payload: dict[str, Any]) -> dict[str, A
 
     runner_sectionals = []
     for r in runners_raw:
-        raw = _extract_runner_raw_sectionals(r)
+        raw = _extract_runner_raw_sectionals(r, source_type="pre_race")
         if raw is not None:
             runner_sectionals.append(raw)
 
@@ -78,6 +81,7 @@ def extract_sectionals_from_race_payload(payload: dict[str, Any]) -> dict[str, A
         "race_uid": race_uid,
         "oddspro_race_id": oddspro_race_id,
         "has_sectionals": bool(runner_sectionals),
+        "source_type": "pre_race",
         "runners": runner_sectionals,
     }
 
@@ -86,11 +90,16 @@ def extract_sectionals_from_result_payload(payload: dict[str, Any]) -> dict[str,
     """
     Extract raw sectional data from an OddsPro result payload.
 
+    These are POST-RESULT official sectionals. source_type is set to "result"
+    to clearly separate from pre-race data. Stored result sectionals must NOT
+    overwrite pre-race sectionals — they serve different analytical purposes.
+
     Args:
         payload: raw OddsPro result payload (from /api/races/:id/results)
 
     Returns:
-        Same structure as extract_sectionals_from_race_payload().
+        Same structure as extract_sectionals_from_race_payload() with
+        source_type = "result".
     """
     if not payload:
         return _empty_sectionals_result()
@@ -113,7 +122,7 @@ def extract_sectionals_from_result_payload(payload: dict[str, Any]) -> dict[str,
 
     runner_sectionals = []
     for r in runners_raw:
-        raw = _extract_runner_raw_sectionals(r)
+        raw = _extract_runner_raw_sectionals(r, source_type="result")
         if raw is not None:
             runner_sectionals.append(raw)
 
@@ -121,6 +130,7 @@ def extract_sectionals_from_result_payload(payload: dict[str, Any]) -> dict[str,
         "race_uid": race_uid,
         "oddspro_race_id": oddspro_race_id,
         "has_sectionals": bool(runner_sectionals),
+        "source_type": "result",
         "runners": runner_sectionals,
     }
 
@@ -128,6 +138,7 @@ def extract_sectionals_from_result_payload(payload: dict[str, Any]) -> dict[str,
 def build_runner_sectional_metrics(
     runner_sectionals: list[dict[str, Any]],
     field_sectionals: list[dict[str, Any]] | None = None,
+    source_type: str = "pre_race",
 ) -> list[dict[str, Any]]:
     """
     Derive per-runner sectional metrics from raw section times.
@@ -138,6 +149,10 @@ def build_runner_sectional_metrics(
         field_sectionals  : same list (or a superset) used to compute field-level
                             norms.  If None, runner_sectionals itself is used as
                             the reference field.
+        source_type       : "pre_race" for pre-result form data, "result" for
+                            official post-race sectionals. Never overwrite stored
+                            pre_race sectionals with result data — they serve
+                            different purposes. Default: "pre_race".
 
     Returns:
         List of metric dicts, one per runner, including lineage fields and all
@@ -219,6 +234,8 @@ def build_runner_sectional_metrics(
             "oddspro_race_id":             r.get("oddspro_race_id", ""),
             "box_num":                     box_num,
             "runner_name":                 r.get("runner_name", ""),
+            # source_type: "pre_race" (form-based) or "result" (official post-race)
+            "source_type":                 r.get("source_type") or source_type,
             # Raw preserved
             "raw_early_time":              early_time,
             "raw_mid_time":                mid_time,
@@ -242,10 +259,17 @@ def build_runner_sectional_metrics(
 # INTERNAL HELPERS
 # ---------------------------------------------------------------------------
 
-def _extract_runner_raw_sectionals(runner: dict[str, Any]) -> dict[str, Any] | None:
+def _extract_runner_raw_sectionals(
+    runner: dict[str, Any],
+    source_type: str = "pre_race",
+) -> dict[str, Any] | None:
     """
     Extract raw section times from a single runner dict.
     Returns None if runner has no usable timing data at all.
+
+    Args:
+        runner      : raw runner dict from OddsPro payload
+        source_type : "pre_race" for form data, "result" for official result
     """
     if not runner:
         return None
@@ -290,6 +314,7 @@ def _extract_runner_raw_sectionals(runner: dict[str, Any]) -> dict[str, Any] | N
         "oddspro_race_id": oddspro_race_id,
         "box_num":         _safe_int(box_num),
         "runner_name":     runner_name,
+        "source_type":     source_type,
         "early_time":      early_time,
         "mid_time":        mid_time,
         "late_time":       late_time,
@@ -298,7 +323,13 @@ def _extract_runner_raw_sectionals(runner: dict[str, Any]) -> dict[str, Any] | N
 
 
 def _empty_sectionals_result() -> dict[str, Any]:
-    return {"race_uid": "", "oddspro_race_id": "", "has_sectionals": False, "runners": []}
+    return {
+        "race_uid": "",
+        "oddspro_race_id": "",
+        "has_sectionals": False,
+        "source_type": "pre_race",
+        "runners": [],
+    }
 
 
 def _pick_time(runner: dict[str, Any], keys: tuple[str, ...]) -> float | None:
