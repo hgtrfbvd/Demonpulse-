@@ -127,6 +127,15 @@ def _get_formfav() -> "FormFavConnector":  # noqa: F821
 # FULL SWEEP — OddsPro daily bootstrap
 # ------------------------------------------------------------
 
+def _has_numeric_meeting_id(meeting: Any) -> bool:
+    """Return True if the meeting's raw payload includes a numeric id or meetingId."""
+    raw = meeting.extra.get("raw", {}) if hasattr(meeting, "extra") else {}
+    return (
+        str(raw.get("id") or "").isdigit()
+        or str(raw.get("meetingId") or "").isdigit()
+    )
+
+
 def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     """
     Daily bootstrap via OddsPro GET /api/external/meetings.
@@ -198,6 +207,8 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         return {
             "ok": True,
             "meetings_found": 0, "meetings_fetched": 0,
+            "meeting_ids_found": 0, "meeting_ids_missing": 0,
+            "meeting_details_attempted": 0, "meeting_details_succeeded": 0, "meeting_details_failed": 0,
             "races_found": 0, "runners_found": 0,
             "races_stored": 0, "runners_stored": 0, "races_blocked": 0,
             # legacy keys kept for callers that rely on them
@@ -206,12 +217,24 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             "date": today,
         }
 
+    # Count meetings that already have numeric IDs vs those that don't.
+    meeting_ids_found = sum(1 for m in meetings if _has_numeric_meeting_id(m))
+    meeting_ids_missing = meetings_found - meeting_ids_found
+    if meeting_ids_missing:
+        log.info(
+            f"full_sweep: {meeting_ids_missing}/{meetings_found} meetings lack numeric IDs "
+            f"— will attempt discovery to resolve"
+        )
+
     meetings_fetched = 0
     races_found = 0
     runners_found = 0
     races_stored = 0
     runners_stored = 0
     races_blocked = 0
+    meeting_details_attempted = 0
+    meeting_details_succeeded = 0
+    meeting_details_failed = 0
 
     # When the /api/external/meetings response contains meeting name-only items
     # (no numeric id and no embedded races), the discovery endpoint /api/meetings
@@ -221,11 +244,11 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     #   2. GET /api/external/meeting/:id → full meeting/race/runner detail
     _disc_by_track: dict[str, dict] = {}
     _needs_discovery = bool(meetings) and all(
-        not m.extra.get("raw", {}).get("races")
-        and not str(m.extra.get("raw", {}).get("id") or "").isdigit()
-        and not str(m.extra.get("raw", {}).get("meetingId") or "").isdigit()
+        not m.extra.get("raw", {}).get("races") and not _has_numeric_meeting_id(m)
         for m in meetings
     )
+    _discovery_failed = False
+    _discovery_diag: dict = {}
     if _needs_discovery:
         try:
             for dm in conn.fetch_meetings_discovery():
@@ -236,14 +259,24 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                 )
                 if dm_track:
                     _disc_by_track[dm_track] = dm
+            _discovery_diag = dict(getattr(conn, "_last_discovery_diag", {}))
             log.info(
                 f"full_sweep: discovery loaded {len(_disc_by_track)} meetings "
                 f"(meetings from /external/meetings lacked embedded races and numeric IDs)"
             )
         except Exception as _disc_exc:
-            log.warning(f"full_sweep: discovery fallback failed: {_disc_exc}")
+            _discovery_failed = True
+            _discovery_diag = dict(getattr(conn, "_last_discovery_diag", {}))
+            _discovery_diag["error"] = str(_disc_exc)
+            log.error(
+                f"full_sweep: discovery failed: {_disc_exc} "
+                f"— detail fetches will proceed with available identifiers but may fail"
+            )
+
+    _first_detail_error: dict = {}
 
     for meeting in meetings:
+        meeting_details_attempted += 1
         try:
             # Prefer races embedded in the /meetings response (extra["raw"]["races"]).
             # Only call /meeting/:id when races are absent from the /meetings payload.
@@ -280,12 +313,22 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                             f"fetched via discovery ID ({len(races)} races)"
                         )
                     else:
+                        log.warning(
+                            f"full_sweep: discovery found track {meeting.track!r} but no "
+                            f"numeric ID or embedded races — fetching via name identifier "
+                            f"{meeting.meeting_id!r} (may return 0 races)"
+                        )
                         races, runners = conn.fetch_meeting_races_with_runners(meeting)
                         log.debug(
                             f"full_sweep: meeting {meeting.meeting_id} — "
                             f"fetched via /meeting/:id ({len(races)} races)"
                         )
                 else:
+                    log.warning(
+                        f"full_sweep: discovery did not resolve track {meeting.track!r} "
+                        f"(discovery_failed={_discovery_failed}) — fetching via "
+                        f"identifier {meeting.meeting_id!r} (may return 0 races)"
+                    )
                     races, runners = conn.fetch_meeting_races_with_runners(meeting)
                     log.debug(
                         f"full_sweep: meeting {meeting.meeting_id} — "
@@ -296,6 +339,22 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                 log.debug(
                     f"full_sweep: meeting {meeting.meeting_id} — "
                     f"fetched via /meeting/:id ({len(races)} races)"
+                )
+
+            if races:
+                meeting_details_succeeded += 1
+            else:
+                meeting_details_failed += 1
+                if not _first_detail_error:
+                    _first_detail_error = {
+                        "meeting_id": meeting.meeting_id,
+                        "stage": "zero_races_returned",
+                        "detail_diag": dict(getattr(conn, "_last_detail_diag", {})),
+                    }
+                log.warning(
+                    f"full_sweep: meeting {meeting.meeting_id} detail returned 0 races "
+                    f"(meeting_ids_missing={meeting_ids_missing}, "
+                    f"discovery_failed={_discovery_failed})"
                 )
 
             meetings_fetched += 1
@@ -320,10 +379,21 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                     runners_stored += stored
 
         except Exception as e:
+            meeting_details_failed += 1
+            if not _first_detail_error:
+                _first_detail_error = {
+                    "meeting_id": meeting.meeting_id,
+                    "stage": "exception",
+                    "error": str(e),
+                    "detail_diag": dict(getattr(conn, "_last_detail_diag", {})),
+                }
             log.error(f"full_sweep: failed for meeting {meeting.meeting_id}: {e}")
 
     log.info(
         f"full_sweep complete: {meetings_found} meetings found, {meetings_fetched} fetched, "
+        f"ids_found={meeting_ids_found} ids_missing={meeting_ids_missing} "
+        f"details attempted={meeting_details_attempted} "
+        f"succeeded={meeting_details_succeeded} failed={meeting_details_failed} "
         f"{races_stored} races stored ({races_blocked} blocked), "
         f"{runners_stored} runners stored for {today}"
     )
@@ -332,12 +402,20 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "date": today,
         "meetings_found": meetings_found,
         "meetings_fetched": meetings_fetched,
+        "meeting_ids_found": meeting_ids_found,
+        "meeting_ids_missing": meeting_ids_missing,
+        "meeting_details_attempted": meeting_details_attempted,
+        "meeting_details_succeeded": meeting_details_succeeded,
+        "meeting_details_failed": meeting_details_failed,
         "races_found": races_found,
         "runners_found": runners_found,
         "races_stored": races_stored,
         "runners_stored": runners_stored,
         "races_blocked": races_blocked,
         "races_passed": races_stored - races_blocked,
+        "discovery_failed": _discovery_failed,
+        "discovery_diag": _discovery_diag,
+        "first_detail_error": _first_detail_error,
         # legacy keys kept for callers that rely on them
         "meetings": meetings_found,
         "races": races_stored,
