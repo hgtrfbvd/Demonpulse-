@@ -335,8 +335,10 @@ def admin_bootstrap_day():
             from data_engine import full_sweep
             result = full_sweep(target_date)
         except Exception as exc:
+            # Log full detail server-side; use a safe code in result to avoid
+            # py/stack-trace-exposure (no str(exc) in the response chain).
             log.error(f"/api/admin/bootstrap-day full_sweep raised: {exc}")
-            result = {"ok": False, "reason": "unexpected_exception", "error": str(exc)}
+            result = {"ok": False, "reason": "unexpected_exception"}
 
     ok = bool(result.get("ok", False))
 
