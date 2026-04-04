@@ -519,6 +519,14 @@ create index if not exists idx_bet_log_result on bet_log(result);
 
 create index if not exists idx_results_log_date_track_race on results_log(date, track, race_num);
 
+-- Backfill session_id on tables that may have been created by an older schema
+-- version that did not include the column.  ADD COLUMN IF NOT EXISTS is a
+-- no-op when the column already exists, so this is safe to re-run.
+alter table decisions        add column if not exists session_id uuid references sessions(id) on delete set null;
+alter table epr_data         add column if not exists session_id uuid references sessions(id) on delete set null;
+alter table aeee_adjustments add column if not exists session_id uuid references sessions(id) on delete set null;
+alter table etg_tags         add column if not exists session_id uuid references sessions(id) on delete set null;
+
 create index if not exists idx_decisions_session_id on decisions(session_id);
 create index if not exists idx_decisions_date on decisions(date);
 create index if not exists idx_decisions_track_race on decisions(track, race_num);
