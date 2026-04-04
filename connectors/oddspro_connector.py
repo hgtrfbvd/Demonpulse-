@@ -291,13 +291,16 @@ class OddsProConnector:
         if target_date:
             params["date"] = target_date
 
+        url_requested = f"{self.base_url}/api/external/meetings"
         resp = self._get("/api/external/meetings", params=params)
         status_code = resp.status_code
 
         try:
             payload = resp.json()
         except ValueError as e:
-            log.error(f"OddsPro fetch_meetings: JSON parse failed (HTTP {status_code}): {e}")
+            log.error(
+                f"[ODDSPRO] JSON decode failed (HTTP {status_code}) — URL: {url_requested}: {e}"
+            )
             raise OddsProParseError(
                 f"JSON decode error: {e}",
                 parse_stage="root",
@@ -308,6 +311,52 @@ class OddsProConnector:
                 sample_payload=None,
             ) from e
 
+        # --- Primary path: standard OddsPro shape {"data": [...], "meta": {...}} ---
+        # "data" is authoritative when present and is a list — treat as valid even if empty.
+        # This is the only correct response shape for the /meetings endpoint.
+        # A parse error is NOT raised for an empty list; that is a valid "no meetings" state.
+        if isinstance(payload, dict) and "data" in payload and isinstance(payload["data"], list):
+            raw_items = payload["data"]
+            data_count = len(raw_items)
+            if data_count == 0:
+                log.info(
+                    f"[ODDSPRO] meetings fetched: 0 (valid empty response) "
+                    f"— URL: {url_requested}, HTTP {status_code}"
+                )
+                return []
+            log.info(
+                f"[ODDSPRO] meetings fetched: {data_count} "
+                f"— URL: {url_requested}, HTTP {status_code}"
+            )
+            meetings = []
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                mid = str(item.get("id") or item.get("meetingId") or "")
+                if not mid:
+                    continue
+                meetings.append(
+                    MeetingRecord(
+                        meeting_id=mid,
+                        code=self._normalise_code(
+                            item.get("type") or item.get("code") or item.get("raceType") or "HORSE"
+                        ),
+                        source=self.source_name,
+                        track=self._clean_track(
+                            item.get("track") or item.get("meetingTrack")
+                            or item.get("venue") or item.get("name") or ""
+                        ),
+                        meeting_date=str(item.get("date") or target_date or ""),
+                        state=str(
+                            item.get("location") or item.get("state") or item.get("region") or ""
+                        ),
+                        country=str(item.get("country") or self.country),
+                        extra={"raw": item},
+                    )
+                )
+            return meetings
+
+        # --- Fallback path: other documented shapes (bare list, {"meetings": [...]}, etc.) ---
         response_type = type(payload).__name__
         top_keys: list[str] = list(payload.keys()) if isinstance(payload, dict) else []
         first_item_keys: list[str] = []
@@ -320,7 +369,7 @@ class OddsProConnector:
                 first_item_keys = list(items[0].keys())
                 sample_payload = _truncate_sample(items[0])
 
-            meetings: list[MeetingRecord] = []
+            meetings = []
             for item in items:
                 if not isinstance(item, dict):
                     continue
@@ -371,7 +420,10 @@ class OddsProConnector:
                 sample_payload=sample_payload,
             ) from e
 
-        log.info(f"OddsPro fetch_meetings: {len(meetings)} meetings for {target_date} (HTTP {status_code})")
+        log.info(
+            f"[ODDSPRO] meetings fetched: {len(meetings)} "
+            f"— URL: {url_requested}, HTTP {status_code}"
+        )
         return meetings
 
     def fetch_meeting(self, meeting_id: str) -> MeetingRecord | None:
