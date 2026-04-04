@@ -9,6 +9,15 @@ from flask import Blueprint, jsonify
 log = logging.getLogger(__name__)
 health_bp = Blueprint("health", __name__)
 
+# Fields in scheduler status that may contain exception strings
+_SCHEDULER_SENSITIVE_FIELDS = {"last_error", "last_full_sweep_result",
+                                "last_refresh_result", "last_result_check_result"}
+
+
+def _safe_scheduler_status(status: dict) -> dict:
+    """Return scheduler status without fields that may contain exception strings."""
+    return {k: v for k, v in status.items() if k not in _SCHEDULER_SENSITIVE_FIELDS}
+
 
 @health_bp.route("/api/health")
 def api_health():
@@ -39,7 +48,7 @@ def api_health():
     scheduler_status = {}
     try:
         from scheduler import get_status
-        scheduler_status = get_status()
+        scheduler_status = _safe_scheduler_status(get_status())
     except Exception as e:
         log.warning(f"scheduler get_status failed: {e}")
 
@@ -62,7 +71,9 @@ def api_health():
         "oddspro": {"enabled": oddspro_enabled},
         "formfav": {"enabled": formfav_enabled},
         "last_full_sweep_at": engine_state.get("last_full_sweep_at"),
+        "last_full_sweep_ok": engine_state.get("last_full_sweep_ok"),
         "last_refresh_at": engine_state.get("last_refresh_at"),
+        "last_refresh_ok": engine_state.get("last_refresh_ok"),
         "last_result_check_at": engine_state.get("last_result_check_at"),
         "last_formfav_overlay_at": engine_state.get("last_formfav_overlay_at"),
         "board_race_count": board_race_count,
@@ -82,7 +93,6 @@ def api_health_detailed():
         from connectors.oddspro_connector import OddsProConnector
         conn = OddsProConnector()
         hc = conn.healthcheck()
-        # Remove any raw error strings that may contain internals
         oddspro_status = {
             "enabled": hc.get("enabled", False),
             "ok": hc.get("ok", False),
@@ -110,7 +120,7 @@ def api_health_detailed():
     scheduler_status = {}
     try:
         from scheduler import get_status
-        scheduler_status = get_status()
+        scheduler_status = _safe_scheduler_status(get_status())
     except Exception as e:
         log.warning(f"scheduler get_status failed: {e}")
 

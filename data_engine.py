@@ -195,8 +195,8 @@ def full_sweep(date_str: str | None = None) -> dict:
     except Exception as e:
         log.error(f"[full_sweep] fetch_today_meetings failed: {e}")
         _state.update(last_full_sweep_at=_utcnow(), last_full_sweep_ok=False)
-        return {"ok": False, "error": str(e), "meetings": 0, "races": 0,
-                "runners": 0, "blocked": 0, "errors": [str(e)]}
+        return {"ok": False, "error": "Data fetch failed", "meetings": 0,
+                "races": 0, "runners": 0, "blocked": 0, "errors": []}
 
     for raw_mtg in raw_meetings:
         meeting = _map_meeting(raw_mtg, date_str)
@@ -212,7 +212,7 @@ def full_sweep(date_str: str | None = None) -> dict:
             detail = conn.fetch_meeting_detail(meeting.meeting_id) or raw_mtg
         except Exception as e:
             log.warning(f"[full_sweep] fetch_meeting_detail({meeting.meeting_id}) failed: {e}")
-            errors.append(f"meeting_detail {meeting.meeting_id}: {e}")
+            errors.append(f"meeting_detail_failed:{meeting.meeting_id}")
             detail = raw_mtg
 
         raw_races = (
@@ -239,7 +239,7 @@ def full_sweep(date_str: str | None = None) -> dict:
                         race = enriched
             except Exception as e:
                 log.warning(f"[full_sweep] fetch_race_detail({race.race_id}) failed: {e}")
-                errors.append(f"race_detail {race.race_id}: {e}")
+                errors.append(f"race_detail_failed:{race.race_id}")
                 race_detail = raw_race
 
             raw_runners_list = (
@@ -384,7 +384,7 @@ def rolling_refresh(date_str: str | None = None) -> dict:
             refreshed += 1
         except Exception as e:
             log.warning(f"[rolling_refresh] Race {race.race_id} failed: {e}")
-            errors.append(f"race {race.race_id}: {e}")
+            errors.append(f"race_failed:{race.race_id}")
 
     # Run FormFav overlay for near-jump races
     try:
@@ -392,7 +392,7 @@ def rolling_refresh(date_str: str | None = None) -> dict:
         log.debug(f"[rolling_refresh] FormFav overlay: {overlay_result}")
     except Exception as e:
         log.warning(f"[rolling_refresh] FormFav overlay failed: {e}")
-        errors.append(f"formfav_overlay: {e}")
+        errors.append("formfav_overlay_failed")
 
     _state.update(last_refresh_at=_utcnow(), last_refresh_ok=True)
     return {"ok": True, "refreshed": refreshed, "errors": errors}
@@ -435,10 +435,10 @@ def check_results(date_str: str | None = None) -> dict:
                 confirmed += 1
             except Exception as e:
                 log.warning(f"[check_results] store result {race_id}: {e}")
-                errors.append(f"result {race_id}: {e}")
+                errors.append(f"result_failed:{race_id}")
     except Exception as e:
         log.warning(f"[check_results] fetch_results failed: {e}")
-        errors.append(f"fetch_results: {e}")
+        errors.append("fetch_results_failed")
 
     # Per-race polling for races that may not have appeared in the batch
     provisional = database.get_provisional_results(date_str)
@@ -451,7 +451,7 @@ def check_results(date_str: str | None = None) -> dict:
                 confirmed += 1
         except Exception as e:
             log.warning(f"[check_results] fetch_race_result({race_id}) failed: {e}")
-            errors.append(f"race_result {race_id}: {e}")
+            errors.append(f"race_result_failed:{race_id}")
 
     _state.update(last_result_check_at=_utcnow(), last_result_check_ok=True)
     return {"ok": True, "results_found": results_found, "confirmed": confirmed, "errors": errors}
@@ -506,7 +506,7 @@ def refresh_meeting(meeting_id: str) -> dict:
         return {"ok": True, "races_refreshed": races_refreshed}
     except Exception as e:
         log.error(f"[refresh_meeting] {meeting_id} failed: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "Operation failed"}
 
 
 def refresh_race(race_id: str) -> dict:
@@ -540,7 +540,7 @@ def refresh_race(race_id: str) -> dict:
         return {"ok": True, "runners_updated": len(runners)}
     except Exception as e:
         log.error(f"[refresh_race] {race_id} failed: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "Operation failed"}
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -603,7 +603,7 @@ def run_formfav_overlay(date_str: str | None = None) -> dict:
             updated += 1
         except Exception as e:
             log.warning(f"[formfav_overlay] Race {race.race_id} ({race.track} R{race.race_num}): {e}")
-            errors.append(f"race {race.race_id}: {e}")
+            errors.append(f"race_failed:{race.race_id}")
 
     _state.update(last_formfav_overlay_at=_utcnow(), last_formfav_overlay_ok=True)
     return {"ok": True, "updated": updated, "errors": errors}

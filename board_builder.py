@@ -76,7 +76,7 @@ def build_board(date_str: str | None = None) -> dict:
         log.exception(f"build_board failed: {e}")
         return {
             "ok": False,
-            "error": str(e),
+            "error": "Board build failed",
             "board": [],
             "ntj": None,
             "blocked_count": 0,
