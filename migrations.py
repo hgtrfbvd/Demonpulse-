@@ -1,10 +1,12 @@
 """
 migrations.py - DemonPulse Database Migrations
 ================================================
-Ensures the Supabase schema has all columns required by the V8 architecture.
-Run this once after deploying new code that adds columns.
+Ensures the Supabase schema has all columns and tables required by the
+V8 architecture and Phase 3 intelligence layer.
 
-New columns added by this migration set:
+Run once after deploying new code that adds columns or tables.
+
+Existing column migrations (today_races / today_runners):
   today_races:
     - race_uid          TEXT  (composite key for display/lookup)
     - oddspro_race_id   TEXT  (OddsPro native race ID for re-fetching)
@@ -29,6 +31,14 @@ New columns added by this migration set:
 
   results_log:
     (no new columns — existing schema is sufficient)
+
+Phase 3 — Intelligence Layer new tables:
+  feature_snapshots       — serialized feature arrays per race with lineage
+  prediction_snapshots    — prediction run metadata
+  prediction_runner_outputs — per-runner scores and predicted ranks
+  learning_evaluations    — post-result evaluation records
+  backtest_runs           — backtest run summaries
+  backtest_run_items      — per-race results within a backtest run
 """
 from __future__ import annotations
 
@@ -101,6 +111,195 @@ def run_migrations(db_client: Any = None) -> dict[str, Any]:
         f"errors={len(results['errors'])}"
     )
     return results
+
+
+# ---------------------------------------------------------------------------
+# PHASE 3 — INTELLIGENCE LAYER TABLE DEFINITIONS
+# ---------------------------------------------------------------------------
+
+_PHASE3_TABLES: list[tuple[str, str]] = [
+    # feature_snapshots — serialized feature arrays with full race lineage
+    (
+        "feature_snapshots",
+        """
+        CREATE TABLE IF NOT EXISTS feature_snapshots (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            race_uid TEXT NOT NULL DEFAULT '',
+            oddspro_race_id TEXT DEFAULT '',
+            snapshot_date DATE,
+            runner_count INTEGER DEFAULT 0,
+            features JSONB,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+    # prediction_snapshots — one row per prediction run for a race
+    (
+        "prediction_snapshots",
+        """
+        CREATE TABLE IF NOT EXISTS prediction_snapshots (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            prediction_snapshot_id TEXT UNIQUE NOT NULL,
+            race_uid TEXT NOT NULL DEFAULT '',
+            oddspro_race_id TEXT DEFAULT '',
+            model_version TEXT DEFAULT 'baseline_v1',
+            feature_snapshot_id TEXT DEFAULT '',
+            runner_count INTEGER DEFAULT 0,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+    # prediction_runner_outputs — per-runner scores and ranks
+    (
+        "prediction_runner_outputs",
+        """
+        CREATE TABLE IF NOT EXISTS prediction_runner_outputs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            prediction_snapshot_id TEXT NOT NULL DEFAULT '',
+            race_uid TEXT NOT NULL DEFAULT '',
+            runner_name TEXT DEFAULT '',
+            box_num INTEGER,
+            predicted_rank INTEGER,
+            score NUMERIC(10, 6),
+            model_version TEXT DEFAULT 'baseline_v1',
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+    # learning_evaluations — post-result evaluation records
+    # prediction_snapshot_id is unique: one evaluation per prediction
+    (
+        "learning_evaluations",
+        """
+        CREATE TABLE IF NOT EXISTS learning_evaluations (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            prediction_snapshot_id TEXT UNIQUE NOT NULL DEFAULT '',
+            race_uid TEXT NOT NULL DEFAULT '',
+            oddspro_race_id TEXT DEFAULT '',
+            model_version TEXT DEFAULT 'baseline_v1',
+            predicted_winner TEXT DEFAULT '',
+            actual_winner TEXT DEFAULT '',
+            winner_hit BOOLEAN DEFAULT false,
+            top2_hit BOOLEAN DEFAULT false,
+            top3_hit BOOLEAN DEFAULT false,
+            predicted_rank_of_winner INTEGER,
+            winner_odds NUMERIC(8, 2),
+            evaluation_source TEXT DEFAULT 'oddspro',
+            evaluated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+    # backtest_runs — high-level backtest run summaries
+    (
+        "backtest_runs",
+        """
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            run_id TEXT UNIQUE NOT NULL,
+            date_from DATE NOT NULL,
+            date_to DATE NOT NULL,
+            code_filter TEXT DEFAULT '',
+            track_filter TEXT DEFAULT '',
+            model_version TEXT DEFAULT 'baseline_v1',
+            total_races INTEGER DEFAULT 0,
+            total_runners INTEGER DEFAULT 0,
+            winner_hit_count INTEGER DEFAULT 0,
+            top2_hit_count INTEGER DEFAULT 0,
+            top3_hit_count INTEGER DEFAULT 0,
+            hit_rate NUMERIC(8, 4) DEFAULT 0,
+            top2_rate NUMERIC(8, 4) DEFAULT 0,
+            top3_rate NUMERIC(8, 4) DEFAULT 0,
+            avg_winner_odds NUMERIC(8, 2),
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+    # backtest_run_items — per-race results within a backtest run
+    (
+        "backtest_run_items",
+        """
+        CREATE TABLE IF NOT EXISTS backtest_run_items (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            run_id TEXT NOT NULL DEFAULT '',
+            race_uid TEXT NOT NULL DEFAULT '',
+            race_date DATE,
+            track TEXT DEFAULT '',
+            code TEXT DEFAULT '',
+            runner_count INTEGER DEFAULT 0,
+            predicted_winner TEXT DEFAULT '',
+            actual_winner TEXT DEFAULT '',
+            winner_hit BOOLEAN DEFAULT false,
+            top2_hit BOOLEAN DEFAULT false,
+            top3_hit BOOLEAN DEFAULT false,
+            score NUMERIC(10, 6),
+            winner_odds NUMERIC(8, 2),
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+]
+
+
+def run_phase3_migrations(db_client: Any = None) -> dict[str, Any]:
+    """
+    Create Phase 3 intelligence-layer tables if they do not already exist.
+
+    Uses CREATE TABLE IF NOT EXISTS — safe to re-run.
+    Returns dict with results per table.
+    """
+    if db_client is None:
+        from db import get_db
+        db_client = get_db()
+
+    results: dict[str, Any] = {"created": [], "skipped": [], "errors": []}
+
+    for table_name, create_sql in _PHASE3_TABLES:
+        sql = create_sql.strip()
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+            results["created"].append(table_name)
+            log.info(f"migrations: phase3 table ensured: {table_name}")
+        except Exception as e:
+            err_str = str(e)
+            if "already exists" in err_str.lower():
+                results["skipped"].append(table_name)
+            else:
+                log.warning(
+                    f"migrations: could not create {table_name}: {e}"
+                )
+                results["errors"].append(
+                    {"table": table_name, "error": err_str}
+                )
+
+    # Indexes for efficient lookups
+    _ensure_phase3_indexes(db_client, results)
+
+    log.info(
+        f"migrations: phase3 done — "
+        f"created={len(results['created'])} "
+        f"skipped={len(results['skipped'])} "
+        f"errors={len(results['errors'])}"
+    )
+    return results
+
+
+def _ensure_phase3_indexes(db_client: Any, results: dict[str, Any]) -> None:
+    """Create Phase 3 indexes for efficient lookups."""
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_feature_snapshots_race_uid ON feature_snapshots(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_race_uid ON prediction_snapshots(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_snap_id ON prediction_snapshots(prediction_snapshot_id);",
+        "CREATE INDEX IF NOT EXISTS idx_prediction_runner_outputs_snap_id ON prediction_runner_outputs(prediction_snapshot_id);",
+        "CREATE INDEX IF NOT EXISTS idx_learning_evaluations_race_uid ON learning_evaluations(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_learning_evaluations_model ON learning_evaluations(model_version);",
+        "CREATE INDEX IF NOT EXISTS idx_backtest_runs_run_id ON backtest_runs(run_id);",
+        "CREATE INDEX IF NOT EXISTS idx_backtest_run_items_run_id ON backtest_run_items(run_id);",
+    ]
+    for sql in indexes:
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+        except Exception as e:
+            log.debug(f"migrations: index skipped/failed: {e}")
 
 
 def ensure_race_uid_index(db_client: Any = None) -> bool:

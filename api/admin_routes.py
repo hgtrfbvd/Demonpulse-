@@ -111,3 +111,130 @@ def scheduler_status():
     except Exception as e:
         log.error(f"/api/admin/scheduler failed: {e}")
         return jsonify({"ok": False, "error": "Scheduler status unavailable"}), 500
+
+
+# ---------------------------------------------------------------------------
+# PHASE 3 — INTELLIGENCE LAYER ADMIN HOOKS
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/predict/race", methods=["POST"])
+def admin_predict_race():
+    """
+    Trigger prediction build for a single race.
+
+    POST body: {"race_uid": "<uid>"}
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        race_uid = (data.get("race_uid") or "").strip()
+        if not race_uid:
+            return jsonify({"ok": False, "error": "race_uid required"}), 400
+
+        from ai.predictor import predict_race
+        result = predict_race(race_uid)
+        if not result.get("ok"):
+            return jsonify(result), 400
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/admin/predict/race failed: {e}")
+        return jsonify({"ok": False, "error": "Prediction failed"}), 500
+
+
+@admin_bp.route("/predict/today", methods=["POST"])
+def admin_predict_today():
+    """Trigger prediction build for all open/upcoming races today."""
+    try:
+        from ai.predictor import predict_today
+        from services.health_service import record_prediction_run
+        result = predict_today()
+        if result.get("ok"):
+            record_prediction_run(count=result.get("total", 0))
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/admin/predict/today failed: {e}")
+        return jsonify({"ok": False, "error": "Today prediction run failed"}), 500
+
+
+@admin_bp.route("/backtest", methods=["POST"])
+def admin_backtest():
+    """
+    Run a backtest for a date or date range.
+
+    POST body:
+      {"date": "YYYY-MM-DD"}                            — single day
+      {"date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD"}  — range
+      Optional: "code_filter", "track_filter"
+
+    No-leakage rule: future dates are rejected.
+    """
+    try:
+        from datetime import date as date_type
+        data = request.get_json(silent=True) or {}
+        today = date_type.today().isoformat()
+        date_single = data.get("date")
+        date_from = data.get("date_from") or date_single
+        date_to = data.get("date_to") or date_single
+
+        if not date_from or not date_to:
+            return jsonify({"ok": False, "error": "date or date_from + date_to required"}), 400
+
+        if date_from > today or date_to > today:
+            return jsonify({
+                "ok": False,
+                "error": "Backtest cannot use future dates (no leakage)",
+                "today": today,
+            }), 400
+
+        from ai.backtest_engine import backtest_date_range
+        from services.health_service import record_backtest_run
+        result = backtest_date_range(
+            date_from=date_from,
+            date_to=date_to,
+            code_filter=data.get("code_filter"),
+            track_filter=data.get("track_filter"),
+        )
+        if result.get("ok"):
+            record_backtest_run(run_id=result.get("run_id", ""))
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/admin/backtest failed: {e}")
+        return jsonify({"ok": False, "error": "Backtest failed"}), 500
+
+
+@admin_bp.route("/predictions/inspect/<race_uid>", methods=["GET"])
+def admin_inspect_prediction(race_uid: str):
+    """Inspect the stored prediction for a race."""
+    try:
+        from ai.learning_store import get_stored_prediction
+        result = get_stored_prediction(race_uid)
+        if not result.get("ok"):
+            return jsonify(result), 404
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/admin/predictions/inspect/{race_uid} failed: {e}")
+        return jsonify({"ok": False, "error": "Could not retrieve prediction"}), 500
+
+
+@admin_bp.route("/predictions/performance", methods=["GET"])
+def admin_performance_summary():
+    """Inspect model/performance summary across stored evaluations."""
+    try:
+        from ai.learning_store import get_performance_summary
+        model_version = request.args.get("model_version")
+        result = get_performance_summary(model_version=model_version)
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/admin/predictions/performance failed: {e}")
+        return jsonify({"ok": False, "error": "Performance summary unavailable"}), 500
+
+
+@admin_bp.route("/phase3-migrate", methods=["POST"])
+def run_phase3_migrations():
+    """Run Phase 3 database migrations to create intelligence-layer tables."""
+    try:
+        from migrations import run_phase3_migrations as _run_p3
+        results = _run_p3()
+        return jsonify({"ok": True, "results": results})
+    except Exception as e:
+        log.error(f"/api/admin/phase3-migrate failed: {e}")
+        return jsonify({"ok": False, "error": "Phase 3 migration failed"}), 500
