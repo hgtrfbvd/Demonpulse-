@@ -150,7 +150,8 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         log.error(f"full_sweep: fetch_meetings parse error: {e}")
         err_dict: dict[str, Any] = {
             "ok": False,
-            "reason": "oddspro_parse_error",
+            "error": str(e),
+            "reason": getattr(e, "parse_stage", None) or "oddspro_parse_error",
             "detail": str(e),
             "date": today,
         }
@@ -161,6 +162,12 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             err_dict["first_item_keys"] = getattr(e, "first_item_keys", [])
             err_dict["sample_payload"] = getattr(e, "sample_payload", None)
             err_dict["exception_message"] = getattr(e, "exception_message", None) or str(e)
+            err_dict["http_status"] = getattr(e, "http_status", None)
+            err_dict["content_type"] = getattr(e, "content_type", "")
+            err_dict["final_url"] = getattr(e, "final_url", "")
+            err_dict["redirected_url"] = getattr(e, "redirected_url", "")
+            err_dict["response_length"] = getattr(e, "response_length", None)
+            err_dict["response_preview"] = getattr(e, "response_preview", "")
         else:
             err_dict["exception_message"] = str(e)
         return err_dict

@@ -116,6 +116,14 @@ class OddsProParseError(ValueError):
     Carries parse_stage, response_type, response_keys, first_item_keys,
     exception_message and sample_payload so callers can return structured
     diagnostics without needing to re-parse the error message string.
+
+    HTTP/transport diagnostic fields (populated by fetch_meetings):
+      http_status      - HTTP status code of the response
+      content_type     - Content-Type header value
+      final_url        - URL used for the request (including query string)
+      redirected_url   - response.url after redirects
+      response_length  - length of response body in bytes
+      response_preview - first 300 characters of response body
     """
 
     def __init__(
@@ -127,6 +135,12 @@ class OddsProParseError(ValueError):
         response_type: str = "",
         exception_message: str = "",
         sample_payload: Any = None,
+        http_status: int | None = None,
+        content_type: str = "",
+        final_url: str = "",
+        redirected_url: str = "",
+        response_length: int | None = None,
+        response_preview: str = "",
     ):
         super().__init__(message)
         self.parse_stage = parse_stage
@@ -135,6 +149,12 @@ class OddsProParseError(ValueError):
         self.response_type = response_type or ""
         self.exception_message = exception_message or message
         self.sample_payload = sample_payload
+        self.http_status = http_status
+        self.content_type = content_type or ""
+        self.final_url = final_url or ""
+        self.redirected_url = redirected_url or ""
+        self.response_length = response_length
+        self.response_preview = response_preview or ""
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +305,8 @@ class OddsProConnector:
         can map specific HTTP status codes to diagnostic error codes.
         Raises OddsProParseError (subclass of ValueError) on JSON parse failure,
         carrying full diagnostics: parse_stage, response_type, response_keys,
-        first_item_keys, exception_message, sample_payload.
+        first_item_keys, exception_message, sample_payload, http_status,
+        content_type, final_url, redirected_url, response_length, response_preview.
         """
         params: dict[str, Any] = {"country": self.country}
         if target_date:
@@ -295,11 +316,69 @@ class OddsProConnector:
         resp = self._get("/api/external/meetings", params=params)
         status_code = resp.status_code
 
+        # --- Capture transport diagnostics ---
+        content_type = resp.headers.get("Content-Type", "")
+        redirected_url = resp.url if resp.url != url_requested else ""
+        raw_text = resp.text
+        response_length = len(resp.content)
+        response_preview = raw_text[:300]
+
+        log.info(
+            f"[ODDSPRO] meetings response — "
+            f"url={url_requested} params={params} "
+            f"http={status_code} content_type={content_type!r} "
+            f"redirected_url={redirected_url!r} "
+            f"length={response_length} preview={response_preview!r}"
+        )
+
+        # --- Pre-parse: detect empty or non-JSON body ---
+        if not raw_text or not raw_text.strip():
+            log.error(
+                f"[ODDSPRO] empty response body — "
+                f"URL: {url_requested} HTTP {status_code}"
+            )
+            raise OddsProParseError(
+                "OddsPro returned an empty response body",
+                parse_stage="oddspro_empty_payload",
+                response_keys=[],
+                first_item_keys=[],
+                response_type="empty",
+                exception_message="Response body is empty",
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                redirected_url=redirected_url,
+                response_length=response_length,
+                response_preview=response_preview,
+            )
+
+        if "text/html" in content_type or raw_text.lstrip().startswith("<"):
+            log.error(
+                f"[ODDSPRO] HTML/interstitial response — "
+                f"URL: {url_requested} HTTP {status_code} "
+                f"Content-Type: {content_type!r} preview={response_preview!r}"
+            )
+            raise OddsProParseError(
+                "OddsPro returned an HTML page instead of JSON",
+                parse_stage="oddspro_html_page",
+                response_keys=[],
+                first_item_keys=[],
+                response_type="html",
+                exception_message="Response body is HTML, not JSON",
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                redirected_url=redirected_url,
+                response_length=response_length,
+                response_preview=response_preview,
+            )
+
         try:
             payload = resp.json()
         except ValueError as e:
             log.error(
-                f"[ODDSPRO] JSON decode failed (HTTP {status_code}) — URL: {url_requested}: {e}"
+                f"[ODDSPRO] JSON decode failed (HTTP {status_code}) — URL: {url_requested}: {e} "
+                f"preview={response_preview!r}"
             )
             raise OddsProParseError(
                 f"JSON decode error: {e}",
@@ -308,7 +387,12 @@ class OddsProConnector:
                 first_item_keys=[],
                 response_type="invalid_json",
                 exception_message=str(e),
-                sample_payload=None,
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                redirected_url=redirected_url,
+                response_length=response_length,
+                response_preview=response_preview,
             ) from e
 
         # --- Primary path: standard OddsPro shape {"data": [...], "meta": {...}} ---
@@ -407,6 +491,12 @@ class OddsProConnector:
                 response_type=response_type,
                 exception_message=str(e),
                 sample_payload=sample_payload,
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                redirected_url=redirected_url,
+                response_length=response_length,
+                response_preview=response_preview,
             ) from e
         except Exception as e:
             log.error(f"OddsPro fetch_meetings: parse error (HTTP {status_code}): {e}")
@@ -418,6 +508,12 @@ class OddsProConnector:
                 response_type=response_type,
                 exception_message=str(e),
                 sample_payload=sample_payload,
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                redirected_url=redirected_url,
+                response_length=response_length,
+                response_preview=response_preview,
             ) from e
 
         log.info(
@@ -711,7 +807,14 @@ class OddsProConnector:
         if not self.base_url:
             raise RuntimeError("ODDSPRO_BASE_URL is not configured")
         url = f"{self.base_url}{path}"
-        headers = {"X-API-Key": self.api_key} if self.api_key else {}
+        headers: dict[str, str] = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (DemonPulse)",
+            "Referer": "https://oddspro.com.au/",
+            "Cache-Control": "no-cache",
+        }
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
         resp = requests.get(url, params=params, headers=headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp
