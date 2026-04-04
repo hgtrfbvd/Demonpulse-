@@ -36,11 +36,12 @@ class OddsProConnector:
             resp = self._get("/api/external/meetings", params={"date": today})
             return {"ok": True, "enabled": True, "status_code": resp.status_code}
         except Exception as e:
-            return {"ok": False, "enabled": True, "error": str(e)}
+            log.warning(f"OddsPro healthcheck failed: {e}")
+            return {"ok": False, "enabled": True}
 
     def _get(self, path: str, params: dict | None = None) -> requests.Response:
         url = f"{self.base_url}{path}"
-        log.info(f"OddsPro GET {url} params={params}")
+        log.debug(f"OddsPro GET {url} params={list(params.keys()) if params else None}")
         resp = self._session.get(url, params=params, timeout=self.timeout)
         resp.raise_for_status()
         return resp
