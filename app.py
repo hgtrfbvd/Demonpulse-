@@ -241,17 +241,44 @@ def api_auth_logout():
 
 
 # ------------------------------------------------------------
-# DEBUG ROUTES
+# ODDSPRO DEBUG / ADMIN ROUTES
 # ------------------------------------------------------------
+@app.route("/api/debug/oddspro-health")
+def api_debug_oddspro_health():
+    try:
+        from connectors.oddspro_connector import OddsProConnector
+        conn = OddsProConnector()
+        return jsonify({"ok": True, "health": conn.healthcheck()})
+    except Exception as e:
+        log.exception(f"/api/debug/oddspro-health failed: {e}")
+        return jsonify({"ok": False, "error": "OddsPro health check failed"}), 500
+
+
+@app.route("/api/debug/oddspro-meetings")
+def api_debug_oddspro_meetings():
+    try:
+        from connectors.oddspro_connector import OddsProConnector
+        from datetime import date
+        conn = OddsProConnector()
+        items = conn.fetch_meetings(date.today().isoformat())
+        return jsonify({
+            "ok": True,
+            "count": len(items),
+            "items": [i.__dict__ for i in items],
+        })
+    except Exception as e:
+        log.exception(f"/api/debug/oddspro-meetings failed: {e}")
+        return jsonify({"ok": False, "error": "OddsPro meetings fetch failed"}), 500
+
+
+# Optional scrapers — kept for supplementary use only
 @app.route("/api/debug/thedogs-meetings")
 def api_debug_thedogs_meetings():
     try:
         from connectors.thedogs_connector import TheDogsConnector
         from datetime import date
-
         conn = TheDogsConnector()
         items = conn.fetch_meetings(date.today().isoformat()) or []
-
         return jsonify({
             "ok": True,
             "count": len(items),
@@ -259,32 +286,7 @@ def api_debug_thedogs_meetings():
         })
     except Exception as e:
         log.exception(f"/api/debug/thedogs-meetings failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/debug/thedogs-races")
-def api_debug_thedogs_races():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        from datetime import date
-
-        conn = TheDogsConnector()
-        meetings = conn.fetch_meetings(date.today().isoformat()) or []
-        if not meetings:
-            return jsonify({"ok": True, "count": 0, "items": [], "note": "no meetings"})
-
-        first = meetings[0]
-        races = conn.fetch_meeting_races(first) or []
-
-        return jsonify({
-            "ok": True,
-            "meeting": first.__dict__ if hasattr(first, "__dict__") else first,
-            "count": len(races),
-            "items": [item.__dict__ if hasattr(item, "__dict__") else item for item in races],
-        })
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-races failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "TheDogs meetings fetch failed"}), 500
 
 
 # ------------------------------------------------------------
@@ -293,58 +295,11 @@ def api_debug_thedogs_races():
 @app.route("/api/home/board", methods=["GET"])
 def api_home_board():
     try:
-        from db import get_db, safe_query, T
-        from datetime import date
-
-        races = safe_query(
-            lambda: get_db().table(T("today_races")).select("*")
-            .eq("date", date.today().isoformat())
-            .in_("status", ["upcoming", "open", "pending"])
-            .order("jump_time")
-            .limit(50)
-            .execute()
-            .data,
-            [],
-        ) or []
-
-        board = []
-        for race in races:
-            board.append({
-                "race_uid": race.get("race_uid"),
-                "code": race.get("code", "GREYHOUND"),
-                "track": race.get("track"),
-                "race_num": race.get("race_num"),
-                "jump_time": race.get("jump_time"),
-                "status": race.get("status", "upcoming"),
-                "signal": None,
-                "confidence": None,
-            })
-
-        return jsonify({"ok": True, "items": board})
+        from data_engine import get_board
+        return jsonify(get_board())
     except Exception as e:
         log.warning(f"/api/home/board fallback used: {e}")
         return jsonify({"ok": True, "items": []})
-
-@app.route("/api/debug/thedogs-fetch")
-def api_debug_thedogs_fetch():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        conn = TheDogsConnector()
-        return jsonify({"ok": True, "result": conn.debug_racecards_fetch()})
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-fetch failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/debug/thedogs-scratchings-fetch")
-def api_debug_thedogs_scratchings_fetch():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        conn = TheDogsConnector()
-        return jsonify({"ok": True, "result": conn.debug_scratchings_fetch()})
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-scratchings-fetch failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
 # HEALTH
