@@ -1,20 +1,31 @@
 """
-scheduler.py - DemonPulse Scheduler (Render Safe)
+scheduler.py - DemonPulse Scheduler (Phase 2 Live Engine)
+===========================================================
+Continuous live engine scheduler. Runs all refresh cycles safely and
+concurrently without destructive overlaps.
 
-Handles:
-- Full sweep on startup
-- Rolling refresh loop
-- Result checks
-- Thread-safe scheduler status reporting
-- Safer startup / restart behaviour
+Cycles:
+  startup bootstrap      - one-shot full OddsPro sweep on start
+  broad_refresh          - OddsPro meeting/race refresh (default: 150s)
+  near_jump              - OddsPro near-jump refresh + FormFav overlay (default: 60s)
+  result_check           - OddsPro day-level result sweep (default: 300s)
+  race_state_update      - drive race state machine from stored data (default: 90s)
+  health_snapshot        - aggregate health metrics snapshot (default: 120s)
+
+Safety rules:
+  - per-cycle threading.Lock prevents overlapping destructive cycles
+  - lock.acquire(blocking=False) — skip cycle if already running
+  - errors are logged and preserved; cycles degrade safely
+  - no false success: ok=False propagated when fetches fail
+  - no duplicate cycle execution within the same interval
 """
 
 import time
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, date
 
-from data_engine import full_sweep, rolling_refresh, check_results
+from data_engine import full_sweep, rolling_refresh, check_results, near_jump_refresh
 
 log = logging.getLogger(__name__)
 
@@ -23,8 +34,11 @@ log = logging.getLogger(__name__)
 # CONFIG
 # --------------------------------------------------------
 FULL_SWEEP_ON_START = True
-REFRESH_INTERVAL = 150          # 2.5 minutes
-RESULT_CHECK_INTERVAL = 300     # 5 minutes
+REFRESH_INTERVAL = 150          # 2.5 min — broad OddsPro refresh
+NEAR_JUMP_INTERVAL = 60         # 1 min — near-jump OddsPro + FormFav
+RESULT_CHECK_INTERVAL = 300     # 5 min — OddsPro result sweep
+RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
+HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -36,6 +50,12 @@ _scheduler_started = False
 _scheduler_thread = None
 _scheduler_lock = threading.Lock()
 
+# Per-cycle locks — prevent overlapping destructive cycles
+_broad_refresh_lock = threading.Lock()
+_near_jump_lock = threading.Lock()
+_result_check_lock = threading.Lock()
+_state_update_lock = threading.Lock()
+
 _scheduler_status = {
     "running": False,
     "thread_alive": False,
@@ -45,11 +65,18 @@ _scheduler_status = {
     "last_full_sweep_result": None,
     "last_refresh_at": None,
     "last_refresh_result": None,
+    "last_near_jump_at": None,
+    "last_near_jump_result": None,
     "last_result_check_at": None,
     "last_result_check_result": None,
+    "last_race_state_update_at": None,
+    "last_health_snapshot_at": None,
     "last_error": None,
     "refresh_interval": REFRESH_INTERVAL,
+    "near_jump_interval": NEAR_JUMP_INTERVAL,
     "result_check_interval": RESULT_CHECK_INTERVAL,
+    "race_state_interval": RACE_STATE_INTERVAL,
+    "health_snapshot_interval": HEALTH_SNAPSHOT_INTERVAL,
 }
 
 
@@ -75,6 +102,10 @@ def get_status():
     return status
 
 
+# --------------------------------------------------------
+# CYCLE RUNNERS
+# --------------------------------------------------------
+
 def _run_full_sweep():
     log.info("Running initial full sweep...")
     result = full_sweep()
@@ -83,49 +114,208 @@ def _run_full_sweep():
         log.info(f"Initial sweep complete: {result}")
     else:
         log.warning(f"Initial sweep returned not-ok: {result}")
+
     _set_status(
         last_full_sweep_at=_utc_now(),
         last_full_sweep_result=result,
         last_error=None if ok else (result.get("error") or result.get("reason") or "full_sweep_not_ok"),
     )
+
+    # Update health service
+    try:
+        from services.health_service import record_bootstrap
+        record_bootstrap(ok=ok, result=result)
+    except Exception:
+        pass
+
     return result
 
 
 def _run_refresh():
-    log.info("Running rolling refresh...")
-    result = rolling_refresh()
-    ok = result.get("ok", False)
-    if ok:
-        log.info(f"Refresh result: {result}")
-    else:
-        log.warning(f"Refresh returned not-ok: {result}")
-    _set_status(
-        last_refresh_at=_utc_now(),
-        last_refresh_result=result,
-        last_error=None if ok else (result.get("error") or result.get("reason") or "refresh_not_ok"),
-    )
-    return result
+    """Broad OddsPro refresh — skipped if already running."""
+    if not _broad_refresh_lock.acquire(blocking=False):
+        log.warning("Broad refresh still running — skipping this cycle")
+        return {"ok": False, "reason": "cycle_already_running"}
+
+    try:
+        log.info("Running broad refresh...")
+        result = rolling_refresh()
+        ok = result.get("ok", False)
+        if ok:
+            log.info(f"Broad refresh result: {result}")
+        else:
+            log.warning(f"Broad refresh returned not-ok: {result}")
+
+        _set_status(
+            last_refresh_at=_utc_now(),
+            last_refresh_result=result,
+            last_error=None if ok else (result.get("error") or result.get("reason") or "refresh_not_ok"),
+        )
+
+        try:
+            from services.health_service import record_broad_refresh
+            record_broad_refresh(ok=ok, races_refreshed=result.get("races_refreshed", 0))
+        except Exception:
+            pass
+
+        # Rebuild board after meaningful broad refresh
+        if ok and result.get("races_refreshed", 0) > 0:
+            _trigger_board_rebuild()
+
+        return result
+    finally:
+        _broad_refresh_lock.release()
+
+
+def _run_near_jump():
+    """Near-jump OddsPro refresh + FormFav overlay — skipped if already running."""
+    if not _near_jump_lock.acquire(blocking=False):
+        log.debug("Near-jump refresh still running — skipping this cycle")
+        return {"ok": False, "reason": "cycle_already_running"}
+
+    try:
+        log.debug("Running near-jump refresh...")
+        result = near_jump_refresh()
+        ok = result.get("ok", False)
+        if result.get("near_jump_races", 0) > 0:
+            log.info(f"Near-jump refresh: {result}")
+
+        _set_status(
+            last_near_jump_at=_utc_now(),
+            last_near_jump_result=result,
+            last_error=None if ok else (result.get("error") or result.get("reason") or "near_jump_not_ok"),
+        )
+
+        try:
+            from services.health_service import record_near_jump_refresh, record_formfav_overlay
+            record_near_jump_refresh(ok=ok, races=result.get("near_jump_races", 0))
+            if result.get("formfav_overlays", 0) > 0:
+                record_formfav_overlay(ok=True)
+        except Exception:
+            pass
+
+        # Rebuild board if near-jump races were refreshed
+        if ok and result.get("races_refreshed", 0) > 0:
+            _trigger_board_rebuild()
+
+        return result
+    finally:
+        _near_jump_lock.release()
 
 
 def _run_result_check():
     """
-    Run OddsPro result sweep to confirm settled races.
-    Uses check_results() which calls /api/external/results then
-    confirms each via /api/races/:id/results before writing.
+    OddsPro result sweep — skipped if already running.
+    Only marks confirmed results; no false success on failed fetches.
     """
-    log.info("Running result check...")
-    result = check_results()
-    ok = result.get("ok", False)
-    if ok:
-        log.info(f"Result check: {result}")
-    else:
-        log.warning(f"Result check returned not-ok: {result}")
-    _set_status(
-        last_result_check_at=_utc_now(),
-        last_result_check_result=result,
-        last_error=None if ok else (result.get("error") or result.get("reason") or "result_check_not_ok"),
-    )
-    return result
+    if not _result_check_lock.acquire(blocking=False):
+        log.warning("Result check still running — skipping this cycle")
+        return {"ok": False, "reason": "cycle_already_running"}
+
+    try:
+        log.info("Running result check...")
+        result = check_results()
+        ok = result.get("ok", False)
+        if ok:
+            log.info(f"Result check: {result}")
+        else:
+            log.warning(f"Result check returned not-ok: {result}")
+
+        _set_status(
+            last_result_check_at=_utc_now(),
+            last_result_check_result=result,
+            last_error=None if ok else (result.get("error") or result.get("reason") or "result_check_not_ok"),
+        )
+
+        try:
+            from services.health_service import record_result_check
+            record_result_check(ok=ok, confirmations=result.get("results_written", 0))
+        except Exception:
+            pass
+
+        # Rebuild board after result confirmations
+        if ok and result.get("results_written", 0) > 0:
+            _trigger_race_state_update()
+            _trigger_board_rebuild()
+
+        return result
+    finally:
+        _result_check_lock.release()
+
+
+def _run_race_state_update():
+    """Drive the race state machine from stored data."""
+    if not _state_update_lock.acquire(blocking=False):
+        log.debug("Race state update still running — skipping")
+        return
+
+    try:
+        today = date.today().isoformat()
+        try:
+            from database import get_races_for_date, update_race_status
+            from race_status import bulk_update_race_states
+
+            races = get_races_for_date(today)
+            changes = bulk_update_race_states(races)
+            for race_uid, old_status, new_status in changes:
+                update_race_status(race_uid, new_status)
+                log.debug(f"scheduler: race state {race_uid}: {old_status} → {new_status}")
+
+            if changes:
+                log.info(f"scheduler: race_state_update: {len(changes)} transitions for {today}")
+                _trigger_board_rebuild()
+
+            _set_status(last_race_state_update_at=_utc_now())
+
+        except Exception as e:
+            log.error(f"Race state update failed: {e}")
+    finally:
+        _state_update_lock.release()
+
+
+def _run_health_snapshot():
+    """Aggregate health metrics from stored data."""
+    try:
+        today = date.today().isoformat()
+        from database import get_blocked_races, get_active_races
+        from race_status import STATUS_STALE_UNKNOWN
+
+        blocked = get_blocked_races(today)
+        active = get_active_races(today)
+        stale = [r for r in active if (r.get("status") or "") == STATUS_STALE_UNKNOWN]
+
+        try:
+            from services.health_service import update_snapshot
+            update_snapshot(blocked=len(blocked), stale=len(stale))
+        except Exception:
+            pass
+
+        _set_status(last_health_snapshot_at=_utc_now())
+        log.debug(f"scheduler: health snapshot: blocked={len(blocked)} stale={len(stale)}")
+    except Exception as e:
+        log.error(f"Health snapshot failed: {e}")
+
+
+# --------------------------------------------------------
+# BOARD REBUILD HELPERS
+# --------------------------------------------------------
+
+def _trigger_board_rebuild():
+    """Trigger a board rebuild from stored validated data."""
+    try:
+        from board_builder import get_board_for_today
+        get_board_for_today()
+        log.debug("scheduler: board rebuilt")
+    except Exception as e:
+        log.error(f"scheduler: board rebuild failed: {e}")
+
+
+def _trigger_race_state_update():
+    """Synchronously run a race state update (e.g. after results arrive)."""
+    try:
+        _run_race_state_update()
+    except Exception as e:
+        log.error(f"scheduler: triggered race state update failed: {e}")
 
 
 # --------------------------------------------------------
@@ -134,7 +324,7 @@ def _run_result_check():
 def run_scheduler():
     global _scheduler_thread
 
-    log.info("=== SCHEDULER STARTED ===")
+    log.info("=== SCHEDULER STARTED (Phase 2 Live Engine) ===")
     _set_status(
         running=True,
         thread_alive=True,
@@ -144,16 +334,21 @@ def run_scheduler():
 
     now = time.time()
     last_refresh = now
+    last_near_jump = now
     last_result_check = now
+    last_race_state = now
+    last_health_snapshot = now
 
     if FULL_SWEEP_ON_START:
         try:
             _run_full_sweep()
-            # After full sweep, reset timers so we do not immediately
-            # hammer refresh + result check again on first loop tick.
+            # Reset timers after bootstrap so we don't immediately hammer every cycle
             now = time.time()
             last_refresh = now
+            last_near_jump = now
             last_result_check = now
+            last_race_state = now
+            last_health_snapshot = now
         except Exception as e:
             log.error(f"Initial full sweep failed: {e}")
             _set_status(
@@ -172,6 +367,10 @@ def run_scheduler():
 
             now = time.time()
 
+            if now - last_near_jump >= NEAR_JUMP_INTERVAL:
+                _run_near_jump()
+                last_near_jump = now
+
             if now - last_refresh >= REFRESH_INTERVAL:
                 _run_refresh()
                 last_refresh = now
@@ -179,6 +378,14 @@ def run_scheduler():
             if now - last_result_check >= RESULT_CHECK_INTERVAL:
                 _run_result_check()
                 last_result_check = now
+
+            if now - last_race_state >= RACE_STATE_INTERVAL:
+                _run_race_state_update()
+                last_race_state = now
+
+            if now - last_health_snapshot >= HEALTH_SNAPSHOT_INTERVAL:
+                _run_health_snapshot()
+                last_health_snapshot = now
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")
@@ -233,7 +440,7 @@ def start_scheduler():
         thread_alive=True,
         last_error=None,
     )
-    log.info("Scheduler started (threaded)")
+    log.info("Scheduler started (threaded, Phase 2 Live Engine)")
 
 
 # --------------------------------------------------------

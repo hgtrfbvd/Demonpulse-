@@ -150,12 +150,24 @@ def get_board_for_today(
 ) -> dict[str, Any]:
     """
     Convenience function: fetch active races from DB and build the board.
-    Used by API routes.
+    Used by API routes and scheduler board-rebuild triggers.
+
+    If formfav_overlays is not provided, provisional overlays are loaded
+    automatically from the in-memory store in data_engine.
     """
     try:
         from database import get_active_races
         today = date.today().isoformat()
         races = get_active_races(today)
+
+        # Auto-load provisional overlays if not provided by caller
+        if formfav_overlays is None:
+            try:
+                from data_engine import get_provisional_overlays
+                formfav_overlays = get_provisional_overlays()
+            except Exception:
+                formfav_overlays = {}
+
         board = build_board(
             races,
             blocked_tracks=blocked_tracks,

@@ -6,20 +6,24 @@ FormFav is a PROVISIONAL OVERLAY only — never used for daily bootstrap
 or official board state.
 
 Core functions:
-  full_sweep()       - OddsPro daily bootstrap via /api/external/meetings
-  rolling_refresh()  - OddsPro meeting/race refresh via /api/external/meeting/:id
-  check_results()    - OddsPro result sweep via /api/external/results
-  formfav_overlay()  - FormFav provisional enrichment (near-jump only)
+  full_sweep()          - OddsPro daily bootstrap via /api/external/meetings
+  rolling_refresh()     - OddsPro meeting/race refresh via /api/external/meeting/:id
+  near_jump_refresh()   - OddsPro near-jump refresh + FormFav provisional overlay
+  check_results()       - OddsPro result sweep via /api/external/results
+  formfav_overlay()     - FormFav provisional enrichment (near-jump only)
+  get_provisional_overlays() - Return current provisional overlay store
 
 Architecture rules enforced here:
   - OddsPro builds the day (full_sweep)
-  - OddsPro builds official board state (rolling_refresh)
+  - OddsPro builds official board state (rolling_refresh, near_jump_refresh)
   - OddsPro-confirmed data is official truth
   - FormFav never calls for bootstrap, never overwrites official fields
+  - FormFav overlays stored in-memory separately from official tables
   - NTJ calculated from stored jump_time (race_status.compute_ntj)
   - Blocked races tracked explicitly in database
 """
 import logging
+import threading
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -27,6 +31,41 @@ log = logging.getLogger(__name__)
 
 _oddspro_connector = None
 _formfav_connector = None
+
+# ---------------------------------------------------------------------------
+# PROVISIONAL OVERLAY STORE — in-memory, never persisted to official tables
+# ---------------------------------------------------------------------------
+_provisional_overlays: dict[str, dict[str, Any]] = {}
+_provisional_overlay_lock = threading.Lock()
+
+
+def _store_provisional_overlay(race_uid: str, overlay: dict[str, Any]) -> None:
+    """
+    Store a FormFav provisional overlay in-memory.
+    Not written to official tables. Cleared on next OddsPro authoritative sweep.
+    """
+    with _provisional_overlay_lock:
+        _provisional_overlays[race_uid] = {
+            **overlay,
+            "_provisional": True,
+            "_overlay_source": "formfav",
+            "_overlay_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+
+def get_provisional_overlays() -> dict[str, dict[str, Any]]:
+    """
+    Return a snapshot of all current provisional overlays.
+    Used by board_builder to apply non-authoritative enrichment.
+    """
+    with _provisional_overlay_lock:
+        return dict(_provisional_overlays)
+
+
+def clear_provisional_overlay(race_uid: str) -> None:
+    """Clear a specific provisional overlay (e.g. after OddsPro authoritative sweep)."""
+    with _provisional_overlay_lock:
+        _provisional_overlays.pop(race_uid, None)
 
 
 # ------------------------------------------------------------
@@ -177,6 +216,96 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
         "races_refreshed": races_refreshed,
         "formfav_overlays": overlay_count,
         "source": "oddspro",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ------------------------------------------------------------
+# NEAR-JUMP REFRESH — OddsPro authoritative + FormFav overlay
+# ------------------------------------------------------------
+
+def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
+    """
+    Near-jump engine: refresh races with NTJ < 10 min using OddsPro,
+    then apply FormFav provisional overlay for eligible races.
+
+    Called more frequently than rolling_refresh (every ~60s).
+    Only processes races identified as near-jump from stored jump_time.
+
+    FormFav overlay is applied ONLY here, never for non-near-jump races.
+    Overlay data is stored in the provisional store, NOT in official tables.
+    """
+    today = target_date or date.today().isoformat()
+    conn = _get_oddspro()
+
+    if not conn.is_enabled():
+        log.warning("near_jump_refresh skipped: OddsPro not configured")
+        return {"ok": False, "reason": "oddspro_not_configured", "date": today}
+
+    races_refreshed = 0
+    overlay_count = 0
+    near_jump_count = 0
+
+    try:
+        from database import get_active_races
+        from race_status import compute_ntj, should_trigger_formfav_overlay
+
+        active_races = get_active_races(today)
+
+        for stored_race in active_races:
+            # Near-jump gate: only process races with NTJ < 10 min
+            ntj = compute_ntj(stored_race.get("jump_time"), stored_race.get("date"))
+            if not ntj.get("is_near_jump"):
+                continue
+
+            near_jump_count += 1
+            oddspro_race_id = stored_race.get("oddspro_race_id") or ""
+            if not oddspro_race_id:
+                continue
+
+            try:
+                # OddsPro authoritative refresh for near-jump race
+                fresh_race, _runners = conn.fetch_race_with_runners(oddspro_race_id)
+                if fresh_race:
+                    _store_with_pipeline(fresh_race)
+                    races_refreshed += 1
+                    fresh_dict = _race_to_dict(fresh_race)
+
+                    # Clear any stale overlay before applying fresh one
+                    clear_provisional_overlay(fresh_dict.get("race_uid", ""))
+
+                    # FormFav provisional overlay — near-jump eligible only
+                    if should_trigger_formfav_overlay(fresh_dict):
+                        enriched = formfav_overlay(
+                            fresh_dict.get("race_uid", ""), fresh_dict
+                        )
+                        if enriched.get("has_provisional_overlay"):
+                            _store_provisional_overlay(
+                                fresh_dict["race_uid"], enriched
+                            )
+                            overlay_count += 1
+
+            except Exception as e:
+                log.error(
+                    f"near_jump_refresh: failed for race {oddspro_race_id}: {e}"
+                )
+
+    except Exception as e:
+        log.error(f"near_jump_refresh: outer error: {e}")
+        return {"ok": False, "error": "Data engine error", "date": today}
+
+    log.info(
+        f"near_jump_refresh: {near_jump_count} near-jump races identified, "
+        f"{races_refreshed} refreshed via OddsPro, "
+        f"{overlay_count} FormFav overlays applied"
+    )
+    return {
+        "ok": True,
+        "date": today,
+        "near_jump_races": near_jump_count,
+        "races_refreshed": races_refreshed,
+        "formfav_overlays": overlay_count,
+        "source": "oddspro+formfav_overlay",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -352,15 +481,17 @@ def _write_result(result: Any) -> None:
 
 def _apply_formfav_overlay(race: dict[str, Any]) -> None:
     """
-    Apply FormFav provisional overlay in-memory.
-    Does NOT write to official tables — overlay is ephemeral.
+    Apply FormFav provisional overlay and store in the in-memory overlay store.
+    Does NOT write to official tables — overlay is provisional and ephemeral.
+    Cleared when the next OddsPro authoritative sweep covers this race.
     """
     race_uid = race.get("race_uid") or ""
     if not race_uid:
         return
     enriched = formfav_overlay(race_uid, race)
-    # Overlay is returned in-memory for board building; not persisted
-    log.debug(f"data_engine: provisional overlay applied for {race_uid} (not persisted)")
+    if enriched.get("has_provisional_overlay"):
+        _store_provisional_overlay(race_uid, enriched)
+    log.debug(f"data_engine: provisional overlay stored for {race_uid} (not persisted)")
 
 
 def _race_to_dict(race: Any) -> dict[str, Any]:

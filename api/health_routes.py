@@ -65,6 +65,26 @@ def health_scheduler():
         return jsonify({"ok": False, "error": "Scheduler status unavailable"}), 500
 
 
+@health_bp.route("/live", methods=["GET"])
+def health_live():
+    """
+    Live engine health — detailed metrics from the health service.
+    Includes last cycle timestamps, blocked/stale counts, and result confirmations.
+    """
+    try:
+        from services.health_service import get_health, is_engine_healthy
+        health = get_health()
+        return jsonify({
+            "ok": is_engine_healthy(),
+            "engine": health,
+            "primary_source": "oddspro",
+            "overlay_source": "formfav (provisional only)",
+        })
+    except Exception as e:
+        log.error(f"/api/health/live failed: {e}")
+        return jsonify({"ok": False, "error": "Health service unavailable"}), 500
+
+
 @health_bp.route("/db", methods=["GET"])
 def health_db():
     """Check database connectivity."""

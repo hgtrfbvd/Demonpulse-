@@ -75,6 +75,20 @@ def block_race():
         return jsonify({"ok": False, "error": "Block operation failed"}), 500
 
 
+@admin_bp.route("/near-jump-refresh", methods=["POST"])
+def trigger_near_jump_refresh():
+    """Manually trigger a near-jump OddsPro refresh + FormFav overlay cycle."""
+    try:
+        from data_engine import near_jump_refresh
+        from datetime import date
+        target_date = (request.get_json(silent=True) or {}).get("date")
+        result = near_jump_refresh(target_date or date.today().isoformat())
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/admin/near-jump-refresh failed: {e}")
+        return jsonify({"ok": False, "error": "Near-jump refresh failed"}), 500
+
+
 @admin_bp.route("/migrate", methods=["POST"])
 def run_migrations():
     """Run DB schema migrations to add missing columns."""
