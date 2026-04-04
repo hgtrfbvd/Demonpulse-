@@ -79,6 +79,9 @@ _TESTABLE_TABLES = {
     "learning_evaluations",
     "backtest_runs",
     "backtest_run_items",
+    # Phase 4 — Feature engine / sectionals / race shape
+    "sectional_snapshots",
+    "race_shape_snapshots",
 }
 
 
