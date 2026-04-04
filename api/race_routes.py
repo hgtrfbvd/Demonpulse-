@@ -74,6 +74,51 @@ def get_race_result(race_uid: str):
         return jsonify({"ok": False, "error": "Could not retrieve result"}), 500
 
 
+@race_bp.route("/<race_uid>/results", methods=["GET"])
+def get_race_results(race_uid: str):
+    """
+    Get official race results for a single race from OddsPro.
+    Falls back to local DB result if OddsPro is not configured.
+    """
+    try:
+        from connectors.oddspro_connector import OddsProConnector
+        from database import get_race, get_result
+
+        conn = OddsProConnector()
+        if conn.is_enabled():
+            race = get_race(race_uid)
+            oddspro_id = (race or {}).get("oddspro_race_id") or race_uid
+            result = conn.fetch_race_result(oddspro_id)
+            if result:
+                return jsonify({
+                    "ok": True,
+                    "race_uid": race_uid,
+                    "oddspro_race_id": result.oddspro_race_id,
+                    "date": result.date,
+                    "track": result.track,
+                    "race_num": result.race_num,
+                    "code": result.code,
+                    "winner": result.winner,
+                    "winner_number": result.winner_number,
+                    "win_price": result.win_price,
+                    "place_2": result.place_2,
+                    "place_3": result.place_3,
+                    "margin": result.margin,
+                    "winning_time": result.winning_time,
+                    "source": result.source,
+                })
+
+        # Fallback to local DB
+        stored = get_result(race_uid)
+        if stored:
+            return jsonify({"ok": True, **stored})
+
+        return jsonify({"ok": False, "error": "Result not found"}), 404
+    except Exception as e:
+        log.error(f"/api/races/{race_uid}/results failed: {e}")
+        return jsonify({"ok": False, "error": "Could not retrieve results"}), 500
+
+
 @race_bp.route("/<race_uid>/refresh", methods=["POST"])
 def refresh_race(race_uid: str):
     """
