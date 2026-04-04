@@ -59,9 +59,9 @@ def auto_tag_loss(bet, race_scored, result):
 
 def save_etg_tag(bet_id, race_uid, tag, notes=None, manual=False):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("etg_tags").insert({
+        db.table(T("etg_tags")).insert({
             "bet_id": str(bet_id),
             "race_uid": race_uid,
             "error_tag": tag,
@@ -79,9 +79,9 @@ def save_etg_tag(bet_id, race_uid, tag, notes=None, manual=False):
 # ----------------------------------------------------------------
 def save_epr_entry(bet, result, pl, scored):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("epr_data").insert({
+        db.table(T("epr_data")).insert({
             "edge_type": scored.get("edge_type", "STRUCTURAL") if scored else "UNKNOWN",
             "code": bet.get("code", "GREYHOUND"),
             "track": bet.get("track"),
@@ -100,9 +100,9 @@ def save_epr_entry(bet, result, pl, scored):
 
 def get_epr_summary():
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        rows = db.table("epr_data").select("*").execute().data or []
+        rows = db.table(T("epr_data")).select("*").execute().data or []
         summary = {}
         for r in rows:
             et = r.get("edge_type", "UNKNOWN")
@@ -161,9 +161,9 @@ def aeee_review():
 
 def save_aeee_suggestion(suggestion):
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("aeee_adjustments").insert({
+        db.table(T("aeee_adjustments")).insert({
             "edge_type": suggestion["edge_type"],
             "direction": suggestion["direction"],
             "amount": suggestion["amount"],
@@ -181,9 +181,9 @@ def save_aeee_suggestion(suggestion):
 def promote_aeee(suggestion_id):
     """Feature 29 - promotion gate. User must approve before anything goes live."""
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("aeee_adjustments").update({
+        db.table(T("aeee_adjustments")).update({
             "promoted": True,
             "applied": True,
         }).eq("id", suggestion_id).execute()
@@ -201,9 +201,9 @@ def gpil_review():
     Minimum 10 results required.
     """
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        rows = db.table("epr_data").select("track, code, result, pl, confidence_tier").execute().data or []
+        rows = db.table(T("epr_data")).select("track, code, result, pl, confidence_tier").execute().data or []
         if len(rows) < 10:
             return {"status": "INSUFFICIENT", "message": f"Need 10+ results, have {len(rows)}"}
 
@@ -239,9 +239,9 @@ def gpil_review():
 def log_pass_decision(race_uid, pass_reason, scored):
     """Log why a race was passed for later review."""
     try:
-        from db import get_db
+        from db import get_db, T
         db = get_db()
-        db.table("pass_log").upsert({
+        db.table(T("pass_log")).upsert({
             "race_uid": race_uid,
             "pass_reason": pass_reason,
             "local_decision": scored.get("decision") if scored else "PASS",
