@@ -6,12 +6,17 @@ OddsPro is the authoritative source of record for DemonPulse.
 Documented base URL: https://oddspro.com.au  (set as ODDSPRO_BASE_URL)
 
 Endpoints used (full documented paths):
-  GET /api/external/meetings          - daily bootstrap (list today's meetings)
-  GET /api/external/meeting/:meetingId - meeting refresh + races + runners
-  GET /api/external/race/:raceId      - single race refresh + runners
-  GET /api/external/results           - day-level result sweep
-  GET /api/external/tracks            - optional track support only
-  GET /api/races/:id/results          - single-race official results (NOT under /external)
+  GET /api/external/meetings              - daily bootstrap (list today's meetings)
+  GET /api/external/meeting/:meetingId    - meeting refresh + races + runners
+  GET /api/external/race/:raceId          - single race refresh + runners
+  GET /api/external/results               - day-level result sweep
+  GET /api/external/tracks                - optional track support only
+  GET /api/races/:id/results              - single-race official results (NOT under /external)
+  GET /api/external/top-favs             - shortest-priced favorites across all bookmakers
+  GET /api/external/leaderboard          - bookmaker performance statistics
+  GET /api/external/movers               - top price shortenings (significant drops)
+  GET /api/external/movers/track/:track  - track-specific price shortenings
+  GET /api/external/drifters             - top price drifters (price increases)
 
 Standard response shape for external endpoints:
   {"data": [...], "meta": {...}}
@@ -858,6 +863,227 @@ class OddsProConnector:
         except Exception as e:
             log.warning(f"OddsPro fetch_tracks failed (non-critical): {e}")
             return []
+
+    def fetch_top_favs(
+        self,
+        type_: str | None = None,
+        location: str | None = None,
+        date: str | None = None,
+        track: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        GET /api/external/top-favs
+        Shortest-priced favorites across all bookmakers.
+
+        Parameters:
+          type_     - race type filter: T, H, G, all
+          location  - domestic, international, all
+          date      - YYYY-MM-DD
+          track     - track name filter
+          limit     - number of results (default: 10)
+
+        Response shape: {"data": [...], "meta": {...}}
+        Returns the raw list of favorite runner dicts from the "data" key.
+        """
+        params: dict[str, Any] = {}
+        if type_:
+            params["type"] = type_
+        if location:
+            params["location"] = location
+        if date:
+            params["date"] = date
+        if track:
+            params["track"] = track
+        if limit is not None:
+            params["limit"] = limit
+
+        try:
+            resp = self._get("/api/external/top-favs", params=params)
+            payload = resp.json()
+        except Exception as e:
+            log.error(f"OddsPro fetch_top_favs failed: {e}")
+            return []
+
+        if isinstance(payload, dict):
+            return payload.get("data") or []
+        return payload if isinstance(payload, list) else []
+
+    def fetch_leaderboard(
+        self,
+        type_: str | None = None,
+        location: str | None = None,
+        date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        GET /api/external/leaderboard
+        Bookmaker performance statistics.
+
+        Parameters:
+          type_     - race type filter: T, H, G, all
+          location  - domestic, international, all
+          date      - YYYY-MM-DD
+
+        Response shape: {"data": [...], "meta": {...}}
+        Returns the raw list of bookmaker stat dicts from the "data" key.
+        """
+        params: dict[str, Any] = {}
+        if type_:
+            params["type"] = type_
+        if location:
+            params["location"] = location
+        if date:
+            params["date"] = date
+
+        try:
+            resp = self._get("/api/external/leaderboard", params=params)
+            payload = resp.json()
+        except Exception as e:
+            log.error(f"OddsPro fetch_leaderboard failed: {e}")
+            return []
+
+        if isinstance(payload, dict):
+            return payload.get("data") or []
+        return payload if isinstance(payload, list) else []
+
+    def fetch_movers(
+        self,
+        type_: str | None = None,
+        location: str | None = None,
+        track: str | None = None,
+        max_odds: float | None = None,
+        limit: int | None = None,
+        date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        GET /api/external/movers
+        Top price shortenings — runners with the largest percentage price drops.
+        Only returns runners with ≥5% price movement.
+
+        Parameters:
+          type_     - race type filter: T, H, G, all
+          location  - domestic, international, all
+          track     - filter by track name (e.g. "Flemington")
+          max_odds  - maximum current odds (e.g. 10 for $10)
+          limit     - number of results (default: 10)
+          date      - YYYY-MM-DD (default: today)
+
+        Response shape: {"data": [...], "meta": {...}}
+        Returns the raw list of mover dicts from the "data" key.
+        """
+        params: dict[str, Any] = {}
+        if type_:
+            params["type"] = type_
+        if location:
+            params["location"] = location
+        if track:
+            params["track"] = track
+        if max_odds is not None:
+            params["maxOdds"] = max_odds
+        if limit is not None:
+            params["limit"] = limit
+        if date:
+            params["date"] = date
+
+        try:
+            resp = self._get("/api/external/movers", params=params)
+            payload = resp.json()
+        except Exception as e:
+            log.error(f"OddsPro fetch_movers failed: {e}")
+            return []
+
+        if isinstance(payload, dict):
+            return payload.get("data") or []
+        return payload if isinstance(payload, list) else []
+
+    def fetch_movers_by_track(
+        self,
+        track: str,
+        type_: str | None = None,
+        max_odds: float | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        GET /api/external/movers/track/:track
+        Price shortenings filtered to a specific racing track.
+
+        Parameters:
+          track     - required track name (e.g. "Flemington", "Randwick")
+          type_     - race type filter: T, H, G, all
+          max_odds  - maximum current odds
+          limit     - number of results (default: 10)
+
+        Response shape: {"data": [...], "meta": {...}}
+        Returns the raw list of mover dicts from the "data" key.
+        """
+        params: dict[str, Any] = {}
+        if type_:
+            params["type"] = type_
+        if max_odds is not None:
+            params["maxOdds"] = max_odds
+        if limit is not None:
+            params["limit"] = limit
+
+        try:
+            resp = self._get(f"/api/external/movers/track/{track}", params=params)
+            payload = resp.json()
+        except Exception as e:
+            log.error(f"OddsPro fetch_movers_by_track({track!r}) failed: {e}")
+            return []
+
+        if isinstance(payload, dict):
+            return payload.get("data") or []
+        return payload if isinstance(payload, list) else []
+
+    def fetch_drifters(
+        self,
+        type_: str | None = None,
+        location: str | None = None,
+        track: str | None = None,
+        max_odds: float | None = None,
+        min_movement: float | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        GET /api/external/drifters
+        Runners with significant price increases (drifting odds).
+        Default minimum movement is 5%.
+
+        Parameters:
+          type_         - race type filter: T, H, G, all
+          location      - domestic, international, all
+          track         - filter by track name
+          max_odds      - maximum current odds (e.g. 10)
+          min_movement  - minimum drift % (default: 5)
+          limit         - number of results (default: 10)
+
+        Response shape: {"data": [...], "meta": {...}}
+        Returns the raw list of drifter dicts from the "data" key.
+        """
+        params: dict[str, Any] = {}
+        if type_:
+            params["type"] = type_
+        if location:
+            params["location"] = location
+        if track:
+            params["track"] = track
+        if max_odds is not None:
+            params["maxOdds"] = max_odds
+        if min_movement is not None:
+            params["minMovement"] = min_movement
+        if limit is not None:
+            params["limit"] = limit
+
+        try:
+            resp = self._get("/api/external/drifters", params=params)
+            payload = resp.json()
+        except Exception as e:
+            log.error(f"OddsPro fetch_drifters failed: {e}")
+            return []
+
+        if isinstance(payload, dict):
+            return payload.get("data") or []
+        return payload if isinstance(payload, list) else []
 
     # -----------------------------------------------------------------------
     # INTERNAL HELPERS

@@ -17,11 +17,13 @@ try:
     from api.board_routes import board_bp
     from api.admin_routes import admin_bp
     from api.prediction_routes import prediction_bp
+    from api.market_routes import market_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(race_bp)
     app.register_blueprint(board_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(prediction_bp)
+    app.register_blueprint(market_bp)
     log.info("API blueprints registered")
 except Exception as _bp_err:
     log.warning(f"Blueprint registration failed: {_bp_err}")
