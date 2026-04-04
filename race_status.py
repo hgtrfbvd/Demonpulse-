@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
 
-# AEST timezone — all time-only jump_time values are assumed local Australian time
+# Australian Eastern timezone — handles both AEST (UTC+10) and AEDT (UTC+11, DST)
 _AEST = ZoneInfo("Australia/Sydney")
 
 # NTJ threshold windows in seconds

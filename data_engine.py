@@ -290,8 +290,9 @@ def _store_with_pipeline(race: Any) -> None:
       3. Integrity  (if blocked, mark before storing)
       4. Store
 
-    Blocked races are stored with status='blocked' so they are tracked
-    explicitly rather than silently dropped.
+    Board building (step 5) happens separately in board_builder.py using
+    the stored records. Blocked races are stored with status='blocked' so
+    they are tracked explicitly rather than silently dropped.
     """
     try:
         from database import upsert_race
