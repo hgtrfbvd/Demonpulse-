@@ -29,20 +29,27 @@ _lock = threading.Lock()
 _state: dict[str, Any] = {
     "last_bootstrap_at": None,
     "last_bootstrap_ok": None,
+    "last_bootstrap_error": None,
+    "last_bootstrap_count": 0,
     "last_broad_refresh_at": None,
     "last_broad_refresh_ok": None,
     "last_broad_refresh_races": 0,
+    "last_broad_refresh_error": None,
     "last_near_jump_refresh_at": None,
     "last_near_jump_refresh_ok": None,
     "last_near_jump_refresh_races": 0,
+    "last_near_jump_refresh_error": None,
     "last_result_check_at": None,
     "last_result_check_ok": None,
+    "last_result_check_error": None,
+    "result_confirmation_count": 0,
     "last_formfav_overlay_at": None,
     "last_formfav_overlay_ok": None,
     "last_health_snapshot_at": None,
     "blocked_race_count": 0,
     "stale_race_count": 0,
-    "result_confirmation_count": 0,
+    "board_count": 0,
+    "stored_race_count_today": 0,
     # Phase 3 — intelligence layer
     "last_prediction_run_at": None,
     "last_prediction_run_count": 0,
@@ -70,40 +77,53 @@ _state: dict[str, Any] = {
 # RECORD HELPERS — called by scheduler and services
 # ---------------------------------------------------------------------------
 
+def record_board_rebuild(*, count: int = 0) -> None:
+    """Record the result of a board rebuild."""
+    _update(board_count=count)
+    log.debug(f"health_service: board_rebuild recorded count={count}")
+
+
 def record_bootstrap(*, ok: bool, result: dict[str, Any] | None = None) -> None:
     """Record the result of a full bootstrap sweep."""
+    r = result or {}
+    error_msg = None if ok else (r.get("error") or r.get("reason") or "bootstrap_failed")
     _update(
         last_bootstrap_at=_now(),
         last_bootstrap_ok=ok,
+        last_bootstrap_error=error_msg,
+        last_bootstrap_count=r.get("races", 0) if ok else 0,
     )
-    log.debug(f"health_service: bootstrap recorded ok={ok}")
+    log.debug(f"health_service: bootstrap recorded ok={ok} count={r.get('races', 0)} error={error_msg}")
 
 
-def record_broad_refresh(*, ok: bool, races_refreshed: int = 0) -> None:
+def record_broad_refresh(*, ok: bool, races_refreshed: int = 0, error: str | None = None) -> None:
     """Record the result of a broad OddsPro refresh cycle."""
     _update(
         last_broad_refresh_at=_now(),
         last_broad_refresh_ok=ok,
         last_broad_refresh_races=races_refreshed,
+        last_broad_refresh_error=error if not ok else None,
     )
     log.debug(f"health_service: broad_refresh recorded ok={ok} races={races_refreshed}")
 
 
-def record_near_jump_refresh(*, ok: bool, races: int = 0) -> None:
+def record_near_jump_refresh(*, ok: bool, races: int = 0, error: str | None = None) -> None:
     """Record the result of a near-jump refresh cycle."""
     _update(
         last_near_jump_refresh_at=_now(),
         last_near_jump_refresh_ok=ok,
         last_near_jump_refresh_races=races,
+        last_near_jump_refresh_error=error if not ok else None,
     )
     log.debug(f"health_service: near_jump_refresh recorded ok={ok} races={races}")
 
 
-def record_result_check(*, ok: bool, confirmations: int = 0) -> None:
+def record_result_check(*, ok: bool, confirmations: int = 0, error: str | None = None) -> None:
     """Record the result of a result check cycle."""
     _update(
         last_result_check_at=_now(),
         last_result_check_ok=ok,
+        last_result_check_error=error if not ok else None,
     )
     if ok and confirmations > 0:
         with _lock:
@@ -240,6 +260,7 @@ def update_snapshot(
     *,
     blocked: int = 0,
     stale: int = 0,
+    stored_today: int = 0,
     confirmations: int | None = None,
 ) -> None:
     """
@@ -250,12 +271,13 @@ def update_snapshot(
         "last_health_snapshot_at": _now(),
         "blocked_race_count": blocked,
         "stale_race_count": stale,
+        "stored_race_count_today": stored_today,
     }
     if confirmations is not None:
         updates["result_confirmation_count"] = confirmations
     _update(**updates)
     log.debug(
-        f"health_service: snapshot updated blocked={blocked} stale={stale}"
+        f"health_service: snapshot updated blocked={blocked} stale={stale} stored={stored_today}"
     )
 
 

@@ -49,6 +49,7 @@ def build_board(
     seen_uids: set[str] = set()
     blocked_count = 0
     rejected_count = 0
+    settled_count = 0
 
     for race in races:
         race_uid = race.get("race_uid") or ""
@@ -59,6 +60,7 @@ def build_board(
 
         # Skip settled races
         if not is_race_live(race):
+            settled_count += 1
             continue
 
         # Compute NTJ from stored jump_time (needed for filter and sort)
@@ -98,10 +100,29 @@ def build_board(
         x.get("seconds_to_jump") if x.get("seconds_to_jump") is not None else 999999,
     ))
 
-    log.info(
-        f"board_builder: {len(board)} races on board "
-        f"(blocked={blocked_count}, rejected={rejected_count})"
-    )
+    if not board:
+        reasons = []
+        if not races:
+            reasons.append("no_races_in_db")
+        if settled_count:
+            reasons.append(f"settled={settled_count}")
+        if blocked_count:
+            reasons.append(f"blocked={blocked_count}")
+        if rejected_count:
+            reasons.append(f"validation_rejected={rejected_count}")
+        log.warning(
+            f"board_builder: board is EMPTY — "
+            f"input={len(races)} settled={settled_count} "
+            f"blocked={blocked_count} rejected={rejected_count} "
+            f"reasons=[{', '.join(reasons) or 'unknown'}]"
+        )
+    else:
+        log.info(
+            f"board_builder: {len(board)} races on board "
+            f"(input={len(races)} settled={settled_count} "
+            f"blocked={blocked_count} rejected={rejected_count})"
+        )
+
     return board
 
 
@@ -156,9 +177,11 @@ def get_board_for_today(
     automatically from the in-memory store in data_engine.
     """
     try:
-        from database import get_active_races
+        from database import get_active_races, get_races_for_date, get_blocked_races
         today = date.today().isoformat()
         races = get_active_races(today)
+        all_today = get_races_for_date(today)
+        blocked_today = get_blocked_races(today)
 
         # Auto-load provisional overlays if not provided by caller
         if formfav_overlays is None:
@@ -173,7 +196,28 @@ def get_board_for_today(
             blocked_tracks=blocked_tracks,
             formfav_overlays=formfav_overlays,
         )
-        return {"ok": True, "items": board, "count": len(board), "date": today}
+
+        diagnostics: dict[str, Any] = {
+            "stored_race_count_today": len(all_today),
+            "active_race_count": len(races),
+            "blocked_race_count": len(blocked_today),
+        }
+
+        if not board:
+            if not all_today:
+                diagnostics["empty_reason"] = "no_races_stored_today"
+            elif not races:
+                diagnostics["empty_reason"] = "no_active_races_all_blocked_or_settled"
+            else:
+                diagnostics["empty_reason"] = "all_active_races_failed_board_gate"
+
+        return {
+            "ok": True,
+            "items": board,
+            "count": len(board),
+            "date": today,
+            "diagnostics": diagnostics,
+        }
     except Exception as e:
         log.error(f"board_builder: get_board_for_today failed: {e}")
         return {"ok": False, "items": [], "count": 0, "error": "Board unavailable"}

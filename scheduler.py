@@ -111,6 +111,7 @@ def _run_full_sweep():
     log.info("Running initial full sweep...")
     result = full_sweep()
     ok = result.get("ok", False)
+    error_msg = None if ok else (result.get("error") or result.get("reason") or "full_sweep_not_ok")
     if ok:
         log.info(f"Initial sweep complete: {result}")
     else:
@@ -119,7 +120,7 @@ def _run_full_sweep():
     _set_status(
         last_full_sweep_at=_utc_now(),
         last_full_sweep_result=result,
-        last_error=None if ok else (result.get("error") or result.get("reason") or "full_sweep_not_ok"),
+        last_error=error_msg,
     )
 
     # Update health service
@@ -156,7 +157,11 @@ def _run_refresh():
 
         try:
             from services.health_service import record_broad_refresh
-            record_broad_refresh(ok=ok, races_refreshed=result.get("races_refreshed", 0))
+            record_broad_refresh(
+                ok=ok,
+                races_refreshed=result.get("races_refreshed", 0),
+                error=result.get("error") or result.get("reason") if not ok else None,
+            )
         except Exception:
             pass
 
@@ -191,7 +196,11 @@ def _run_near_jump():
 
         try:
             from services.health_service import record_near_jump_refresh, record_formfav_overlay
-            record_near_jump_refresh(ok=ok, races=result.get("near_jump_races", 0))
+            record_near_jump_refresh(
+                ok=ok,
+                races=result.get("near_jump_races", 0),
+                error=result.get("error") or result.get("reason") if not ok else None,
+            )
             if result.get("formfav_overlays", 0) > 0:
                 record_formfav_overlay(ok=True)
         except Exception:
@@ -233,7 +242,11 @@ def _run_result_check():
 
         try:
             from services.health_service import record_result_check
-            record_result_check(ok=ok, confirmations=result.get("results_written", 0))
+            record_result_check(
+                ok=ok,
+                confirmations=result.get("results_written", 0),
+                error=result.get("error") or result.get("reason") if not ok else None,
+            )
         except Exception:
             pass
 
@@ -282,21 +295,26 @@ def _run_health_snapshot():
     """Aggregate health metrics from stored data."""
     try:
         today = date.today().isoformat()
-        from database import get_blocked_races, get_active_races
+        from database import get_blocked_races, get_active_races, get_races_for_date
         from race_status import STATUS_STALE_UNKNOWN
 
+        all_today = get_races_for_date(today)
         blocked = get_blocked_races(today)
         active = get_active_races(today)
         stale = [r for r in active if (r.get("status") or "") == STATUS_STALE_UNKNOWN]
 
         try:
             from services.health_service import update_snapshot
-            update_snapshot(blocked=len(blocked), stale=len(stale))
+            update_snapshot(
+                blocked=len(blocked),
+                stale=len(stale),
+                stored_today=len(all_today),
+            )
         except Exception:
             pass
 
         _set_status(last_health_snapshot_at=_utc_now())
-        log.debug(f"scheduler: health snapshot: blocked={len(blocked)} stale={len(stale)}")
+        log.debug(f"scheduler: health snapshot: blocked={len(blocked)} stale={len(stale)} stored={len(all_today)}")
     except Exception as e:
         log.error(f"Health snapshot failed: {e}")
 
@@ -309,8 +327,14 @@ def _trigger_board_rebuild():
     """Trigger a board rebuild from stored validated data."""
     try:
         from board_builder import get_board_for_today
-        get_board_for_today()
-        log.debug("scheduler: board rebuilt")
+        result = get_board_for_today()
+        count = result.get("count", 0)
+        try:
+            from services.health_service import record_board_rebuild
+            record_board_rebuild(count=count)
+        except Exception:
+            pass
+        log.debug(f"scheduler: board rebuilt count={count}")
     except Exception as e:
         log.error(f"scheduler: board rebuild failed: {e}")
 

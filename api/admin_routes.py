@@ -7,6 +7,7 @@ and running migrations. Protected by auth in production.
 from __future__ import annotations
 
 import logging
+import os
 from flask import Blueprint, jsonify, request
 
 log = logging.getLogger(__name__)
@@ -271,3 +272,351 @@ def run_all_migrations():
     except Exception as e:
         log.error(f"/api/admin/migrate-all failed: {e}")
         return jsonify({"ok": False, "error": "Full migration failed"}), 500
+
+
+# ---------------------------------------------------------------------------
+# PHASE 4.7 — OPERATIONS / EXECUTION ROUTES (GET aliases for browser testing)
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/bootstrap-day", methods=["GET", "POST"])
+def admin_bootstrap_day():
+    """
+    Trigger a full OddsPro daily bootstrap sweep.
+    GET is provided for easy browser testing; POST is also accepted.
+    Calls: data_engine.full_sweep()
+    """
+    try:
+        from data_engine import full_sweep
+        from datetime import date
+        from services.health_service import record_bootstrap
+
+        target_date = date.today().isoformat()
+        result = full_sweep(target_date)
+        ok = result.get("ok", False)
+
+        try:
+            record_bootstrap(ok=ok, result=result)
+        except Exception:
+            pass
+
+        # Rebuild board after successful bootstrap
+        if ok:
+            try:
+                from board_builder import get_board_for_today
+                board = get_board_for_today()
+                result["board_count"] = board.get("count", 0)
+                result["board_diagnostics"] = board.get("diagnostics", {})
+                from services.health_service import record_board_rebuild
+                record_board_rebuild(count=board.get("count", 0))
+            except Exception as be:
+                log.warning(f"admin/bootstrap-day: board rebuild failed: {be}")
+
+        return jsonify({
+            "ok": ok,
+            "action": "bootstrap-day",
+            "date": target_date,
+            "meetings": result.get("meetings", 0),
+            "races_stored": result.get("races", 0),
+            "races_passed": result.get("races_passed", 0),
+            "races_blocked": result.get("races_blocked", 0),
+            "board_count": result.get("board_count"),
+            "board_diagnostics": result.get("board_diagnostics"),
+            "error": result.get("error") or result.get("reason") if not ok else None,
+            "timestamp": result.get("timestamp"),
+        })
+    except Exception as e:
+        log.error(f"/api/admin/bootstrap-day failed: {e}")
+        return jsonify({"ok": False, "action": "bootstrap-day", "error": "Bootstrap failed"}), 500
+
+
+@admin_bp.route("/run-cycle", methods=["GET", "POST"])
+def admin_run_cycle():
+    """
+    Trigger a broad OddsPro rolling refresh cycle.
+    GET is provided for easy browser testing; POST is also accepted.
+    Calls: data_engine.rolling_refresh()
+    """
+    try:
+        from data_engine import rolling_refresh
+        from datetime import date
+        from services.health_service import record_broad_refresh
+
+        target_date = date.today().isoformat()
+        result = rolling_refresh(target_date)
+        ok = result.get("ok", False)
+
+        try:
+            record_broad_refresh(
+                ok=ok,
+                races_refreshed=result.get("races_refreshed", 0),
+                error=result.get("error") or result.get("reason") if not ok else None,
+            )
+        except Exception:
+            pass
+
+        # Rebuild board after refresh
+        board_count = None
+        if ok and result.get("races_refreshed", 0) > 0:
+            try:
+                from board_builder import get_board_for_today
+                board = get_board_for_today()
+                board_count = board.get("count", 0)
+                from services.health_service import record_board_rebuild
+                record_board_rebuild(count=board_count)
+            except Exception as be:
+                log.warning(f"admin/run-cycle: board rebuild failed: {be}")
+
+        return jsonify({
+            "ok": ok,
+            "action": "run-cycle",
+            "date": target_date,
+            "races_refreshed": result.get("races_refreshed", 0),
+            "formfav_overlays": result.get("formfav_overlays", 0),
+            "board_count": board_count,
+            "error": result.get("error") or result.get("reason") if not ok else None,
+            "timestamp": result.get("timestamp"),
+        })
+    except Exception as e:
+        log.error(f"/api/admin/run-cycle failed: {e}")
+        return jsonify({"ok": False, "action": "run-cycle", "error": "Cycle refresh failed"}), 500
+
+
+@admin_bp.route("/rebuild-board", methods=["GET", "POST"])
+def admin_rebuild_board():
+    """
+    Rebuild the racing board from stored validated races.
+    GET is provided for easy browser testing; POST is also accepted.
+    Calls: board_builder.get_board_for_today()
+    """
+    try:
+        from board_builder import get_board_for_today
+        from services.health_service import record_board_rebuild
+
+        result = get_board_for_today()
+        ok = result.get("ok", False)
+        count = result.get("count", 0)
+
+        try:
+            record_board_rebuild(count=count)
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": ok,
+            "action": "rebuild-board",
+            "board_count": count,
+            "date": result.get("date"),
+            "diagnostics": result.get("diagnostics", {}),
+            "error": result.get("error") if not ok else None,
+        })
+    except Exception as e:
+        log.error(f"/api/admin/rebuild-board failed: {e}")
+        return jsonify({"ok": False, "action": "rebuild-board", "error": "Board rebuild failed"}), 500
+
+
+@admin_bp.route("/near-jump-refresh", methods=["GET", "POST"])
+def admin_near_jump_refresh():
+    """
+    Trigger a near-jump OddsPro refresh + FormFav provisional overlay cycle.
+    GET is provided for easy browser testing; POST is also accepted.
+    Calls: data_engine.near_jump_refresh()
+    """
+    try:
+        from data_engine import near_jump_refresh
+        from datetime import date
+        from services.health_service import record_near_jump_refresh, record_formfav_overlay
+
+        target_date = date.today().isoformat()
+        result = near_jump_refresh(target_date)
+        ok = result.get("ok", False)
+
+        try:
+            record_near_jump_refresh(
+                ok=ok,
+                races=result.get("near_jump_races", 0),
+                error=result.get("error") or result.get("reason") if not ok else None,
+            )
+            if result.get("formfav_overlays", 0) > 0:
+                record_formfav_overlay(ok=True)
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": ok,
+            "action": "near-jump-refresh",
+            "date": target_date,
+            "near_jump_races": result.get("near_jump_races", 0),
+            "races_refreshed": result.get("races_refreshed", 0),
+            "formfav_overlays": result.get("formfav_overlays", 0),
+            "error": result.get("error") or result.get("reason") if not ok else None,
+            "timestamp": result.get("timestamp"),
+        })
+    except Exception as e:
+        log.error(f"/api/admin/near-jump-refresh failed: {e}")
+        return jsonify({"ok": False, "action": "near-jump-refresh", "error": "Near-jump refresh failed"}), 500
+
+
+@admin_bp.route("/check-results", methods=["GET", "POST"])
+def admin_check_results():
+    """
+    Trigger an OddsPro result sweep for today.
+    GET is provided for easy browser testing; POST is also accepted.
+    Calls: data_engine.check_results()
+    """
+    try:
+        from data_engine import check_results
+        from datetime import date
+        from services.health_service import record_result_check
+
+        target_date = date.today().isoformat()
+        result = check_results(target_date)
+        ok = result.get("ok", False)
+
+        try:
+            record_result_check(
+                ok=ok,
+                confirmations=result.get("results_written", 0),
+                error=result.get("error") or result.get("reason") if not ok else None,
+            )
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": ok,
+            "action": "check-results",
+            "date": target_date,
+            "results_written": result.get("results_written", 0),
+            "results_skipped": result.get("results_skipped", 0),
+            "error": result.get("error") or result.get("reason") if not ok else None,
+            "timestamp": result.get("timestamp"),
+        })
+    except Exception as e:
+        log.error(f"/api/admin/check-results failed: {e}")
+        return jsonify({"ok": False, "action": "check-results", "error": "Result check failed"}), 500
+
+
+@admin_bp.route("/engine-status", methods=["GET"])
+def admin_engine_status():
+    """
+    Comprehensive live engine status including health metrics, scheduler state,
+    connector configuration, and board/race counts.
+    Calls: services.health_service.get_health(), scheduler.get_status()
+    """
+    try:
+        from datetime import date
+        from env import env
+
+        health: dict = {}
+        scheduler_status: dict = {}
+
+        try:
+            from services.health_service import get_health, is_engine_healthy
+            health = get_health()
+            engine_ok = is_engine_healthy()
+        except Exception as he:
+            log.error(f"engine-status: health_service unavailable: {he}")
+            engine_ok = False
+            health = {}
+
+        try:
+            from scheduler import get_status
+            scheduler_status = get_status()
+        except Exception as se:
+            log.error(f"engine-status: scheduler unavailable: {se}")
+            scheduler_status = {}
+
+        # Board count from health state or live query
+        board_count = health.get("board_count", 0)
+        stored_today = health.get("stored_race_count_today", 0)
+        blocked_count = health.get("blocked_race_count", 0)
+        stale_count = health.get("stale_race_count", 0)
+
+        # Try to get live counts from DB
+        try:
+            today = date.today().isoformat()
+            from database import get_races_for_date, get_blocked_races
+            all_races = get_races_for_date(today)
+            blocked_races = get_blocked_races(today)
+            stored_today = len(all_races)
+            blocked_count = len(blocked_races)
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": engine_ok,
+            "action": "engine-status",
+            "app_mode": env.mode,
+            "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true") == "true",
+            "scheduler": {
+                "running": scheduler_status.get("running", False),
+                "thread_alive": scheduler_status.get("thread_alive", False),
+                "started_at": scheduler_status.get("started_at"),
+                "last_loop_at": scheduler_status.get("last_loop_at"),
+                "last_full_sweep_at": scheduler_status.get("last_full_sweep_at"),
+                "last_error": scheduler_status.get("last_error"),
+            },
+            "primary_source": "oddspro",
+            "overlay_source": "formfav (provisional only)",
+            # Bootstrap
+            "last_bootstrap_at": health.get("last_bootstrap_at"),
+            "last_bootstrap_ok": health.get("last_bootstrap_ok"),
+            "last_bootstrap_error": health.get("last_bootstrap_error"),
+            "last_bootstrap_count": health.get("last_bootstrap_count", 0),
+            # Broad refresh
+            "last_broad_refresh_at": health.get("last_broad_refresh_at"),
+            "last_broad_refresh_ok": health.get("last_broad_refresh_ok"),
+            "last_broad_refresh_races": health.get("last_broad_refresh_races", 0),
+            "last_broad_refresh_error": health.get("last_broad_refresh_error"),
+            # Near-jump refresh
+            "last_near_jump_refresh_at": health.get("last_near_jump_refresh_at"),
+            "last_near_jump_refresh_ok": health.get("last_near_jump_refresh_ok"),
+            "last_near_jump_refresh_races": health.get("last_near_jump_refresh_races", 0),
+            "last_near_jump_refresh_error": health.get("last_near_jump_refresh_error"),
+            # Result check
+            "last_result_check_at": health.get("last_result_check_at"),
+            "last_result_check_ok": health.get("last_result_check_ok"),
+            "last_result_check_error": health.get("last_result_check_error"),
+            "result_confirmation_count": health.get("result_confirmation_count", 0),
+            # Counts
+            "board_count": board_count,
+            "stored_race_count_today": stored_today,
+            "blocked_race_count": blocked_count,
+            "stale_race_count": stale_count,
+        })
+    except Exception as e:
+        log.error(f"/api/admin/engine-status failed: {e}")
+        return jsonify({"ok": False, "action": "engine-status", "error": "Engine status unavailable"}), 500
+
+
+@admin_bp.route("/routes", methods=["GET"])
+def admin_routes_list():
+    """
+    List important operational endpoints for fast browser testing and debugging.
+    """
+    return jsonify({
+        "ok": True,
+        "routes": [
+            {"method": "GET", "path": "/api/health", "description": "Basic liveness probe"},
+            {"method": "GET", "path": "/api/health/live", "description": "Live engine health metrics"},
+            {"method": "GET", "path": "/api/health/connectors", "description": "Connector health check"},
+            {"method": "GET", "path": "/api/health/scheduler", "description": "Scheduler status"},
+            {"method": "GET", "path": "/api/health/intelligence", "description": "Intelligence layer health"},
+            {"method": "GET", "path": "/api/board", "description": "Live racing board"},
+            {"method": "GET", "path": "/api/board/blocked", "description": "Blocked races today"},
+            {"method": "GET", "path": "/api/board/ntj", "description": "Next-to-jump races"},
+            {"method": "GET", "path": "/api/admin/bootstrap-day", "description": "Trigger full OddsPro daily bootstrap"},
+            {"method": "GET", "path": "/api/admin/run-cycle", "description": "Trigger broad OddsPro refresh"},
+            {"method": "GET", "path": "/api/admin/rebuild-board", "description": "Rebuild board from stored races"},
+            {"method": "GET", "path": "/api/admin/near-jump-refresh", "description": "Trigger near-jump refresh + FormFav overlay"},
+            {"method": "GET", "path": "/api/admin/check-results", "description": "Trigger OddsPro result sweep"},
+            {"method": "GET", "path": "/api/admin/engine-status", "description": "Comprehensive engine status"},
+            {"method": "GET", "path": "/api/admin/routes", "description": "This route list"},
+            {"method": "GET", "path": "/api/admin/scheduler", "description": "Scheduler status detail"},
+            {"method": "GET", "path": "/api/predictions/today", "description": "Today's predictions"},
+            {"method": "GET", "path": "/api/predictions/model-performance", "description": "Model performance metrics"},
+            {"method": "POST", "path": "/api/admin/sweep", "description": "POST: full OddsPro sweep (legacy)"},
+            {"method": "POST", "path": "/api/admin/refresh", "description": "POST: rolling refresh (legacy)"},
+            {"method": "POST", "path": "/api/admin/results", "description": "POST: result check (legacy)"},
+            {"method": "POST", "path": "/api/admin/migrate-all", "description": "Run all DB migrations"},
+        ],
+    })

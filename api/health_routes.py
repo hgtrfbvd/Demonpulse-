@@ -7,6 +7,7 @@ scheduler status, and data source health.
 from __future__ import annotations
 
 import logging
+import os
 from flask import Blueprint, jsonify
 
 from env import env
@@ -74,11 +75,51 @@ def health_live():
     try:
         from services.health_service import get_health, is_engine_healthy
         health = get_health()
+
+        scheduler_info: dict = {}
+        try:
+            from scheduler import get_status
+            s = get_status()
+            scheduler_info = {
+                "running": s.get("running", False),
+                "thread_alive": s.get("thread_alive", False),
+                "started_at": s.get("started_at"),
+            }
+        except Exception:
+            pass
+
         return jsonify({
             "ok": is_engine_healthy(),
-            "engine": health,
+            "app_mode": env.mode,
+            "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true") == "true",
+            "scheduler": scheduler_info,
             "primary_source": "oddspro",
             "overlay_source": "formfav (provisional only)",
+            # Bootstrap
+            "last_bootstrap_at": health.get("last_bootstrap_at"),
+            "last_bootstrap_ok": health.get("last_bootstrap_ok"),
+            "last_bootstrap_error": health.get("last_bootstrap_error"),
+            "last_bootstrap_count": health.get("last_bootstrap_count", 0),
+            # Broad refresh
+            "last_broad_refresh_at": health.get("last_broad_refresh_at"),
+            "last_broad_refresh_ok": health.get("last_broad_refresh_ok"),
+            "last_broad_refresh_races": health.get("last_broad_refresh_races", 0),
+            "last_broad_refresh_error": health.get("last_broad_refresh_error"),
+            # Near-jump
+            "last_near_jump_refresh_at": health.get("last_near_jump_refresh_at"),
+            "last_near_jump_refresh_ok": health.get("last_near_jump_refresh_ok"),
+            "last_near_jump_refresh_races": health.get("last_near_jump_refresh_races", 0),
+            "last_near_jump_refresh_error": health.get("last_near_jump_refresh_error"),
+            # Results
+            "last_result_check_at": health.get("last_result_check_at"),
+            "last_result_check_ok": health.get("last_result_check_ok"),
+            "last_result_check_error": health.get("last_result_check_error"),
+            "result_confirmation_count": health.get("result_confirmation_count", 0),
+            # Counts
+            "board_count": health.get("board_count", 0),
+            "stored_race_count_today": health.get("stored_race_count_today", 0),
+            "blocked_race_count": health.get("blocked_race_count", 0),
+            "stale_race_count": health.get("stale_race_count", 0),
         })
     except Exception as e:
         log.error(f"/api/health/live failed: {e}")
