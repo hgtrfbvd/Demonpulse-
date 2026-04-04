@@ -321,10 +321,15 @@ def _compute_closer_advantage(
     Score how much closers benefit from the current race shape.
     High pace density + high collapse risk = big closer advantage.
 
+    closing_delta sign convention (from sectionals_engine):
+        closing_delta = early_time - late_time
+        Positive value → runner's late section time is LOWER than early (faster)
+        This identifies genuine closers / accelerators.
+
     Gallops: late sectionals (closing_delta) are weighted more heavily,
     reflecting that gallops closers rely heavily on late acceleration.
     """
-    # Count runners with positive closing_delta (they finish faster than they start)
+    # closing_delta = early_time - late_time; positive → runner sped up late (closer)
     closers = [p for p in profiles if p.get("closing_delta", 0.0) > 0]
     closer_ratio = len(closers) / max(len(profiles), 1)
 

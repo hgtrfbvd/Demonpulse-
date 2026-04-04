@@ -186,14 +186,19 @@ def predict_from_snapshot_v2(
             "race_uid": race_uid,
         }
 
-    # Fallback to baseline_v1 if feature signals are too sparse
-    has_rich_features = any(
-        f.get("has_sectionals") or f.get("has_enrichment") or f.get("early_speed_score")
-        for f in features
+    # Fallback to baseline_v1 if feature signals are too sparse across the field.
+    # Require that a majority (>50%) of runners have at least one rich signal
+    # (sectionals or enrichment) to justify v2 scoring.
+    rich_count = sum(
+        1 for f in features
+        if f.get("has_sectionals") or f.get("has_enrichment") or f.get("early_speed_score")
     )
-    if not has_rich_features:
+    majority_threshold = max(1, len(features) // 2)
+    if rich_count < majority_threshold:
         log.warning(
-            f"predictor v2: features sparse for {race_uid} — falling back to baseline_v1"
+            f"predictor v2: features sparse for {race_uid} "
+            f"({rich_count}/{len(features)} runners with rich data) "
+            f"— falling back to baseline_v1"
         )
         scored = _baseline_score(features)
         effective_model = MODEL_VERSION
