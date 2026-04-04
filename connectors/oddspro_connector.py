@@ -253,6 +253,9 @@ class OddsProConnector:
         self.api_key = os.getenv("ODDSPRO_API_KEY", "").strip()
         self.timeout = int(os.getenv("ODDSPRO_TIMEOUT", "30"))
         self.country = os.getenv("ODDSPRO_COUNTRY", "au").strip().lower()
+        # Populated by fetch_meetings() on every call (success or failure).
+        # Holds HTTP request/response diagnostics for the most recent /meetings request.
+        self._last_fetch_diag: dict = {}
 
     def is_enabled(self) -> bool:
         """
@@ -313,7 +316,42 @@ class OddsProConnector:
             params["date"] = target_date
 
         url_requested = f"{self.base_url}/api/external/meetings"
-        resp = self._get("/api/external/meetings", params=params)
+
+        # Pre-request diagnostics — filled with known info before the request fires
+        self._last_fetch_diag = {
+            "final_url": url_requested,
+            "params": params,
+            "timeout": self.timeout,
+            "headers_sent": {},
+            "http_status": None,
+            "content_type": "",
+            "response_length": None,
+            "response_preview": "",
+            "redirected_url": "",
+        }
+
+        try:
+            resp = self._get("/api/external/meetings", params=params)
+        except requests.exceptions.HTTPError as http_err:
+            # Populate diagnostics from the failed response before re-raising
+            if http_err.response is not None:
+                er = http_err.response
+                req_headers: dict[str, str] = {}
+                if er.request and er.request.headers:
+                    req_headers = {
+                        k: ("[redacted]" if k.lower() in ("x-api-key", "authorization") else v)
+                        for k, v in er.request.headers.items()
+                    }
+                self._last_fetch_diag.update({
+                    "http_status": er.status_code,
+                    "content_type": er.headers.get("Content-Type", ""),
+                    "response_length": len(er.content),
+                    "response_preview": er.text[:300],
+                    "redirected_url": er.url if er.url != url_requested else "",
+                    "headers_sent": req_headers,
+                })
+            raise
+
         status_code = resp.status_code
 
         # --- Capture transport diagnostics ---
@@ -322,6 +360,22 @@ class OddsProConnector:
         raw_text = resp.text
         response_length = len(resp.content)
         response_preview = raw_text[:300]
+
+        # Update diagnostics with actual response details
+        req_headers_ok: dict[str, str] = {}
+        if resp.request and resp.request.headers:
+            req_headers_ok = {
+                k: ("[redacted]" if k.lower() in ("x-api-key", "authorization") else v)
+                for k, v in resp.request.headers.items()
+            }
+        self._last_fetch_diag.update({
+            "http_status": status_code,
+            "content_type": content_type,
+            "response_length": response_length,
+            "response_preview": response_preview,
+            "redirected_url": redirected_url,
+            "headers_sent": req_headers_ok,
+        })
 
         log.info(
             f"[ODDSPRO] meetings response — "

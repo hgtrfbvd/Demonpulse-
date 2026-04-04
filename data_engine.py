@@ -102,6 +102,14 @@ def _get_oddspro() -> "OddsProConnector":  # noqa: F821
     return _oddspro_connector
 
 
+def get_oddspro_connector() -> "OddsProConnector":  # noqa: F821
+    """
+    Return the OddsPro connector singleton.
+    Used by diagnostic routes to inspect _last_fetch_diag after full_sweep().
+    """
+    return _get_oddspro()
+
+
 def _get_formfav() -> "FormFavConnector":  # noqa: F821
     global _formfav_connector
     if _formfav_connector is None:
