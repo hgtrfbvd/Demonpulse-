@@ -75,22 +75,9 @@ CREATE TABLE IF NOT EXISTS today_races (
     UNIQUE (date, track, race_num, code)
 );
 
--- Ensure oddspro_race_id exists before creating an index on it.
--- This column was introduced in migration 006; earlier migrations (001-005)
--- do not define it, so we must backfill it before the index is created.
-ALTER TABLE today_races ADD COLUMN IF NOT EXISTS oddspro_race_id TEXT NOT NULL DEFAULT '';
-
--- Partial unique index on race_uid: legacy rows may carry race_uid = ''.
--- A full UNIQUE constraint would reject multiple empty-string rows, so we
--- use a partial index that only enforces uniqueness for non-empty values.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_today_races_race_uid ON today_races(race_uid) WHERE race_uid != '';
-CREATE INDEX IF NOT EXISTS idx_today_races_date         ON today_races(date);
-CREATE INDEX IF NOT EXISTS idx_today_races_status       ON today_races(status);
-CREATE INDEX IF NOT EXISTS idx_today_races_lifecycle    ON today_races(lifecycle_state);
-CREATE INDEX IF NOT EXISTS idx_today_races_track_race   ON today_races(track, race_num);
-CREATE INDEX IF NOT EXISTS idx_today_races_oddspro_id   ON today_races(oddspro_race_id);
-
--- Backfill any missing columns on today_races (safe on existing tables)
+-- Backfill any missing columns on today_races BEFORE creating indexes that
+-- reference them. On existing databases the CREATE TABLE above is skipped,
+-- so these columns must be guaranteed present before any index references them.
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS race_uid           TEXT        NOT NULL DEFAULT '';
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS oddspro_race_id    TEXT        NOT NULL DEFAULT '';
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS block_code         TEXT        NOT NULL DEFAULT '';
@@ -112,6 +99,16 @@ ALTER TABLE today_races ADD COLUMN IF NOT EXISTS ai_reviewed_at     TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS bet_logged_at      TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS result_captured_at TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS learned_at         TIMESTAMPTZ;
+
+-- Partial unique index on race_uid: legacy rows may carry race_uid = ''.
+-- A full UNIQUE constraint would reject multiple empty-string rows, so we
+-- use a partial index that only enforces uniqueness for non-empty values.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_today_races_race_uid ON today_races(race_uid) WHERE race_uid != '';
+CREATE INDEX IF NOT EXISTS idx_today_races_date         ON today_races(date);
+CREATE INDEX IF NOT EXISTS idx_today_races_status       ON today_races(status);
+CREATE INDEX IF NOT EXISTS idx_today_races_lifecycle    ON today_races(lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_today_races_track_race   ON today_races(track, race_num);
+CREATE INDEX IF NOT EXISTS idx_today_races_oddspro_id   ON today_races(oddspro_race_id);
 
 -- Ensure UNIQUE constraint on (date, track, race_num, code) for upserts.
 -- Detection is column-based (not name-based) so it is reliable regardless
@@ -173,13 +170,8 @@ CREATE TABLE IF NOT EXISTS today_runners (
     UNIQUE (race_id, box_num)
 );
 
-CREATE INDEX IF NOT EXISTS idx_today_runners_race_id    ON today_runners(race_id);
-CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid   ON today_runners(race_uid);
-CREATE INDEX IF NOT EXISTS idx_today_runners_name       ON today_runners(name);
-CREATE INDEX IF NOT EXISTS idx_today_runners_track_race ON today_runners(track, race_num);
-CREATE INDEX IF NOT EXISTS idx_today_runners_scratched  ON today_runners(scratched);
-
--- Backfill missing columns on today_runners
+-- Backfill missing columns on today_runners BEFORE creating indexes that
+-- reference them. On existing databases the CREATE TABLE above is skipped.
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS race_uid          TEXT        NOT NULL DEFAULT '';
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS oddspro_race_id   TEXT                 DEFAULT '';
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS number            INTEGER;
@@ -189,6 +181,12 @@ ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS driver            TEXT       
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS price             NUMERIC(10,4);
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS rating            NUMERIC(10,4);
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS source_confidence TEXT                 DEFAULT 'official';
+
+CREATE INDEX IF NOT EXISTS idx_today_runners_race_id    ON today_runners(race_id);
+CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid   ON today_runners(race_uid);
+CREATE INDEX IF NOT EXISTS idx_today_runners_name       ON today_runners(name);
+CREATE INDEX IF NOT EXISTS idx_today_runners_track_race ON today_runners(track, race_num);
+CREATE INDEX IF NOT EXISTS idx_today_runners_scratched  ON today_runners(scratched);
 
 -- ----------------------------------------------------------------
 -- results_log
@@ -214,11 +212,12 @@ CREATE TABLE IF NOT EXISTS results_log (
     UNIQUE (date, track, race_num, code)
 );
 
+-- Backfill missing columns on results_log BEFORE creating indexes that
+-- reference them. On existing databases the CREATE TABLE above is skipped.
+ALTER TABLE results_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_results_log_date_track_race ON results_log(date, track, race_num);
 CREATE INDEX IF NOT EXISTS idx_results_log_race_uid        ON results_log(race_uid);
-
--- Backfill missing columns on results_log
-ALTER TABLE results_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 -- Ensure (date, track, race_num, code) unique constraint exists for upserts.
 -- Detection is column-based (not name-based) so it is reliable regardless
@@ -266,11 +265,13 @@ CREATE TABLE IF NOT EXISTS race_status (
     UNIQUE (date, track, race_num, code)
 );
 
+-- Backfill missing columns on race_status BEFORE creating indexes that
+-- reference them. On existing databases the CREATE TABLE above is skipped.
+ALTER TABLE race_status ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_race_status_date       ON race_status(date);
 CREATE INDEX IF NOT EXISTS idx_race_status_track_race ON race_status(track, race_num);
 CREATE INDEX IF NOT EXISTS idx_race_status_race_uid   ON race_status(race_uid);
-
-ALTER TABLE race_status ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 
 -- ================================================================
@@ -494,16 +495,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at  TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill audit_log columns used by users.py log_event() BEFORE creating
+-- indexes that reference them. On existing databases the CREATE TABLE above
+-- is skipped, so event_type and severity must exist before index creation.
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS event_type TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS resource   TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS data       JSONB;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS severity   TEXT DEFAULT 'INFO';
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip         TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_audit_log_user_id    ON audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_severity   ON audit_log(severity);
-
--- Backfill audit_log columns used by users.py log_event()
-ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS resource TEXT;
-ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS data     JSONB;
-ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'INFO';
-ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip       TEXT;
 
 
 -- ================================================================
@@ -546,20 +550,22 @@ CREATE TABLE IF NOT EXISTS bet_log (
     settled_at              TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_bet_log_session_id ON bet_log(session_id);
-CREATE INDEX IF NOT EXISTS idx_bet_log_user_id    ON bet_log(user_id);
-CREATE INDEX IF NOT EXISTS idx_bet_log_race_uid   ON bet_log(race_uid);
-CREATE INDEX IF NOT EXISTS idx_bet_log_date       ON bet_log(date);
-CREATE INDEX IF NOT EXISTS idx_bet_log_result     ON bet_log(result);
-CREATE INDEX IF NOT EXISTS idx_bet_log_track_race ON bet_log(track, race_num);
-
--- Backfill bet_log columns
+-- Backfill bet_log columns BEFORE creating indexes that reference them.
+-- On existing databases the CREATE TABLE above is skipped, so user_id and
+-- race_uid must be present before the indexes below are created.
 ALTER TABLE bet_log ADD COLUMN IF NOT EXISTS user_id             UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE bet_log ADD COLUMN IF NOT EXISTS race_uid            TEXT DEFAULT '';
 ALTER TABLE bet_log ADD COLUMN IF NOT EXISTS manual_tag_override BOOLEAN DEFAULT FALSE;
 ALTER TABLE bet_log ADD COLUMN IF NOT EXISTS placed_by           TEXT;
 ALTER TABLE bet_log ADD COLUMN IF NOT EXISTS signal              TEXT;
 ALTER TABLE bet_log ADD COLUMN IF NOT EXISTS exotic_type         TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_bet_log_session_id ON bet_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_bet_log_user_id    ON bet_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_bet_log_race_uid   ON bet_log(race_uid);
+CREATE INDEX IF NOT EXISTS idx_bet_log_date       ON bet_log(date);
+CREATE INDEX IF NOT EXISTS idx_bet_log_result     ON bet_log(result);
+CREATE INDEX IF NOT EXISTS idx_bet_log_track_race ON bet_log(track, race_num);
 
 -- ----------------------------------------------------------------
 -- signals
@@ -780,13 +786,14 @@ CREATE TABLE IF NOT EXISTS backtest_run_items (
     created_at              TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill Phase 4 columns on backtest_run_items BEFORE creating indexes
+-- that reference them. On existing databases the CREATE TABLE above is skipped.
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS model_version        TEXT    DEFAULT 'baseline_v1';
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS used_stored_snapshot BOOLEAN DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_backtest_run_items_run_id  ON backtest_run_items(run_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_run_items_race_uid ON backtest_run_items(race_uid);
 CREATE INDEX IF NOT EXISTS idx_backtest_run_items_model   ON backtest_run_items(model_version);
-
--- Backfill Phase 4 columns on backtest_run_items
-ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS model_version        TEXT    DEFAULT 'baseline_v1';
-ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS used_stored_snapshot BOOLEAN DEFAULT FALSE;
 
 
 -- ================================================================
@@ -819,12 +826,13 @@ CREATE TABLE IF NOT EXISTS sectional_snapshots (
     created_at                  TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill Phase 4.5 source_type column BEFORE creating indexes that
+-- reference it. On existing databases the CREATE TABLE above is skipped.
+ALTER TABLE sectional_snapshots ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'pre_race';
+
 CREATE INDEX IF NOT EXISTS idx_sectional_snapshots_race_uid ON sectional_snapshots(race_uid);
 CREATE INDEX IF NOT EXISTS idx_sectional_snapshots_box      ON sectional_snapshots(race_uid, box_num);
 CREATE INDEX IF NOT EXISTS idx_sectional_snapshots_source_type ON sectional_snapshots(source_type);
-
--- Backfill Phase 4.5 source_type column
-ALTER TABLE sectional_snapshots ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'pre_race';
 
 -- ----------------------------------------------------------------
 -- race_shape_snapshots
@@ -877,14 +885,15 @@ CREATE TABLE IF NOT EXISTS epr_data (
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_epr_data_edge_type ON epr_data(edge_type);
-CREATE INDEX IF NOT EXISTS idx_epr_data_code      ON epr_data(code);
-CREATE INDEX IF NOT EXISTS idx_epr_data_date      ON epr_data(date);
-
--- Backfill any missing columns
+-- Backfill any missing columns on epr_data BEFORE creating indexes that
+-- reference them. On existing databases the CREATE TABLE above is skipped.
 ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS meeting_state TEXT;
 ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS condition     TEXT;
 ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS date         DATE DEFAULT CURRENT_DATE;
+
+CREATE INDEX IF NOT EXISTS idx_epr_data_edge_type ON epr_data(edge_type);
+CREATE INDEX IF NOT EXISTS idx_epr_data_code      ON epr_data(code);
+CREATE INDEX IF NOT EXISTS idx_epr_data_date      ON epr_data(date);
 
 -- ----------------------------------------------------------------
 -- aeee_adjustments
@@ -1395,18 +1404,29 @@ ON CONFLICT DO NOTHING;
 -- What was reconciled:
 --   today_races      — added block_code, source, oddspro_race_id,
 --                      condition, race_name, updated_at, completeness_*,
---                      lifecycle_state, all lifecycle timestamps
+--                      lifecycle_state, all lifecycle timestamps;
+--                      all backfills moved before their indexes
 --   today_runners    — added race_uid, oddspro_race_id, number, barrier,
---                      jockey, driver, price, rating, source_confidence
---   results_log      — ensured (date,track,race_num,code) unique constraint
+--                      jockey, driver, price, rating, source_confidence;
+--                      backfills moved before their indexes
+--   results_log      — ensured (date,track,race_num,code) unique constraint;
+--                      race_uid backfill moved before its index
+--   race_status      — race_uid backfill moved before its index
 --   prediction_snapshots — added has_enrichment, source_type (Phase 4.6)
 --   learning_evaluations — added used_enrichment, disagreement_score,
 --                          formfav_rank, your_rank (Phase 4.6)
 --   users            — added display_name, email, created_by, login_count,
 --                      last_ip, updated_at
---   bet_log          — added user_id, race_uid, placed_by, signal, exotic_type
+--   bet_log          — added user_id, race_uid, placed_by, signal, exotic_type;
+--                      backfills moved before their indexes
 --   source_log       — added call_num
---   audit_log        — ensured resource, data, severity, ip columns
+--   audit_log        — added event_type (was missing from backfill list),
+--                      resource, data, severity, ip; all backfills moved
+--                      before their indexes (fixes "column does not exist" on
+--                      existing databases)
+--   backtest_run_items — model_version backfill moved before its index
+--   sectional_snapshots — source_type backfill moved before its index
+--   epr_data         — date backfill moved before its index
 --   All Phase 3/4/4.5/4.6 intelligence tables fully defined
 --   All test_ mirror tables ensured for TEST mode isolation
 -- ================================================================
