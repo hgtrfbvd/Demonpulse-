@@ -438,16 +438,37 @@ def admin_bootstrap_day():
 
     # 6. EXTRACTION
     meetings_found = result.get("meetings_found", result.get("meetings", 0))
+    meeting_ids_found = result.get("meeting_ids_found", 0)
+    meeting_ids_missing = result.get("meeting_ids_missing", 0)
+    meeting_details_attempted = result.get("meeting_details_attempted", 0)
+    meeting_details_succeeded = result.get("meeting_details_succeeded", 0)
+    meeting_details_failed = result.get("meeting_details_failed", 0)
     races_found = result.get("races_found", 0)
     runners_found = result.get("runners_found", 0)
+    discovery_failed = result.get("discovery_failed", False)
+    discovery_diag = result.get("discovery_diag") or {}
+    first_detail_error = result.get("first_detail_error") or {}
     extraction_diag = {
         "meetings_found": meetings_found,
+        "meeting_ids_found": meeting_ids_found,
+        "meeting_ids_missing": meeting_ids_missing,
+        "meeting_details_attempted": meeting_details_attempted,
+        "meeting_details_succeeded": meeting_details_succeeded,
+        "meeting_details_failed": meeting_details_failed,
         "races_found": races_found,
         "runners_found": runners_found,
         "parse_stage_failed": result.get("parse_stage") if not ok else None,
+        "discovery_failed": discovery_failed,
+        "discovery_diag": discovery_diag if discovery_failed else None,
+        "first_detail_error": first_detail_error if first_detail_error else None,
     }
     if not failing_stage and ok and meetings_found > 0 and races_found == 0:
-        failing_stage = "extraction"
+        if discovery_failed:
+            failing_stage = "discovery"
+        elif meeting_details_failed > 0 and meeting_details_succeeded == 0:
+            failing_stage = "meeting_detail_fetch"
+        else:
+            failing_stage = "extraction"
 
     # 7. VALIDATION / FILTER
     # In full_sweep(), races_stored counts every race processed (including blocked ones).

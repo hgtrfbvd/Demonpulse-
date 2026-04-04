@@ -269,6 +269,12 @@ class OddsProConnector:
         # Populated by fetch_meetings() on every call (success or failure).
         # Holds HTTP request/response diagnostics for the most recent /meetings request.
         self._last_fetch_diag: dict = {}
+        # Populated by fetch_meetings_discovery() on every call (success or failure).
+        # Holds diagnostics for the most recent /api/meetings discovery request.
+        self._last_discovery_diag: dict = {}
+        # Populated by fetch_meeting_races_with_runners() on every call (success or failure).
+        # Holds diagnostics for the most recent /api/external/meeting/:id detail request.
+        self._last_detail_diag: dict = {}
 
     def is_enabled(self) -> bool:
         """
@@ -315,22 +321,179 @@ class OddsProConnector:
 
         Response shape: {"data": [...], "meta": {...}} or bare list.
         Returns the raw list of meeting dicts from the response.
-        """
-        try:
-            resp = self._get("/api/meetings")
-            payload = resp.json()
-        except Exception as e:
-            log.error(f"OddsPro fetch_meetings_discovery failed: {e}")
-            return []
 
-        if isinstance(payload, dict):
-            data = payload.get("data") or payload.get("meetings") or []
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                return [data]
-            return []
-        return payload if isinstance(payload, list) else []
+        Raises requests.exceptions.HTTPError on non-2xx responses.
+        Raises OddsProParseError on JSON parse / shape failures.
+        Does NOT silently return [] on failure — all failures are exposed via
+        _last_discovery_diag and as raised exceptions so callers can diagnose.
+        """
+        url_requested = f"{self.base_url}/api/meetings"
+        params: dict[str, Any] = {"country": self.country}
+
+        self._last_discovery_diag = {
+            "final_url": url_requested,
+            "params": params,
+            "http_status": None,
+            "content_type": "",
+            "response_length": None,
+            "response_preview": "",
+            "parsed_type": "",
+            "top_level_keys": [],
+            "first_item_keys": [],
+            "items_found": 0,
+        }
+
+        try:
+            resp = self._get("/api/meetings", params=params)
+        except requests.exceptions.HTTPError as http_err:
+            if http_err.response is not None:
+                er = http_err.response
+                self._last_discovery_diag.update({
+                    "http_status": er.status_code,
+                    "content_type": er.headers.get("Content-Type", ""),
+                    "response_length": len(er.content),
+                    "response_preview": er.text[:300],
+                    "error": f"http_{er.status_code}",
+                })
+            log.error(
+                f"OddsPro fetch_meetings_discovery HTTP error: {http_err} "
+                f"url={url_requested}"
+            )
+            raise
+        except Exception as e:
+            self._last_discovery_diag["error"] = str(e)
+            log.error(f"OddsPro fetch_meetings_discovery request failed: {e} url={url_requested}")
+            raise
+
+        status_code = resp.status_code
+        content_type = resp.headers.get("Content-Type", "")
+        raw_text = resp.text
+        response_length = len(resp.content)
+        response_preview = raw_text[:300]
+
+        self._last_discovery_diag.update({
+            "http_status": status_code,
+            "content_type": content_type,
+            "response_length": response_length,
+            "response_preview": response_preview,
+        })
+
+        log.info(
+            f"[ODDSPRO] /api/meetings discovery response — "
+            f"url={url_requested} http={status_code} content_type={content_type!r} "
+            f"length={response_length} preview={response_preview!r}"
+        )
+
+        if not raw_text or not raw_text.strip():
+            log.error(
+                f"[ODDSPRO] discovery: empty response body — "
+                f"URL: {url_requested} HTTP {status_code}"
+            )
+            raise OddsProParseError(
+                "OddsPro /api/meetings returned an empty response body",
+                parse_stage="discovery_empty_payload",
+                response_keys=[],
+                first_item_keys=[],
+                response_type="empty",
+                exception_message="Response body is empty",
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                response_length=response_length,
+                response_preview=response_preview,
+            )
+
+        if "text/html" in content_type or response_preview.lstrip().startswith("<"):
+            log.error(
+                f"[ODDSPRO] discovery: HTML/interstitial response — "
+                f"URL: {url_requested} HTTP {status_code} Content-Type: {content_type!r} "
+                f"preview={response_preview!r}"
+            )
+            raise OddsProParseError(
+                "OddsPro /api/meetings returned an HTML page instead of JSON",
+                parse_stage="discovery_html_page",
+                response_keys=[],
+                first_item_keys=[],
+                response_type="html",
+                exception_message="Response body is HTML, not JSON",
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                response_length=response_length,
+                response_preview=response_preview,
+            )
+
+        try:
+            payload = resp.json()
+        except ValueError as e:
+            log.error(
+                f"[ODDSPRO] discovery: JSON decode failed (HTTP {status_code}) — "
+                f"URL: {url_requested}: {e} preview={response_preview!r}"
+            )
+            raise OddsProParseError(
+                f"JSON decode error from /api/meetings: {e}",
+                parse_stage="discovery_json_decode",
+                response_keys=[],
+                first_item_keys=[],
+                response_type="invalid_json",
+                exception_message=str(e),
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                response_length=response_length,
+                response_preview=response_preview,
+            ) from e
+
+        parsed_type = type(payload).__name__
+        top_level_keys: list[str] = list(payload.keys()) if isinstance(payload, dict) else []
+
+        # Extract the data list from the response payload.
+        if isinstance(payload, list):
+            data: list = payload
+        elif isinstance(payload, dict):
+            raw_data = payload.get("data") or payload.get("meetings") or []
+            if isinstance(raw_data, list):
+                data = raw_data
+            elif isinstance(raw_data, dict):
+                data = [raw_data]
+            else:
+                data = []
+        else:
+            data = []
+
+        first_item_keys: list[str] = []
+        if data and isinstance(data[0], dict):
+            first_item_keys = list(data[0].keys())
+
+        self._last_discovery_diag.update({
+            "parsed_type": parsed_type,
+            "top_level_keys": top_level_keys,
+            "first_item_keys": first_item_keys,
+            "items_found": len(data),
+        })
+
+        log.info(
+            f"[ODDSPRO] /api/meetings discovery: {len(data)} items "
+            f"parsed_type={parsed_type!r} top_level_keys={top_level_keys} "
+            f"first_item_keys={first_item_keys}"
+        )
+
+        if not isinstance(data, list):
+            raise OddsProParseError(
+                f"OddsPro /api/meetings returned unexpected shape: {parsed_type}",
+                parse_stage="discovery_shape",
+                response_keys=top_level_keys,
+                first_item_keys=[],
+                response_type=parsed_type,
+                exception_message=f"Expected list, got {parsed_type}",
+                http_status=status_code,
+                content_type=content_type,
+                final_url=url_requested,
+                response_length=response_length,
+                response_preview=response_preview,
+            )
+
+        return data
 
     def fetch_meetings(
         self,
@@ -734,17 +897,79 @@ class OddsProConnector:
 
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         Also accepts: races / events / meetingsRaces as the race list key.
+
+        Raises requests.exceptions.HTTPError on non-2xx responses.
+        Raises ValueError on JSON decode failures.
+        Does NOT silently return ([], []) on failure — errors propagate so
+        full_sweep can count them as meeting_details_failed and expose
+        _last_detail_diag.
         """
         params: dict[str, Any] = {"country": self.country}
         if meeting.meeting_date:
             params["date"] = meeting.meeting_date
         path_id = quote(str(meeting.meeting_id), safe="")
+        url_requested = f"{self.base_url}/api/external/meeting/{path_id}"
+
+        self._last_detail_diag = {
+            "meeting_id": meeting.meeting_id,
+            "final_url": url_requested,
+            "params": params,
+            "http_status": None,
+            "content_type": "",
+            "response_length": None,
+            "response_preview": "",
+            "races_in_payload": 0,
+            "runners_in_payload": 0,
+            "error": None,
+        }
+
         try:
             resp = self._get(f"/api/external/meeting/{path_id}", params=params)
-            payload = resp.json()
+        except requests.exceptions.HTTPError as http_err:
+            if http_err.response is not None:
+                er = http_err.response
+                self._last_detail_diag.update({
+                    "http_status": er.status_code,
+                    "content_type": er.headers.get("Content-Type", ""),
+                    "response_length": len(er.content),
+                    "response_preview": er.text[:300],
+                    "error": f"http_{er.status_code}",
+                })
+            log.error(
+                f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) "
+                f"HTTP error: {http_err} url={url_requested}"
+            )
+            raise
         except Exception as e:
-            log.error(f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) failed: {e}")
-            return [], []
+            self._last_detail_diag["error"] = str(e)
+            log.error(
+                f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) "
+                f"request failed: {e} url={url_requested}"
+            )
+            raise
+
+        status_code = resp.status_code
+        content_type = resp.headers.get("Content-Type", "")
+        raw_text = resp.text
+        response_length = len(resp.content)
+        response_preview = raw_text[:300]
+
+        self._last_detail_diag.update({
+            "http_status": status_code,
+            "content_type": content_type,
+            "response_length": response_length,
+            "response_preview": response_preview,
+        })
+
+        try:
+            payload = resp.json()
+        except ValueError as e:
+            self._last_detail_diag["error"] = f"json_decode: {e}"
+            log.error(
+                f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) "
+                f"JSON decode failed (HTTP {status_code}): {e} preview={response_preview!r}"
+            )
+            raise
 
         raw = (
             payload.get("data")
@@ -761,6 +986,16 @@ class OddsProConnector:
                 races.append(race)
                 runners = self._parse_runners(item, race)
                 all_runners.extend(runners)
+
+        self._last_detail_diag.update({
+            "races_in_payload": len(races),
+            "runners_in_payload": len(all_runners),
+        })
+
+        log.info(
+            f"[ODDSPRO] /api/external/meeting/{path_id} — "
+            f"http={status_code} races={len(races)} runners={len(all_runners)}"
+        )
 
         return sorted(races, key=lambda r: r.race_num), all_runners
 
