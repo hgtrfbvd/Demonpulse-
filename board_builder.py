@@ -197,10 +197,19 @@ def get_board_for_today(
             formfav_overlays=formfav_overlays,
         )
 
+        # Compute rejected count: active races that didn't make the board and
+        # weren't already counted as blocked (they failed validation or NTJ gate).
+        board_count = len(board)
+        active_count = len(races)
+        blocked_during_build = active_count - board_count
+        blocked_pre_stored = len(blocked_today)
+        rejected_count = max(blocked_during_build - blocked_pre_stored, 0)
+
         diagnostics: dict[str, Any] = {
             "stored_race_count_today": len(all_today),
-            "active_race_count": len(races),
-            "blocked_race_count": len(blocked_today),
+            "active_race_count": active_count,
+            "blocked_race_count": blocked_pre_stored,
+            "rejected_count": rejected_count,
         }
 
         if not board:

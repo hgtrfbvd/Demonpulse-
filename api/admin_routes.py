@@ -8,11 +8,26 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from flask import Blueprint, jsonify, request
 
 log = logging.getLogger(__name__)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
+
+# Pattern used to strip internal file paths from exception messages before
+# including them in API responses, to satisfy py/stack-trace-exposure rules.
+_INTERNAL_PATH_RE = re.compile(r'(?:/[a-zA-Z0-9_.\-]+)+\.py(?::\d+)?')
+
+
+def _safe_exc(exc: Exception) -> str:
+    """
+    Return a diagnostics-safe string for an exception.
+    Strips internal file paths so they are not exposed to API consumers.
+    Full details are available in server logs.
+    """
+    raw = f"{type(exc).__name__}: {exc}"
+    return _INTERNAL_PATH_RE.sub("[<internal>]", raw)
 
 
 @admin_bp.route("/sweep", methods=["POST"])
@@ -444,6 +459,9 @@ def admin_bootstrap_day():
         failing_stage = "extraction"
 
     # 7. VALIDATION / FILTER
+    # In full_sweep(), races_stored counts every race processed (including blocked ones).
+    # races_blocked counts those that failed the integrity filter.
+    # races_passed = races_stored - races_blocked (already computed by full_sweep).
     races_stored = result.get("races_stored", result.get("races", 0))
     races_blocked = result.get("races_blocked", 0)
     races_passed = result.get("races_passed", max(races_stored - races_blocked, 0))
@@ -465,7 +483,9 @@ def admin_bootstrap_day():
         from db import get_db
         get_db()
     except Exception as dbe:
-        db_errors.append(str(dbe))
+        # Log full detail server-side; return sanitized message to avoid path exposure
+        log.error(f"bootstrap-day: DB connectivity check failed: {dbe}")
+        db_errors.append(_safe_exc(dbe))
         target_database = "unavailable"
     try:
         from env import env as _env
@@ -477,7 +497,9 @@ def admin_bootstrap_day():
     storage_diag = {
         "races_upsert_attempted": races_stored,
         "races_stored": races_stored,
-        "runners_upsert_attempted": runners_found,
+        # runners_stored from full_sweep is what was actually persisted;
+        # runners_found is the extraction count (every found runner is attempted).
+        "runners_upsert_attempted": runners_stored if runners_found == 0 else runners_found,
         "runners_stored": runners_stored,
         "db_errors": db_errors,
         "target_database": target_database,
@@ -499,7 +521,9 @@ def admin_bootstrap_day():
             "stored_race_count_today": bdiag.get("stored_race_count_today", 0),
             "active_race_count": bdiag.get("active_race_count", 0),
             "blocked_race_count": bdiag.get("blocked_race_count", 0),
-            "rejected_count": 0,
+            # rejected_count: active races that didn't reach the board and weren't
+            # pre-stored as blocked (i.e., failed validation or integrity during build)
+            "rejected_count": bdiag.get("rejected_count", 0),
             "board_count": board_count,
             "empty_reason": bdiag.get("empty_reason"),
         }
@@ -513,7 +537,8 @@ def admin_bootstrap_day():
             "blocked_race_count": 0,
             "rejected_count": 0,
             "board_count": 0,
-            "empty_reason": f"board_build_exception: {be}",
+            # Sanitize exception to avoid exposing internal paths (CodeQL py/stack-trace-exposure)
+            "empty_reason": f"board_build_exception: {_safe_exc(be)}",
         }
         if not failing_stage and ok:
             failing_stage = "board"
@@ -538,10 +563,12 @@ def admin_bootstrap_day():
             "board_count": h.get("board_count", board_count),
         }
     except Exception as he:
+        log.error(f"bootstrap-day: health service read failed: {he}")
         health_diag = {
             "last_bootstrap_at": None,
             "last_bootstrap_ok": None,
-            "last_bootstrap_error": str(he),
+            # Sanitize exception to avoid exposing internal paths (CodeQL py/stack-trace-exposure)
+            "last_bootstrap_error": _safe_exc(he),
             "last_bootstrap_count": 0,
             "board_count": board_count,
         }
