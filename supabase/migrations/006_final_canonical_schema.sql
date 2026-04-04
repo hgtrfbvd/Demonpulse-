@@ -913,6 +913,11 @@ CREATE TABLE IF NOT EXISTS aeee_adjustments (
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill session_id on aeee_adjustments BEFORE creating the index that
+-- references it. On existing databases the CREATE TABLE above is skipped and
+-- migration 001 created this table without the session_id column.
+ALTER TABLE aeee_adjustments ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES sessions(id) ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_aeee_adjustments_session_id ON aeee_adjustments(session_id);
 CREATE INDEX IF NOT EXISTS idx_aeee_adjustments_edge_type  ON aeee_adjustments(edge_type);
 
@@ -934,12 +939,15 @@ CREATE TABLE IF NOT EXISTS etg_tags (
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill missing columns on etg_tags BEFORE creating indexes that reference
+-- them. On existing databases the CREATE TABLE above is skipped and migration
+-- 001 created this table without session_id.
+ALTER TABLE etg_tags ADD COLUMN IF NOT EXISTS session_id      UUID    REFERENCES sessions(id) ON DELETE SET NULL;
+ALTER TABLE etg_tags ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_etg_tags_bet_id     ON etg_tags(bet_id);
 CREATE INDEX IF NOT EXISTS idx_etg_tags_session_id ON etg_tags(session_id);
 CREATE INDEX IF NOT EXISTS idx_etg_tags_race_uid   ON etg_tags(race_uid);
-
--- Backfill manual_override column
-ALTER TABLE etg_tags ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
 
 -- ----------------------------------------------------------------
 -- pass_log
@@ -1427,6 +1435,13 @@ ON CONFLICT DO NOTHING;
 --   backtest_run_items — model_version backfill moved before its index
 --   sectional_snapshots — source_type backfill moved before its index
 --   epr_data         — date backfill moved before its index
+--   aeee_adjustments — added session_id backfill (ALTER TABLE … ADD COLUMN
+--                      IF NOT EXISTS) before the session_id index; migration
+--                      001 created this table without session_id causing
+--                      "column session_id does not exist" on index creation
+--   etg_tags         — added session_id backfill before session_id index;
+--                      moved manual_override backfill to before all indexes
+--                      (same root cause as aeee_adjustments.session_id)
 --   All Phase 3/4/4.5/4.6 intelligence tables fully defined
 --   All test_ mirror tables ensured for TEST mode isolation
 -- ================================================================
