@@ -43,6 +43,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -607,15 +608,19 @@ class OddsProConnector:
         )
         return meetings
 
-    def fetch_meeting(self, meeting_id: str) -> MeetingRecord | None:
+    def fetch_meeting(self, meeting_id: str, meeting_date: str = "") -> MeetingRecord | None:
         """
         GET /api/external/meeting/:meetingId
         Refresh a single meeting record.
 
         Response shape: {"data": {...}, "meta": {...}}
         """
+        params: dict[str, Any] = {"country": self.country}
+        if meeting_date:
+            params["date"] = meeting_date
+        path_id = quote(str(meeting_id), safe="")
         try:
-            resp = self._get(f"/api/external/meeting/{meeting_id}")
+            resp = self._get(f"/api/external/meeting/{path_id}", params=params)
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting({meeting_id}) failed: {e}")
@@ -651,8 +656,12 @@ class OddsProConnector:
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         Also accepts: races / events / meetingsRaces as the race list key.
         """
+        params: dict[str, Any] = {"country": self.country}
+        if meeting.meeting_date:
+            params["date"] = meeting.meeting_date
+        path_id = quote(str(meeting.meeting_id), safe="")
         try:
-            resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
+            resp = self._get(f"/api/external/meeting/{path_id}", params=params)
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting_races({meeting.meeting_id}) failed: {e}")
@@ -685,8 +694,12 @@ class OddsProConnector:
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         Also accepts: races / events / meetingsRaces as the race list key.
         """
+        params: dict[str, Any] = {"country": self.country}
+        if meeting.meeting_date:
+            params["date"] = meeting.meeting_date
+        path_id = quote(str(meeting.meeting_id), safe="")
         try:
-            resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
+            resp = self._get(f"/api/external/meeting/{path_id}", params=params)
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) failed: {e}")
