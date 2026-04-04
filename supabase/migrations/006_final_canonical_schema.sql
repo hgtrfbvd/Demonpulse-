@@ -572,6 +572,88 @@ CREATE INDEX IF NOT EXISTS idx_bet_log_result     ON bet_log(result);
 CREATE INDEX IF NOT EXISTS idx_bet_log_track_race ON bet_log(track, race_num);
 
 -- ----------------------------------------------------------------
+-- decisions
+-- One row per race analysis decision (BET / SESSION / PASS / LOCK).
+-- session_id FK added by this migration — backfilled below for
+-- existing databases that were created from an older schema version
+-- that omitted the column.
+-- ----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS decisions (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id  UUID        REFERENCES sessions(id) ON DELETE SET NULL,
+    date        DATE                    DEFAULT CURRENT_DATE,
+    track       TEXT,
+    race_num    INTEGER,
+    code        TEXT,
+    selection   TEXT,
+    box_num     INTEGER,
+    bet_type    TEXT,
+    odds        NUMERIC(8,2),
+    stake       NUMERIC(10,2),
+    ev          NUMERIC(6,3),
+    confidence  TEXT,
+    flames      INTEGER,
+    decision    TEXT,
+    edge_type   TEXT,
+    edge_status TEXT,
+    race_shape  TEXT,
+    alert_type  TEXT,
+    pass_reason TEXT,
+    created_at  TIMESTAMPTZ             DEFAULT NOW()
+);
+
+-- Backfill session_id on decisions BEFORE creating the index that
+-- references it. On existing databases the CREATE TABLE above is
+-- skipped and older schema versions created this table without the
+-- session_id column, causing "column session_id does not exist" on
+-- index creation.
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES sessions(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_decisions_session_id   ON decisions(session_id);
+CREATE INDEX IF NOT EXISTS idx_decisions_date         ON decisions(date);
+CREATE INDEX IF NOT EXISTS idx_decisions_track_race   ON decisions(track, race_num);
+
+-- ----------------------------------------------------------------
+-- filter_scores
+-- Per-race filter scores linked to a decision row.
+-- ----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS filter_scores (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    decision_id UUID        REFERENCES decisions(id) ON DELETE CASCADE,
+    date        DATE                    DEFAULT CURRENT_DATE,
+    track       TEXT,
+    race_num    INTEGER,
+    dif_score   INTEGER,
+    dif_action  TEXT,
+    tdf_score   INTEGER,
+    tdf_action  TEXT,
+    vef_score   INTEGER,
+    vef_action  TEXT,
+    eqf_score   INTEGER,
+    eqf_action  TEXT,
+    chf_score   INTEGER,
+    chf_action  TEXT,
+    mtf_score   INTEGER,
+    mtf_action  TEXT,
+    mif_score   INTEGER,
+    mif_action  TEXT,
+    srf_score   INTEGER,
+    srf_action  TEXT,
+    tmf_score   INTEGER,
+    tmf_action  TEXT,
+    tbf_score   INTEGER,
+    esf_score   INTEGER,
+    pbf_score   INTEGER,
+    crf_score   INTEGER,
+    frf_score   INTEGER,
+    mcf_score   INTEGER,
+    primary_driver TEXT,
+    created_at  TIMESTAMPTZ             DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_filter_scores_decision_id ON filter_scores(decision_id);
+
+-- ----------------------------------------------------------------
 -- signals
 -- Generated race signals (SNIPER, VALUE, GEM, etc.)
 -- ----------------------------------------------------------------
@@ -1500,6 +1582,13 @@ ON CONFLICT DO NOTHING;
 --   etg_tags         — added session_id backfill before session_id index;
 --                      moved manual_override backfill to before all indexes
 --                      (same root cause as aeee_adjustments.session_id)
+--   decisions        — added CREATE TABLE IF NOT EXISTS with session_id FK;
+--                      added ALTER TABLE session_id backfill for existing
+--                      databases created from older schema versions that
+--                      omitted the column (same "column does not exist" root
+--                      cause); table was absent from all previous migrations
+--   filter_scores    — added CREATE TABLE IF NOT EXISTS (was absent from all
+--                      previous migrations; referenced by decisions FK)
 --   All Phase 3/4/4.5/4.6 intelligence tables fully defined
 --   All test_ mirror tables ensured for TEST mode isolation:
 --     test_today_races     — backfilled oddspro_race_id, block_code, source,
