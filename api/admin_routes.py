@@ -410,11 +410,9 @@ def admin_bootstrap_day():
             "parsed_type": result.get("response_type") or "",
             "top_level_keys": result.get("top_level_keys") or [],
             "normalized_meetings_count": 0,
-            "error": (
-                result.get("exception_message")
-                or result.get("error")
-                or parse_stage
-            ),
+            # Use the structured reason/parse_stage codes, not exception-derived strings.
+            # Full parse error detail (exception_message, error) is logged server-side.
+            "error": reason or parse_stage,
             "parse_stage": parse_stage,
             "sample_payload": result.get("sample_payload"),
         }
@@ -427,7 +425,8 @@ def admin_bootstrap_day():
             "parsed_type": "dict" if ok or not reason else (result.get("response_type") or ""),
             "top_level_keys": [],
             "normalized_meetings_count": meetings_found_norm,
-            "error": None if ok else (result.get("error") or reason or None),
+            # Use the structured reason code, not exception-derived strings.
+            "error": None if ok else (reason or None),
             "parse_stage": None,
             "sample_payload": None,
         }
