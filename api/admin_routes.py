@@ -8,26 +8,20 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from flask import Blueprint, jsonify, request
 
 log = logging.getLogger(__name__)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
-# Pattern used to strip internal file paths from exception messages before
-# including them in API responses, to satisfy py/stack-trace-exposure rules.
-_INTERNAL_PATH_RE = re.compile(r'(?:/[a-zA-Z0-9_.\-]+)+\.py(?::\d+)?')
-
 
 def _safe_exc(exc: Exception) -> str:
     """
-    Return a diagnostics-safe string for an exception.
-    Strips internal file paths so they are not exposed to API consumers.
-    Full details are available in server logs.
+    Return an error type description safe for inclusion in API responses.
+    Only the exception class name is returned — full message and traceback
+    details are written to server logs only, avoiding py/stack-trace-exposure.
     """
-    raw = f"{type(exc).__name__}: {exc}"
-    return _INTERNAL_PATH_RE.sub("[<internal>]", raw)
+    return type(exc).__name__
 
 
 @admin_bp.route("/sweep", methods=["POST"])
@@ -497,9 +491,9 @@ def admin_bootstrap_day():
     storage_diag = {
         "races_upsert_attempted": races_stored,
         "races_stored": races_stored,
-        # runners_stored from full_sweep is what was actually persisted;
-        # runners_found is the extraction count (every found runner is attempted).
-        "runners_upsert_attempted": runners_stored if runners_found == 0 else runners_found,
+        # runners_found = total extracted runners (all attempted for storage).
+        # Fall back to runners_stored when extraction count is unavailable (0).
+        "runners_upsert_attempted": runners_found if runners_found > 0 else runners_stored,
         "runners_stored": runners_stored,
         "db_errors": db_errors,
         "target_database": target_database,
