@@ -325,7 +325,7 @@ def admin_bootstrap_day():
         })
     except Exception as e:
         log.error(f"/api/admin/bootstrap-day failed: {e}")
-        return jsonify({"ok": False, "action": "bootstrap-day", "error": str(e)}), 500
+        return jsonify({"ok": False, "action": "bootstrap-day", "error": "Bootstrap failed"}), 500
 
 
 @admin_bp.route("/run-cycle", methods=["GET", "POST"])
@@ -377,7 +377,7 @@ def admin_run_cycle():
         })
     except Exception as e:
         log.error(f"/api/admin/run-cycle failed: {e}")
-        return jsonify({"ok": False, "action": "run-cycle", "error": str(e)}), 500
+        return jsonify({"ok": False, "action": "run-cycle", "error": "Cycle refresh failed"}), 500
 
 
 @admin_bp.route("/rebuild-board", methods=["GET", "POST"])
@@ -410,7 +410,7 @@ def admin_rebuild_board():
         })
     except Exception as e:
         log.error(f"/api/admin/rebuild-board failed: {e}")
-        return jsonify({"ok": False, "action": "rebuild-board", "error": str(e)}), 500
+        return jsonify({"ok": False, "action": "rebuild-board", "error": "Board rebuild failed"}), 500
 
 
 @admin_bp.route("/near-jump-refresh", methods=["GET", "POST"])
@@ -452,7 +452,7 @@ def admin_near_jump_refresh():
         })
     except Exception as e:
         log.error(f"/api/admin/near-jump-refresh failed: {e}")
-        return jsonify({"ok": False, "action": "near-jump-refresh", "error": str(e)}), 500
+        return jsonify({"ok": False, "action": "near-jump-refresh", "error": "Near-jump refresh failed"}), 500
 
 
 @admin_bp.route("/check-results", methods=["GET", "POST"])
@@ -491,7 +491,7 @@ def admin_check_results():
         })
     except Exception as e:
         log.error(f"/api/admin/check-results failed: {e}")
-        return jsonify({"ok": False, "action": "check-results", "error": str(e)}), 500
+        return jsonify({"ok": False, "action": "check-results", "error": "Result check failed"}), 500
 
 
 @admin_bp.route("/engine-status", methods=["GET"])
@@ -514,14 +514,16 @@ def admin_engine_status():
             health = get_health()
             engine_ok = is_engine_healthy()
         except Exception as he:
+            log.error(f"engine-status: health_service unavailable: {he}")
             engine_ok = False
-            health = {"error": str(he)}
+            health = {}
 
         try:
             from scheduler import get_status
             scheduler_status = get_status()
         except Exception as se:
-            scheduler_status = {"error": str(se)}
+            log.error(f"engine-status: scheduler unavailable: {se}")
+            scheduler_status = {}
 
         # Board count from health state or live query
         board_count = health.get("board_count", 0)
@@ -583,7 +585,7 @@ def admin_engine_status():
         })
     except Exception as e:
         log.error(f"/api/admin/engine-status failed: {e}")
-        return jsonify({"ok": False, "action": "engine-status", "error": str(e)}), 500
+        return jsonify({"ok": False, "action": "engine-status", "error": "Engine status unavailable"}), 500
 
 
 @admin_bp.route("/routes", methods=["GET"])
