@@ -10,10 +10,13 @@ Rules:
   - Preserves clean lineage: prediction → features → race → official result
 
 Storage:
-  - feature_snapshots: serialized feature arrays with race lineage
-  - prediction_snapshots: prediction run metadata
+  - feature_snapshots        : serialized feature arrays with race lineage
+                               (includes sectional, race shape, collision, enrichment)
+  - race_shape_snapshots     : stored race shape outputs per race
+  - sectional_snapshots      : stored per-runner sectional metrics per race
+  - prediction_snapshots     : prediction run metadata (model_version, feature ref)
   - prediction_runner_outputs: per-runner scores and ranks
-  - learning_evaluations: post-result evaluation records
+  - learning_evaluations     : post-result evaluation records (OddsPro only)
 """
 from __future__ import annotations
 
@@ -29,14 +32,20 @@ log = logging.getLogger(__name__)
 def save_prediction_snapshot(
     prediction: dict[str, Any],
     features: list[dict[str, Any]],
+    sectional_metrics: list[dict[str, Any]] | None = None,
+    race_shape: dict[str, Any] | None = None,
+    collision_metrics: list[dict[str, Any]] | None = None,
 ) -> bool:
     """
     Save a prediction snapshot: feature lineage, prediction metadata,
-    and per-runner outputs.
+    per-runner outputs, sectional metrics, race shape, and collision metrics.
 
     Args:
-        prediction: output dict from predictor.predict_from_snapshot()
-        features: feature rows used to generate this prediction
+        prediction        : output dict from predictor.predict_from_snapshot()
+        features          : feature rows used to generate this prediction
+        sectional_metrics : optional per-runner OddsPro sectional metric dicts
+        race_shape        : optional race shape dict
+        collision_metrics : optional per-runner collision metric dicts
 
     Returns:
         True if all records saved successfully, False otherwise.
@@ -55,6 +64,9 @@ def save_prediction_snapshot(
             race_uid=race_uid,
             oddspro_race_id=oddspro_race_id,
             features=features,
+            sectional_metrics=sectional_metrics,
+            race_shape=race_shape,
+            collision_metrics=collision_metrics,
         )
 
         snap_row = {
@@ -64,6 +76,9 @@ def save_prediction_snapshot(
             "model_version": model_version,
             "feature_snapshot_id": feature_snapshot_id,
             "runner_count": len(runner_predictions),
+            "has_sectionals": 1 if sectional_metrics else 0,
+            "has_race_shape": 1 if race_shape else 0,
+            "has_collision": 1 if collision_metrics else 0,
             "created_at": created_at,
         }
         safe_query(
@@ -96,7 +111,7 @@ def save_prediction_snapshot(
 
         log.info(
             f"learning_store: saved prediction {snap_id} for {race_uid} "
-            f"({len(runner_rows)} runners)"
+            f"({len(runner_rows)} runners, model={model_version})"
         )
         return True
 
@@ -105,6 +120,114 @@ def save_prediction_snapshot(
             f"learning_store: save_prediction_snapshot failed "
             f"for {race_uid}: {e}"
         )
+        return False
+
+
+def save_sectional_snapshot(
+    race_uid: str,
+    oddspro_race_id: str,
+    sectional_metrics: list[dict[str, Any]],
+    source: str = "oddspro_result",
+) -> bool:
+    """
+    Save per-runner sectional metrics to the sectional_snapshots table.
+
+    Args:
+        race_uid          : race identifier
+        oddspro_race_id   : OddsPro native race ID
+        sectional_metrics : list from sectionals_engine.build_runner_sectional_metrics()
+        source            : 'oddspro_result' or 'oddspro_race'
+
+    Returns:
+        True on success.
+    """
+    if not sectional_metrics:
+        return True
+
+    try:
+        from db import get_db, safe_query, T
+
+        rows = [
+            {
+                "race_uid":                    race_uid,
+                "oddspro_race_id":             oddspro_race_id,
+                "box_num":                     sm.get("box_num"),
+                "runner_name":                 sm.get("runner_name") or "",
+                "early_speed_score":           sm.get("early_speed_score"),
+                "late_speed_score":            sm.get("late_speed_score"),
+                "closing_delta":               sm.get("closing_delta"),
+                "fatigue_index":               sm.get("fatigue_index"),
+                "acceleration_index":          sm.get("acceleration_index"),
+                "sectional_consistency_score": sm.get("sectional_consistency_score"),
+                "raw_early_time":              sm.get("raw_early_time"),
+                "raw_mid_time":                sm.get("raw_mid_time"),
+                "raw_late_time":               sm.get("raw_late_time"),
+                "raw_all_sections":            json.dumps(sm.get("raw_all_sections") or []),
+                "source":                      source,
+                "created_at":                  _now(),
+            }
+            for sm in sectional_metrics
+        ]
+        safe_query(
+            lambda: get_db()
+            .table(T("sectional_snapshots"))
+            .insert(rows)
+            .execute()
+        )
+        log.info(
+            f"learning_store: saved {len(rows)} sectional metrics for {race_uid}"
+        )
+        return True
+    except Exception as e:
+        log.warning(f"learning_store: save_sectional_snapshot failed for {race_uid}: {e}")
+        return False
+
+
+def save_race_shape_snapshot(
+    race_uid: str,
+    race_shape: dict[str, Any],
+) -> bool:
+    """
+    Save a race shape snapshot to the race_shape_snapshots table.
+
+    Args:
+        race_uid   : race identifier
+        race_shape : dict from race_shape.build_race_shape()
+
+    Returns:
+        True on success.
+    """
+    if not race_shape:
+        return True
+
+    try:
+        from db import get_db, safe_query, T
+
+        row = {
+            "race_uid":                   race_uid,
+            "oddspro_race_id":            race_shape.get("oddspro_race_id") or "",
+            "pace_scenario":              race_shape.get("pace_scenario") or "UNKNOWN",
+            "early_speed_density":        race_shape.get("early_speed_density"),
+            "leader_pressure":            race_shape.get("leader_pressure"),
+            "likely_leader_runner_ids":   json.dumps(race_shape.get("likely_leader_runner_ids") or []),
+            "early_speed_conflict_score": race_shape.get("early_speed_conflict_score"),
+            "collapse_risk":              race_shape.get("collapse_risk"),
+            "closer_advantage_score":     race_shape.get("closer_advantage_score"),
+            "is_greyhound":               race_shape.get("is_greyhound", False),
+            "sectionals_used":            race_shape.get("sectionals_used", False),
+            "formfav_enrichment_used":    race_shape.get("formfav_enrichment_used", False),
+            "created_at":                 _now(),
+        }
+        safe_query(
+            lambda: get_db()
+            .table(T("race_shape_snapshots"))
+            .upsert(row, on_conflict="race_uid")
+            .execute()
+        )
+        log.debug(f"learning_store: saved race shape for {race_uid}")
+        return True
+    except Exception as e:
+        log.warning(f"learning_store: save_race_shape_snapshot failed for {race_uid}: {e}")
         return False
 
 
@@ -425,6 +548,9 @@ def _save_feature_snapshot(
     race_uid: str,
     oddspro_race_id: str,
     features: list[dict[str, Any]],
+    sectional_metrics: list[dict[str, Any]] | None = None,
+    race_shape: dict[str, Any] | None = None,
+    collision_metrics: list[dict[str, Any]] | None = None,
 ) -> str:
     """Save feature snapshot to feature_snapshots table. Returns the UUID."""
     try:
@@ -438,6 +564,12 @@ def _save_feature_snapshot(
             "snapshot_date": (features[0].get("race_date") if features else None),
             "runner_count": len(features),
             "features": json.dumps(features),
+            "has_sectionals": 1 if sectional_metrics else 0,
+            "has_race_shape": 1 if race_shape else 0,
+            "has_collision": 1 if collision_metrics else 0,
+            "sectional_metrics": json.dumps(sectional_metrics or []),
+            "race_shape": json.dumps(race_shape or {}),
+            "collision_metrics": json.dumps(collision_metrics or []),
             "created_at": _now(),
         }
         safe_query(

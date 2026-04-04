@@ -103,12 +103,15 @@ def health_db():
 @health_bp.route("/intelligence", methods=["GET"])
 def health_intelligence():
     """
-    Intelligence layer health — prediction and backtest observability.
+    Intelligence layer health — prediction, backtest, and feature-engine observability.
 
     Reports:
       - last prediction run timestamp + count
       - last backtest run timestamp + run_id
       - last evaluation run timestamp + count
+      - last feature build timestamp + count
+      - last sectional extraction timestamp + count
+      - last race shape build timestamp + count
       - stored prediction snapshot count
       - evaluated prediction count
       - active model version
@@ -128,6 +131,12 @@ def health_intelligence():
             "last_backtest_run_id": health.get("last_backtest_run_id"),
             "last_evaluation_run_at": health.get("last_evaluation_run_at"),
             "last_evaluation_run_count": health.get("last_evaluation_run_count", 0),
+            "last_feature_build_at": health.get("last_feature_build_at"),
+            "last_feature_build_count": health.get("last_feature_build_count", 0),
+            "last_sectional_extraction_at": health.get("last_sectional_extraction_at"),
+            "last_sectional_extraction_count": health.get("last_sectional_extraction_count", 0),
+            "last_race_shape_build_at": health.get("last_race_shape_build_at"),
+            "last_race_shape_build_count": health.get("last_race_shape_build_count", 0),
             "prediction_snapshots_stored": counts.get("prediction_snapshots", 0),
             "evaluations_stored": counts.get("learning_evaluations", 0),
             "active_model_version": health.get("active_model_version", "baseline_v1"),

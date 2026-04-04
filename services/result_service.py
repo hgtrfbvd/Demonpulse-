@@ -84,6 +84,32 @@ def confirm_race_result(race_uid: str, oddspro_race_id: str) -> dict[str, Any]:
         _write_result(confirmed)
         log.info(f"result_service: result confirmed and written for {race_uid}")
 
+        # Extract and store sectionals from the result payload (OddsPro authoritative)
+        try:
+            from ai.sectionals_engine import (
+                extract_sectionals_from_result_payload,
+                build_runner_sectional_metrics,
+            )
+            from ai.learning_store import save_sectional_snapshot
+
+            sec_raw = extract_sectionals_from_result_payload(confirmed)
+            if sec_raw.get("has_sectionals"):
+                sec_metrics = build_runner_sectional_metrics(sec_raw["runners"])
+                save_sectional_snapshot(
+                    race_uid=race_uid,
+                    oddspro_race_id=oddspro_race_id,
+                    sectional_metrics=sec_metrics,
+                    source="oddspro_result",
+                )
+                log.info(
+                    f"result_service: stored {len(sec_metrics)} sectional metrics "
+                    f"for {race_uid}"
+                )
+        except Exception as sec_err:
+            log.warning(
+                f"result_service: sectionals extraction failed for {race_uid}: {sec_err}"
+            )
+
         # Evaluate any outstanding predictions for this race
         try:
             from ai.learning_store import evaluate_prediction

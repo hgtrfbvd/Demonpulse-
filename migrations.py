@@ -233,10 +233,86 @@ _PHASE3_TABLES: list[tuple[str, str]] = [
             top3_hit BOOLEAN DEFAULT false,
             score NUMERIC(10, 6),
             winner_odds NUMERIC(8, 2),
+            model_version TEXT DEFAULT 'baseline_v1',
+            used_stored_snapshot BOOLEAN DEFAULT false,
             created_at TIMESTAMPTZ DEFAULT now()
         )
         """,
     ),
+]
+
+# ---------------------------------------------------------------------------
+# PHASE 4 — FEATURE ENGINE / SECTIONALS / RACE SHAPE / SCHEMA ALIGNMENT
+# ---------------------------------------------------------------------------
+
+_PHASE4_TABLES: list[tuple[str, str]] = [
+    # sectional_snapshots — per-runner OddsPro sectional metrics
+    (
+        "sectional_snapshots",
+        """
+        CREATE TABLE IF NOT EXISTS sectional_snapshots (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            race_uid TEXT NOT NULL DEFAULT '',
+            oddspro_race_id TEXT DEFAULT '',
+            box_num INTEGER,
+            runner_name TEXT DEFAULT '',
+            early_speed_score NUMERIC(10, 6),
+            late_speed_score NUMERIC(10, 6),
+            closing_delta NUMERIC(10, 4),
+            fatigue_index NUMERIC(10, 4),
+            acceleration_index NUMERIC(10, 4),
+            sectional_consistency_score NUMERIC(10, 4),
+            raw_early_time NUMERIC(10, 3),
+            raw_mid_time NUMERIC(10, 3),
+            raw_late_time NUMERIC(10, 3),
+            raw_all_sections JSONB,
+            source TEXT DEFAULT 'oddspro_result',
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+    # race_shape_snapshots — one row per race, race-level shape/tempo
+    (
+        "race_shape_snapshots",
+        """
+        CREATE TABLE IF NOT EXISTS race_shape_snapshots (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            race_uid TEXT UNIQUE NOT NULL DEFAULT '',
+            oddspro_race_id TEXT DEFAULT '',
+            pace_scenario TEXT DEFAULT 'UNKNOWN',
+            early_speed_density NUMERIC(8, 4),
+            leader_pressure NUMERIC(8, 4),
+            likely_leader_runner_ids JSONB,
+            early_speed_conflict_score NUMERIC(8, 4),
+            collapse_risk NUMERIC(8, 4),
+            closer_advantage_score NUMERIC(8, 4),
+            is_greyhound BOOLEAN DEFAULT false,
+            sectionals_used BOOLEAN DEFAULT false,
+            formfav_enrichment_used BOOLEAN DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+    ),
+]
+
+# Phase 4 — additional columns on existing tables
+_PHASE4_MIGRATIONS: list[tuple[str, str, str, str]] = [
+    # feature_snapshots — Phase 4 extension columns
+    ("feature_snapshots", "has_sectionals",    "INTEGER",  "DEFAULT 0"),
+    ("feature_snapshots", "has_race_shape",    "INTEGER",  "DEFAULT 0"),
+    ("feature_snapshots", "has_collision",     "INTEGER",  "DEFAULT 0"),
+    ("feature_snapshots", "sectional_metrics", "JSONB",    "DEFAULT '[]'::jsonb"),
+    ("feature_snapshots", "race_shape",        "JSONB",    "DEFAULT '{}'::jsonb"),
+    ("feature_snapshots", "collision_metrics", "JSONB",    "DEFAULT '[]'::jsonb"),
+
+    # prediction_snapshots — Phase 4 extension columns
+    ("prediction_snapshots", "has_sectionals", "INTEGER",  "DEFAULT 0"),
+    ("prediction_snapshots", "has_race_shape", "INTEGER",  "DEFAULT 0"),
+    ("prediction_snapshots", "has_collision",  "INTEGER",  "DEFAULT 0"),
+
+    # backtest_run_items — Phase 4 extension columns
+    ("backtest_run_items", "model_version",        "TEXT",     "DEFAULT 'baseline_v1'"),
+    ("backtest_run_items", "used_stored_snapshot", "BOOLEAN",  "DEFAULT false"),
 ]
 
 
@@ -283,6 +359,89 @@ def run_phase3_migrations(db_client: Any = None) -> dict[str, Any]:
     return results
 
 
+def run_phase4_migrations(db_client: Any = None) -> dict[str, Any]:
+    """
+    Create Phase 4 feature-engine / sectionals / race-shape tables and add
+    new columns to existing Phase 3 tables.
+
+    Safe to re-run (uses IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
+    Returns dict with results.
+    """
+    if db_client is None:
+        from db import get_db
+        db_client = get_db()
+
+    results: dict[str, Any] = {"created": [], "altered": [], "skipped": [], "errors": []}
+
+    # Create new Phase 4 tables
+    for table_name, create_sql in _PHASE4_TABLES:
+        sql = create_sql.strip()
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+            results["created"].append(table_name)
+            log.info(f"migrations: phase4 table ensured: {table_name}")
+        except Exception as e:
+            err_str = str(e)
+            if "already exists" in err_str.lower():
+                results["skipped"].append(table_name)
+            else:
+                log.warning(f"migrations: could not create {table_name}: {e}")
+                results["errors"].append({"table": table_name, "error": err_str})
+
+    # Add new columns to existing tables
+    for table, column, sql_type, default_clause in _PHASE4_MIGRATIONS:
+        sql = (
+            f"ALTER TABLE {table} "
+            f"ADD COLUMN IF NOT EXISTS {column} {sql_type} {default_clause};"
+        ).strip()
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+            results["altered"].append(f"{table}.{column}")
+            log.info(f"migrations: phase4 column ensured: {table}.{column}")
+        except Exception as e:
+            err_str = str(e)
+            if "already exists" in err_str.lower() or "duplicate" in err_str.lower():
+                results["skipped"].append(f"{table}.{column}")
+            else:
+                log.warning(f"migrations: could not add {table}.{column}: {e}")
+                results["errors"].append({"migration": f"{table}.{column}", "error": err_str})
+
+    # Phase 4 indexes
+    _ensure_phase4_indexes(db_client, results)
+
+    log.info(
+        f"migrations: phase4 done — "
+        f"created={len(results['created'])} "
+        f"altered={len(results['altered'])} "
+        f"skipped={len(results['skipped'])} "
+        f"errors={len(results['errors'])}"
+    )
+    return results
+
+
+def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
+    """
+    Run all migration phases in order: column migrations → Phase 3 → Phase 4.
+    Safe to re-run.
+    """
+    if db_client is None:
+        from db import get_db
+        db_client = get_db()
+
+    combined: dict[str, Any] = {
+        "column_migrations": {},
+        "phase3": {},
+        "phase4": {},
+    }
+
+    combined["column_migrations"] = run_migrations(db_client)
+    combined["phase3"] = run_phase3_migrations(db_client)
+    combined["phase4"] = run_phase4_migrations(db_client)
+
+    log.info("migrations: run_all_migrations complete")
+    return combined
+
+
 def _ensure_phase3_indexes(db_client: Any, results: dict[str, Any]) -> None:
     """Create Phase 3 indexes for efficient lookups."""
     indexes = [
@@ -300,6 +459,21 @@ def _ensure_phase3_indexes(db_client: Any, results: dict[str, Any]) -> None:
             db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
         except Exception as e:
             log.debug(f"migrations: index skipped/failed: {e}")
+
+
+def _ensure_phase4_indexes(db_client: Any, results: dict[str, Any]) -> None:
+    """Create Phase 4 indexes for efficient lookups."""
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_sectional_snapshots_race_uid ON sectional_snapshots(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_sectional_snapshots_box ON sectional_snapshots(race_uid, box_num);",
+        "CREATE INDEX IF NOT EXISTS idx_race_shape_snapshots_race_uid ON race_shape_snapshots(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_backtest_run_items_model ON backtest_run_items(model_version);",
+    ]
+    for sql in indexes:
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+        except Exception as e:
+            log.debug(f"migrations: phase4 index skipped/failed: {e}")
 
 
 def ensure_race_uid_index(db_client: Any = None) -> bool:

@@ -15,10 +15,20 @@ Output:
   - Exact race_uid / oddspro_race_id lineage
 
 Feature groups:
-  - race_metadata: track, code, distance, grade, condition, field_size, jump time
-  - runner_features: box/barrier, runner_num, name, trainer, jockey
-  - market_features: win_odds, implied_prob, odds_rank, relative_to_fav, spread
-  - enrichment_features: form stats, win/place pcts (FormFav, non-authoritative flag)
+  A. race_metadata       : track, code, distance, grade, condition, field_size, jump time
+  B. runner_features     : box/barrier, runner_num, name, trainer, jockey
+  C. market_features     : win_odds, implied_prob, odds_rank, relative_to_fav, spread,
+                           opening_odds, current_odds, market_movement_pct,
+                           market_overround, implied_probability (OddsPro authoritative)
+  D. sectional_features  : early_speed_score, late_speed_score, closing_delta,
+                           fatigue_index, acceleration_index,
+                           sectional_consistency_score (OddsPro authoritative)
+  E. race_shape_features : pace_scenario, leader_pressure, early_speed_density,
+                           collapse_risk, race_shape_fit
+  F. collision_features  : collision_risk_score, interference_probability,
+                           boxed_runner_penalty (greyhounds only)
+  G. enrichment_features : FormFav-sourced fields clearly flagged as non-authoritative
+                           (has_enrichment, running_style, earlySpeedIndex, etc.)
 """
 from __future__ import annotations
 
@@ -33,15 +43,23 @@ def build_race_features(
     race: dict[str, Any],
     runners: list[dict[str, Any]],
     enrichment: dict[str, Any] | None = None,
+    sectional_metrics: list[dict[str, Any]] | None = None,
+    race_shape: dict[str, Any] | None = None,
+    collision_metrics: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build a feature row for every active runner in a race.
 
     Args:
-        race: authoritative race record from today_races (OddsPro-sourced)
-        runners: runner records from today_runners for this race
-        enrichment: optional FormFav-sourced enrichment keyed by runner name
-                    (non-authoritative; flagged in output via has_enrichment=1)
+        race               : authoritative race record from today_races (OddsPro-sourced)
+        runners            : runner records from today_runners for this race
+        enrichment         : optional FormFav-sourced enrichment keyed by runner name
+                             (non-authoritative; flagged in output via has_enrichment=1)
+        sectional_metrics  : optional list of per-runner sectional metric dicts
+                             from ai.sectionals_engine (OddsPro authoritative)
+        race_shape         : optional race shape dict from ai.race_shape
+        collision_metrics  : optional list of per-runner collision metric dicts
+                             from ai.collision_model (greyhounds only)
 
     Returns:
         List of feature dicts, one per non-scratched runner, with full lineage.
@@ -62,19 +80,36 @@ def build_race_features(
     }
     market_stats = _compute_market_stats(odds_map)
 
+    # Index per-runner extras by box_num
+    sec_index: dict[int, dict[str, Any]] = {}
+    for sm in (sectional_metrics or []):
+        bn = sm.get("box_num")
+        if bn is not None:
+            sec_index[bn] = sm
+
+    col_index: dict[int, dict[str, Any]] = {}
+    for cm in (collision_metrics or []):
+        bn = cm.get("box_num")
+        if bn is not None:
+            col_index[bn] = cm
+
     features: list[dict[str, Any]] = []
     for runner in active_runners:
+        box_num = runner.get("box_num") or 0
         runner_enrichment = None
         if enrichment:
             runner_enrichment = (
                 enrichment.get(runner.get("name") or "")
-                or enrichment.get(str(runner.get("box_num") or ""))
+                or enrichment.get(str(box_num or ""))
             )
         row = _build_runner_row(
             race_meta=race_meta,
             runner=runner,
             market_stats=market_stats,
             enrichment=runner_enrichment,
+            sectionals=sec_index.get(box_num),
+            race_shape=race_shape,
+            collision=col_index.get(box_num),
         )
         features.append(row)
 
@@ -86,6 +121,9 @@ def build_runner_features(
     runner: dict[str, Any],
     all_runners: list[dict[str, Any]],
     enrichment: dict[str, Any] | None = None,
+    sectional_metrics: list[dict[str, Any]] | None = None,
+    race_shape: dict[str, Any] | None = None,
+    collision_metrics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Build features for a single runner within a race context.
@@ -96,7 +134,12 @@ def build_runner_features(
     runner_name = runner.get("name") or ""
     box_num = runner.get("box_num")
     enrichment_map = {runner_name: enrichment} if enrichment else None
-    rows = build_race_features(race, all_runners, enrichment_map)
+    rows = build_race_features(
+        race, all_runners, enrichment_map,
+        sectional_metrics=sectional_metrics,
+        race_shape=race_shape,
+        collision_metrics=collision_metrics,
+    )
     for row in rows:
         if row.get("box_num") == box_num:
             return row
@@ -106,14 +149,22 @@ def build_runner_features(
 def batch_build_features(
     races_with_runners: list[tuple[dict[str, Any], list[dict[str, Any]]]],
     enrichment_map: dict[str, dict] | None = None,
+    sectionals_map: dict[str, list] | None = None,
+    race_shape_map: dict[str, dict] | None = None,
+    collision_map: dict[str, list] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build features for a batch of historical races.
 
     Args:
-        races_with_runners: list of (race_dict, runners_list) tuples
-        enrichment_map: optional dict keyed by race_uid mapping to per-runner
-                        enrichment dicts (non-authoritative FormFav data)
+        races_with_runners : list of (race_dict, runners_list) tuples
+        enrichment_map     : optional dict keyed by race_uid mapping to per-runner
+                             enrichment dicts (non-authoritative FormFav data)
+        sectionals_map     : optional dict keyed by race_uid → list of sectional
+                             metric dicts (OddsPro authoritative)
+        race_shape_map     : optional dict keyed by race_uid → race shape dict
+        collision_map      : optional dict keyed by race_uid → list of collision
+                             metric dicts (greyhounds only)
 
     Returns:
         Flat list of runner-level feature rows across all races with lineage.
@@ -121,8 +172,16 @@ def batch_build_features(
     all_features: list[dict[str, Any]] = []
     for race, runners in races_with_runners:
         race_uid = race.get("race_uid") or ""
-        enrichment = (enrichment_map or {}).get(race_uid)
-        rows = build_race_features(race, runners, enrichment)
+        enrichment      = (enrichment_map or {}).get(race_uid)
+        sec_metrics     = (sectionals_map or {}).get(race_uid)
+        rshape          = (race_shape_map or {}).get(race_uid)
+        col_metrics     = (collision_map or {}).get(race_uid)
+        rows = build_race_features(
+            race, runners, enrichment,
+            sectional_metrics=sec_metrics,
+            race_shape=rshape,
+            collision_metrics=col_metrics,
+        )
         all_features.extend(rows)
     return all_features
 
@@ -155,12 +214,50 @@ def _build_runner_row(
     runner: dict[str, Any],
     market_stats: dict[str, Any],
     enrichment: dict[str, Any] | None = None,
+    sectionals: dict[str, Any] | None = None,
+    race_shape: dict[str, Any] | None = None,
+    collision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a complete feature row for one runner."""
     box_num = runner.get("box_num") or 0
     win_odds = _safe_float(runner.get("price"))
     implied_prob = (1.0 / win_odds) if win_odds and win_odds > 1.0 else 0.0
     fav_odds = market_stats.get("fav_odds") or win_odds or 1.0
+
+    # Opening odds (if available from runner record)
+    opening_odds = _safe_float(runner.get("opening_price") or runner.get("open_price"))
+    current_odds = win_odds
+    market_movement_pct = 0.0
+    if opening_odds and opening_odds > 1.0 and current_odds and current_odds > 1.0:
+        market_movement_pct = round((opening_odds - current_odds) / opening_odds * 100, 2)
+
+    # Race shape features
+    rs = race_shape or {}
+    pace_scenario      = rs.get("pace_scenario") or "UNKNOWN"
+    leader_pressure    = _safe_float(rs.get("leader_pressure"))
+    early_speed_density = _safe_float(rs.get("early_speed_density"))
+    collapse_risk      = _safe_float(rs.get("collapse_risk"))
+    likely_leaders     = rs.get("likely_leader_runner_ids") or []
+    race_shape_fit     = 1.0 if box_num in likely_leaders else (
+        _safe_float(rs.get("closer_advantage_score")) * 0.6
+        if implied_prob < 0.25 else 0.3
+    )
+
+    # Sectional features (OddsPro authoritative)
+    sec = sectionals or {}
+    early_speed_score           = _safe_float(sec.get("early_speed_score"))
+    late_speed_score            = _safe_float(sec.get("late_speed_score"))
+    closing_delta               = _safe_float(sec.get("closing_delta"))
+    fatigue_index               = _safe_float(sec.get("fatigue_index"), 1.0)
+    acceleration_index          = _safe_float(sec.get("acceleration_index"))
+    sectional_consistency_score = _safe_float(sec.get("sectional_consistency_score"), 0.5)
+    has_sectionals              = 1 if sec else 0
+
+    # Collision features (greyhounds only — zero for others)
+    col = collision or {}
+    collision_risk_score     = _safe_float(col.get("collision_risk_score"))
+    interference_probability = _safe_float(col.get("interference_probability"))
+    boxed_runner_penalty     = _safe_float(col.get("boxed_runner_penalty"))
 
     row: dict[str, Any] = {
         # --- Lineage ---
@@ -185,28 +282,67 @@ def _build_runner_row(
         "trainer": runner.get("trainer") or "",
         "jockey": runner.get("jockey") or runner.get("driver") or "",
         "is_scratched": 0,
-        # --- Market features ---
+        # --- Market features (OddsPro authoritative) ---
         "win_odds": win_odds,
+        "opening_odds": opening_odds,
+        "current_odds": current_odds,
+        "market_movement_pct": market_movement_pct,
         "implied_prob": round(implied_prob, 6),
+        "implied_probability": round(implied_prob, 6),   # alias for clarity
         "odds_rank": market_stats.get("odds_ranks", {}).get(box_num, 0),
         "relative_to_fav": round(win_odds / fav_odds, 4) if (win_odds and fav_odds) else 0.0,
         "market_spread": market_stats.get("market_spread", 0.0),
         "overround": market_stats.get("overround", 0.0),
+        "market_overround": market_stats.get("overround", 0.0),   # alias
+        # --- Sectional features (OddsPro authoritative) ---
+        "has_sectionals": has_sectionals,
+        "early_speed_score": early_speed_score,
+        "late_speed_score": late_speed_score,
+        "closing_delta": closing_delta,
+        "fatigue_index": fatigue_index,
+        "acceleration_index": acceleration_index,
+        "sectional_consistency_score": sectional_consistency_score,
+        # --- Race shape features ---
+        "pace_scenario": pace_scenario,
+        "leader_pressure": round(leader_pressure, 4),
+        "early_speed_density": round(early_speed_density, 4),
+        "collapse_risk": round(collapse_risk, 4),
+        "race_shape_fit": round(race_shape_fit, 4),
+        # --- Greyhound collision features ---
+        "collision_risk_score": collision_risk_score,
+        "interference_probability": interference_probability,
+        "boxed_runner_penalty": boxed_runner_penalty,
         # --- Enrichment (FormFav — non-authoritative) ---
         "enrichment_win_pct": 0.0,
         "enrichment_place_pct": 0.0,
         "enrichment_track_win_pct": 0.0,
         "enrichment_distance_win_pct": 0.0,
         "enrichment_recent_form": "",
+        "enrichment_running_style": "",
+        "enrichment_early_speed_index": 0.0,
+        "enrichment_settling_position": 0.0,
+        "enrichment_pace_scenario": "",
+        "enrichment_class_profile": "",
+        "enrichment_race_class_fit": 0.0,
+        "enrichment_form_badges": "",
+        "enrichment_jockey_stats": "",
         "has_enrichment": 0,
     }
 
     if enrichment:
-        row["enrichment_win_pct"] = _safe_float(enrichment.get("win_pct"), 0.0)
-        row["enrichment_place_pct"] = _safe_float(enrichment.get("place_pct"), 0.0)
-        row["enrichment_track_win_pct"] = _safe_float(enrichment.get("track_win_pct"), 0.0)
-        row["enrichment_distance_win_pct"] = _safe_float(enrichment.get("distance_win_pct"), 0.0)
-        row["enrichment_recent_form"] = str(enrichment.get("form_string") or "")
+        row["enrichment_win_pct"]            = _safe_float(enrichment.get("win_pct"), 0.0)
+        row["enrichment_place_pct"]          = _safe_float(enrichment.get("place_pct"), 0.0)
+        row["enrichment_track_win_pct"]      = _safe_float(enrichment.get("track_win_pct"), 0.0)
+        row["enrichment_distance_win_pct"]   = _safe_float(enrichment.get("distance_win_pct"), 0.0)
+        row["enrichment_recent_form"]        = str(enrichment.get("form_string") or "")
+        row["enrichment_running_style"]      = str(enrichment.get("running_style") or enrichment.get("run_style") or "")
+        row["enrichment_early_speed_index"]  = _safe_float(enrichment.get("earlySpeedIndex") or enrichment.get("early_speed_index"), 0.0)
+        row["enrichment_settling_position"]  = _safe_float(enrichment.get("settlingPosition") or enrichment.get("settling_position"), 0.0)
+        row["enrichment_pace_scenario"]      = str(enrichment.get("paceScenario") or enrichment.get("pace_scenario") or "")
+        row["enrichment_class_profile"]      = str(enrichment.get("classProfile") or enrichment.get("class_profile") or "")
+        row["enrichment_race_class_fit"]     = _safe_float(enrichment.get("raceClassFit") or enrichment.get("race_class_fit"), 0.0)
+        row["enrichment_form_badges"]        = str(enrichment.get("form_badges") or enrichment.get("badges") or "")
+        row["enrichment_jockey_stats"]       = str(enrichment.get("jockey_stats") or "")
         row["has_enrichment"] = 1
 
     return row

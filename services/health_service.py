@@ -51,6 +51,13 @@ _state: dict[str, Any] = {
     "last_evaluation_run_at": None,
     "last_evaluation_run_count": 0,
     "active_model_version": "baseline_v1",
+    # Phase 4 — feature engine / sectionals
+    "last_feature_build_at": None,
+    "last_feature_build_count": 0,
+    "last_sectional_extraction_at": None,
+    "last_sectional_extraction_count": 0,
+    "last_race_shape_build_at": None,
+    "last_race_shape_build_count": 0,
 }
 
 
@@ -137,6 +144,43 @@ def record_evaluation_run(*, count: int = 0) -> None:
         last_evaluation_run_count=count,
     )
     log.debug(f"health_service: evaluation_run recorded count={count}")
+
+
+# ---------------------------------------------------------------------------
+# PHASE 4 — FEATURE ENGINE / SECTIONALS RECORD HELPERS
+# ---------------------------------------------------------------------------
+
+def record_feature_build(*, count: int = 0) -> None:
+    """Record completion of a feature build run."""
+    _update(
+        last_feature_build_at=_now(),
+        last_feature_build_count=count,
+    )
+    log.debug(f"health_service: feature_build recorded count={count}")
+
+
+def record_sectional_extraction(*, count: int = 0) -> None:
+    """Record completion of a sectional extraction pass."""
+    _update(
+        last_sectional_extraction_at=_now(),
+        last_sectional_extraction_count=count,
+    )
+    log.debug(f"health_service: sectional_extraction recorded count={count}")
+
+
+def record_race_shape_build(*, count: int = 0) -> None:
+    """Record completion of a race shape build pass."""
+    _update(
+        last_race_shape_build_at=_now(),
+        last_race_shape_build_count=count,
+    )
+    log.debug(f"health_service: race_shape_build recorded count={count}")
+
+
+def set_active_model_version(model_version: str) -> None:
+    """Update the active model version label."""
+    _update(active_model_version=model_version)
+    log.info(f"health_service: active_model_version set to {model_version}")
 
 
 def update_snapshot(

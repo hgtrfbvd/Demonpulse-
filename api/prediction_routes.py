@@ -147,6 +147,8 @@ def run_backtest():
             date_to=date_to,
             code_filter=code_filter,
             track_filter=track_filter,
+            model_version=data.get("model_version") or "baseline_v1",
+            compare_models=bool(data.get("compare_models", False)),
         )
         if result.get("ok"):
             record_backtest_run(run_id=result.get("run_id", ""))

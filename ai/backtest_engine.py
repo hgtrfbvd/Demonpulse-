@@ -8,21 +8,27 @@ Critical contamination rules:
   - NO future leakage: feature inputs use only pre-result race/runner/odds data
   - Official results (results_log) are used ONLY for evaluation, never as inputs
   - FormFav provisional data is never used as evaluation source
-  - Race snapshots (runners, odds) are the sole feature inputs
+  - Historical feature snapshots (when available) take priority over rebuilding
+    from current mutable tables — avoids feature contamination
 
 Backtest approach:
-  1. Query today_races for the date range (pre-result authoritative snapshots)
-  2. For each race, fetch runners from today_runners
-  3. Build features using feature_builder (same pipeline as live predictions)
-  4. Run baseline scorer to generate predicted rankings
+  1. Check feature_snapshots table for pre-stored historical feature vectors
+  2. If snapshots exist, use them directly (contamination-safe)
+  3. If not, fall back to rebuilding features from today_races / today_runners
+  4. Run the specified model scorer (baseline_v1 or v2_feature_engine)
   5. Compare against results_log (official confirmed results only)
   6. Aggregate metrics and save run summary
+
+Model comparison:
+  - Pass compare_models=True to run both baseline_v1 and v2_feature_engine
+    over the same date range and produce a side-by-side comparison
 
 Backtest output:
   - total_races, total_runners, hit_rate, top2_rate, top3_rate
   - avg_winner_odds for winning picks
   - model_version used, run timestamp
   - run_id for lineage
+  - optional model_comparison dict when compare_models=True
 """
 from __future__ import annotations
 
@@ -39,15 +45,17 @@ def backtest_date(
     code_filter: str | None = None,
     track_filter: str | None = None,
     model_version: str = "baseline_v1",
+    compare_models: bool = False,
 ) -> dict[str, Any]:
     """
     Backtest all races for a single date.
 
     Args:
-        target_date: ISO date string (YYYY-MM-DD)
-        code_filter: optional race code filter (e.g. 'GREYHOUND')
-        track_filter: optional track name filter (substring match)
-        model_version: model version label for the run record
+        target_date   : ISO date string (YYYY-MM-DD)
+        code_filter   : optional race code filter (e.g. 'GREYHOUND')
+        track_filter  : optional track name filter (substring match)
+        model_version : model version label for the run record
+        compare_models: when True, also runs v2_feature_engine and compares
 
     Returns:
         Backtest run summary dict
@@ -58,6 +66,7 @@ def backtest_date(
         code_filter=code_filter,
         track_filter=track_filter,
         model_version=model_version,
+        compare_models=compare_models,
     )
 
 
@@ -67,20 +76,39 @@ def backtest_date_range(
     code_filter: str | None = None,
     track_filter: str | None = None,
     model_version: str = "baseline_v1",
+    compare_models: bool = False,
 ) -> dict[str, Any]:
     """
     Backtest a date range of races.
 
+    Uses stored historical feature snapshots when available to avoid
+    contamination from current mutable tables.
+
     Args:
-        date_from: start date ISO string (inclusive)
-        date_to: end date ISO string (inclusive)
-        code_filter: optional race code filter
-        track_filter: optional track name filter (substring match)
-        model_version: model version label for the run record
+        date_from     : start date ISO string (inclusive)
+        date_to       : end date ISO string (inclusive)
+        code_filter   : optional race code filter
+        track_filter  : optional track name filter (substring match)
+        model_version : model version label for the run record
+        compare_models: when True, also runs v2_feature_engine and adds
+                        model_comparison to the output
 
     Returns:
         Full backtest run summary dict with hit rates and run_id for lineage.
     """
+    from datetime import date as _date
+
+    # Guard: reject future dates
+    today_str = _date.today().isoformat()
+    if date_from > today_str or date_to > today_str:
+        return {
+            "ok": False,
+            "error": "Backtest cannot use future dates (no leakage rule)",
+            "date_from": date_from,
+            "date_to": date_to,
+            "today": today_str,
+        }
+
     run_id = _make_run_id()
     started_at = _now()
 
@@ -157,7 +185,7 @@ def backtest_date_range(
         if winning_odds_list else None
     )
 
-    summary = {
+    summary: dict[str, Any] = {
         "ok": True,
         "run_id": run_id,
         "date_from": date_from,
@@ -177,12 +205,39 @@ def backtest_date_range(
         "created_at": started_at,
     }
 
+    # Optional model comparison
+    if compare_models and model_version != "v2_feature_engine":
+        v2_summary = backtest_date_range(
+            date_from=date_from,
+            date_to=date_to,
+            code_filter=code_filter,
+            track_filter=track_filter,
+            model_version="v2_feature_engine",
+            compare_models=False,
+        )
+        summary["model_comparison"] = {
+            model_version: {
+                "hit_rate": hit_rate,
+                "top2_rate": top2_rate,
+                "top3_rate": top3_rate,
+                "avg_winner_odds": avg_winner_odds,
+            },
+            "v2_feature_engine": {
+                "hit_rate": v2_summary.get("hit_rate"),
+                "top2_rate": v2_summary.get("top2_rate"),
+                "top3_rate": v2_summary.get("top3_rate"),
+                "avg_winner_odds": v2_summary.get("avg_winner_odds"),
+                "run_id": v2_summary.get("run_id"),
+            },
+        }
+
     _save_backtest_run(summary)
     _save_backtest_items(run_items)
 
     log.info(
         f"backtest: run {run_id} complete — {races_tested} races "
-        f"hit_rate={hit_rate:.1%} top2={top2_rate:.1%} top3={top3_rate:.1%}"
+        f"hit_rate={hit_rate:.1%} top2={top2_rate:.1%} top3={top3_rate:.1%} "
+        f"model={model_version}"
     )
     return summary
 
@@ -220,10 +275,11 @@ def _backtest_single_race(
 ) -> dict[str, Any] | None:
     """
     Backtest one race:
-      1. Fetch runners (pre-result snapshot — no result data used)
-      2. Build features and score with baseline model
-      3. Fetch official result (evaluation only — never as input)
-      4. Compute hit metrics
+      1. Try to use stored historical feature snapshot (contamination-safe)
+      2. If not found, rebuild features from today_runners (fallback)
+      3. Score with the specified model
+      4. Fetch official result (evaluation only — never as input)
+      5. Compute hit metrics
 
     Returns None if the race lacks either runners or a confirmed result.
     """
@@ -233,18 +289,32 @@ def _backtest_single_race(
     track = race.get("track") or ""
     code = race.get("code") or ""
 
-    runners = _fetch_runners(race_id)
-    if not runners:
-        return None
+    # -- Step 1: try stored historical feature snapshot --
+    stored_features = _load_stored_features(race_uid)
+    used_snapshot = False
 
-    from ai.feature_builder import build_race_features
-    from ai.predictor import _baseline_score
+    if stored_features:
+        features = stored_features
+        used_snapshot = True
+    else:
+        # -- Step 2: rebuild features from current storage (fallback) --
+        runners = _fetch_runners(race_id)
+        if not runners:
+            return None
 
-    features = build_race_features(race, runners)
-    if not features:
-        return None
+        from ai.feature_builder import build_race_features
+        features = build_race_features(race, runners)
+        if not features:
+            return None
 
-    scored = _baseline_score(features)
+    # -- Step 3: score with the requested model --
+    if model_version == "v2_feature_engine":
+        from ai.predictor import _v2_feature_score
+        scored = _v2_feature_score(features)
+    else:
+        from ai.predictor import _baseline_score
+        scored = _baseline_score(features)
+
     if not scored:
         return None
 
@@ -254,10 +324,10 @@ def _backtest_single_race(
     top2_names = {s.get("runner_name") for s in scored[:2] if s.get("runner_name")}
     top3_names = {s.get("runner_name") for s in scored[:3] if s.get("runner_name")}
 
-    # Official result — evaluation ONLY, never used as a feature input
+    # -- Step 4: official result — evaluation ONLY, never a feature input --
     result = _fetch_result_for_race(race)
     if not result:
-        return None  # no confirmed result yet — skip this race
+        return None
 
     actual_winner = result.get("winner") or ""
     winner_box = result.get("winner_box")
@@ -291,6 +361,8 @@ def _backtest_single_race(
         "top3_hit": top3_hit,
         "score": predicted_score,
         "winner_odds": _safe_float(win_price),
+        "model_version": model_version,
+        "used_stored_snapshot": used_snapshot,
         "created_at": _now(),
     }
 
@@ -298,6 +370,40 @@ def _backtest_single_race(
 # ---------------------------------------------------------------------------
 # INTERNAL — DATA ACCESS (read-only, authoritative storage)
 # ---------------------------------------------------------------------------
+
+def _load_stored_features(race_uid: str) -> list[dict[str, Any]]:
+    """
+    Load the most recent stored feature snapshot for a race.
+    Returns empty list if none found.
+    Stored snapshots are prefered over live table rebuilds in backtest.
+    """
+    try:
+        import json
+        from db import get_db, safe_query, T
+
+        rows = safe_query(
+            lambda: get_db()
+            .table(T("feature_snapshots"))
+            .select("features")
+            .eq("race_uid", race_uid)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+            .data,
+            [],
+        ) or []
+        if not rows or not rows[0].get("features"):
+            return []
+        raw = rows[0]["features"]
+        if isinstance(raw, str):
+            return json.loads(raw) or []
+        if isinstance(raw, list):
+            return raw
+        return []
+    except Exception as e:
+        log.debug(f"backtest: _load_stored_features failed for {race_uid}: {e}")
+        return []
+
 
 def _fetch_races_for_range(
     date_from: str,

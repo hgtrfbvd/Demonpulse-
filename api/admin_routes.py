@@ -238,3 +238,36 @@ def run_phase3_migrations():
     except Exception as e:
         log.error(f"/api/admin/phase3-migrate failed: {e}")
         return jsonify({"ok": False, "error": "Phase 3 migration failed"}), 500
+
+
+@admin_bp.route("/phase4-migrate", methods=["POST"])
+def run_phase4_migrations():
+    """
+    Run Phase 4 database migrations:
+      - Creates sectional_snapshots and race_shape_snapshots tables
+      - Adds new columns to feature_snapshots, prediction_snapshots,
+        and backtest_run_items
+    Safe to re-run.
+    """
+    try:
+        from migrations import run_phase4_migrations as _run_p4
+        results = _run_p4()
+        return jsonify({"ok": True, "results": results})
+    except Exception as e:
+        log.error(f"/api/admin/phase4-migrate failed: {e}")
+        return jsonify({"ok": False, "error": "Phase 4 migration failed"}), 500
+
+
+@admin_bp.route("/migrate-all", methods=["POST"])
+def run_all_migrations():
+    """
+    Run all migration phases in order: column migrations → Phase 3 → Phase 4.
+    Safe to re-run. Use this for full schema reconciliation.
+    """
+    try:
+        from migrations import run_all_migrations as _run_all
+        results = _run_all()
+        return jsonify({"ok": True, "results": results})
+    except Exception as e:
+        log.error(f"/api/admin/migrate-all failed: {e}")
+        return jsonify({"ok": False, "error": "Full migration failed"}), 500
