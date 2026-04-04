@@ -476,19 +476,29 @@ class OddsProConnector:
             for item in raw_items:
                 if not isinstance(item, dict):
                     continue
-                mid = str(item.get("id") or item.get("meetingId") or "")
+                mid = str(
+                    item.get("id") or item.get("meetingId")
+                    or item.get("meetingName") or ""
+                )
                 if not mid:
                     continue
+                if not item.get("id") and not item.get("meetingId"):
+                    log.debug(
+                        f"[ODDSPRO] meeting item has no id/meetingId — "
+                        f"falling back to meetingName as identifier: {mid!r}"
+                    )
                 meetings.append(
                     MeetingRecord(
                         meeting_id=mid,
                         code=self._normalise_code(
-                            item.get("type") or item.get("code") or item.get("raceType") or "HORSE"
+                            item.get("type") or item.get("code") or item.get("raceType")
+                            or item.get("racingCode") or "HORSE"
                         ),
                         source=self.source_name,
                         track=self._clean_track(
                             item.get("track") or item.get("meetingTrack")
-                            or item.get("venue") or item.get("name") or ""
+                            or item.get("venue") or item.get("name")
+                            or item.get("meetingName") or ""
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
                         state=str(
@@ -517,19 +527,29 @@ class OddsProConnector:
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                mid = str(item.get("id") or item.get("meetingId") or "")
+                mid = str(
+                    item.get("id") or item.get("meetingId")
+                    or item.get("meetingName") or ""
+                )
                 if not mid:
                     continue
+                if not item.get("id") and not item.get("meetingId"):
+                    log.debug(
+                        f"[ODDSPRO] meeting item has no id/meetingId — "
+                        f"falling back to meetingName as identifier: {mid!r}"
+                    )
                 meetings.append(
                     MeetingRecord(
                         meeting_id=mid,
                         code=self._normalise_code(
-                            item.get("type") or item.get("code") or item.get("raceType") or "HORSE"
+                            item.get("type") or item.get("code") or item.get("raceType")
+                            or item.get("racingCode") or "HORSE"
                         ),
                         source=self.source_name,
                         track=self._clean_track(
                             item.get("track") or item.get("meetingTrack")
-                            or item.get("venue") or item.get("name") or ""
+                            or item.get("venue") or item.get("name")
+                            or item.get("meetingName") or ""
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
                         state=str(
@@ -892,10 +912,13 @@ class OddsProConnector:
             "gallops": "HORSE",
             "thoroughbred": "HORSE",
             "horse": "HORSE",
+            "t": "HORSE",       # racingCode: "T" (Thoroughbred)
             "harness": "HARNESS",
             "trot": "HARNESS",
+            "h": "HARNESS",     # racingCode: "H" (Harness)
             "greyhound": "GREYHOUND",
             "dogs": "GREYHOUND",
+            "g": "GREYHOUND",   # racingCode: "G" (Greyhound)
         }
         key = (raw or "").strip().lower()
         return mapping.get(key, (raw or "HORSE").upper())
