@@ -127,14 +127,22 @@ class OddsProConnector:
         self.country = os.getenv("ODDSPRO_COUNTRY", "au").strip().lower()
 
     def is_enabled(self) -> bool:
-        return bool(self.base_url and self.api_key)
+        """
+        OddsPro is configured if the base URL is set.
+        API key is optional — public endpoint mode works without a key.
+        """
+        return bool(self.base_url)
+
+    def is_public_mode(self) -> bool:
+        """Return True when operating without an API key (public endpoint mode)."""
+        return self.is_enabled() and not bool(self.api_key)
 
     def healthcheck(self) -> dict[str, Any]:
         if not self.is_enabled():
             return {
                 "ok": False,
                 "source": self.source_name,
-                "reason": "ODDSPRO_BASE_URL or ODDSPRO_API_KEY not set",
+                "reason": "ODDSPRO_BASE_URL not set",
             }
         try:
             resp = self._get("/api/external/tracks", params={"country": self.country})
@@ -143,6 +151,8 @@ class OddsProConnector:
                 "source": self.source_name,
                 "status_code": resp.status_code,
                 "base_url": self.base_url,
+                "oddspro_public_mode": self.is_public_mode(),
+                "oddspro_api_key_present": bool(self.api_key),
             }
         except Exception as e:
             log.error(f"OddsPro healthcheck failed: {e}")
@@ -156,17 +166,21 @@ class OddsProConnector:
         """
         GET /api/external/meetings
         Daily bootstrap — list all meetings for the given date.
+
+        Raises requests.exceptions.HTTPError on non-2xx responses so callers
+        can map specific HTTP status codes to diagnostic error codes.
+        Raises ValueError on JSON parse failure.
         """
         params: dict[str, Any] = {"country": self.country}
         if target_date:
             params["date"] = target_date
 
+        resp = self._get("/api/external/meetings", params=params)
         try:
-            resp = self._get("/api/external/meetings", params=params)
             payload = resp.json()
-        except Exception as e:
-            log.error(f"OddsPro fetch_meetings failed: {e}")
-            return []
+        except ValueError as e:
+            log.error(f"OddsPro fetch_meetings: JSON parse failed: {e}")
+            raise
 
         meetings: list[MeetingRecord] = []
         items = payload if isinstance(payload, list) else payload.get("meetings") or payload.get("data") or []

@@ -27,6 +27,8 @@ import threading
 from datetime import date, datetime, timezone
 from typing import Any
 
+import requests as _requests_lib
+
 log = logging.getLogger(__name__)
 
 _oddspro_connector = None
@@ -83,11 +85,20 @@ def _get_oddspro() -> "OddsProConnector":  # noqa: F821
         _oddspro_connector = OddsProConnector()
         if not _oddspro_connector.is_enabled():
             log.warning(
-                "OddsPro connector not enabled (ODDSPRO_BASE_URL or ODDSPRO_API_KEY missing). "
+                "OddsPro connector not enabled (ODDSPRO_BASE_URL missing). "
                 "full_sweep and rolling_refresh will be no-ops until configured."
             )
         else:
-            log.info("OddsPro connector loaded (primary source)")
+            mode_label = "public endpoint mode" if _oddspro_connector.is_public_mode() else "authenticated mode"
+            log.info(f"OddsPro connector loaded (primary source, {mode_label})")
+            try:
+                from services.health_service import record_oddspro_mode
+                record_oddspro_mode(
+                    public_mode=_oddspro_connector.is_public_mode(),
+                    api_key_present=bool(_oddspro_connector.api_key),
+                )
+            except Exception as exc:
+                log.debug(f"_get_oddspro: could not record mode in health service: {exc}")
     return _oddspro_connector
 
 
@@ -124,9 +135,17 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
 
     try:
         meetings = conn.fetch_meetings(today)
+    except _requests_lib.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+        reason = f"oddspro_http_{status_code}" if status_code else "oddspro_request_exception"
+        log.error(f"full_sweep: fetch_meetings HTTP error {status_code}: {e}")
+        return {"ok": False, "reason": reason, "http_status": status_code, "date": today}
+    except ValueError as e:
+        log.error(f"full_sweep: fetch_meetings parse error: {e}")
+        return {"ok": False, "reason": "oddspro_parse_error", "date": today}
     except Exception as e:
         log.error(f"full_sweep: fetch_meetings failed: {e}")
-        return {"ok": False, "error": "Data engine error", "date": today}
+        return {"ok": False, "reason": "oddspro_request_exception", "date": today}
 
     if not meetings:
         log.info(f"full_sweep: no meetings returned for {today}")

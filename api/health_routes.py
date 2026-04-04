@@ -95,6 +95,9 @@ def health_live():
             "scheduler": scheduler_info,
             "primary_source": "oddspro",
             "overlay_source": "formfav (provisional only)",
+            # OddsPro mode
+            "oddspro_public_mode": health.get("oddspro_public_mode", False),
+            "oddspro_api_key_present": health.get("oddspro_api_key_present", False),
             # Bootstrap
             "last_bootstrap_at": health.get("last_bootstrap_at"),
             "last_bootstrap_ok": health.get("last_bootstrap_ok"),

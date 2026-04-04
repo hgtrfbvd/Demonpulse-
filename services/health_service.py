@@ -70,6 +70,9 @@ _state: dict[str, Any] = {
     "enrichment_usage_total": 0,
     "disagreement_flagged_count": 0,
     "disagreement_total": 0,
+    # Phase 4.8 — OddsPro public mode tracking
+    "oddspro_public_mode": False,
+    "oddspro_api_key_present": False,
 }
 
 
@@ -138,6 +141,15 @@ def record_formfav_overlay(*, ok: bool) -> None:
         last_formfav_overlay_ok=ok,
     )
     log.debug(f"health_service: formfav_overlay recorded ok={ok}")
+
+
+def record_oddspro_mode(*, public_mode: bool, api_key_present: bool) -> None:
+    """Record the current OddsPro operating mode (public vs authenticated)."""
+    _update(
+        oddspro_public_mode=public_mode,
+        oddspro_api_key_present=api_key_present,
+    )
+    log.debug(f"health_service: oddspro_mode recorded public_mode={public_mode}")
 
 
 # ---------------------------------------------------------------------------
