@@ -1357,14 +1357,14 @@ $$ LANGUAGE plpgsql;
 -- ================================================================
 
 INSERT INTO user_accounts (user_id)
-SELECT id FROM users
-WHERE id NOT IN (SELECT user_id FROM user_accounts)
+SELECT u.id FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM user_accounts a WHERE a.user_id = u.id)
 ON CONFLICT DO NOTHING;
 
 INSERT INTO user_permissions (user_id, effective)
-SELECT id, '{}'
-FROM users
-WHERE id NOT IN (SELECT user_id FROM user_permissions)
+SELECT u.id, '{}'
+FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM user_permissions p WHERE p.user_id = u.id)
 ON CONFLICT DO NOTHING;
 
 
