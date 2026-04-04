@@ -280,8 +280,12 @@ class BaseConnector(ABC):
     def healthcheck(self) -> dict[str, Any]:
         """
         Check connector availability.
+
         Must return a dict with at least:
           {"ok": bool, "source": str, "reason": str | None}
+
+        Standard envelope fields (source, status, confidence, fetched_at,
+        error, meta, data) are documented at the top of this module.
         """
 
     @abstractmethod

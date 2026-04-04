@@ -303,7 +303,7 @@ def _fetch_formfav_race(target_date: str, track: str, race_num: int, code: str) 
         }
 
     except Exception as e:
-        log.error("[fetch] FormFav race failed: %s", e)
+        log.error("[fetch] FormFav race %s/%s/%d/%s failed: %s", target_date, track, race_num, code, e)
         return {
             "source": "formfav",
             "status": "failed",
@@ -642,7 +642,10 @@ def fetch_race(target_date: str, track: str, race_num: int, code: str = "HORSE")
         primary_envelopes=[primary_envelope],
         supplemental_envelopes=[],
     )
-    _health["validation_pass_count" if validation.get("can_build_board") else "validation_fail_count"] += 1
+    if validation.get("can_build_board"):
+        _health["validation_pass_count"] += 1
+    else:
+        _health["validation_fail_count"] += 1
 
     data = (primary_envelope.get("data") or {})
     races = data.get("races") or []

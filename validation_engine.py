@@ -20,6 +20,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+# Import shared stale threshold from integrity_filter to maintain single source of truth
+from integrity_filter import MAX_STALE_DATA_SECONDS as STALE_THRESHOLD_SECONDS
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------
@@ -38,8 +41,6 @@ NAME_OVERLAP_LOW_THRESHOLD = 0.4       # Below → names_mismatch penalty
 MIN_RUNNER_VARIANCE = 2                 # Absolute minimum allowed count difference
 RUNNER_COUNT_TOLERANCE_RATIO = 0.2     # 20% relative tolerance
 
-# Stale data threshold (seconds) — consistent with integrity_filter
-STALE_THRESHOLD_SECONDS = 600          # 10 minutes
 # ---------------------------------------------------------------
 # VALIDATION REASON CODES
 # ---------------------------------------------------------------
