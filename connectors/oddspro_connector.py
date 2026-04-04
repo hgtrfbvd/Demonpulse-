@@ -53,10 +53,11 @@ def normalize_meetings_payload(payload: Any) -> list:
     Normalise an OddsPro /meetings response into a flat list of meeting dicts.
 
     Supported shapes:
-      A. {"data": [...], ...}     -> return payload["data"]
-      B. {"data": {...}, ...}     -> wrap single meeting in list: [payload["data"]]
-      C. [...]                    -> return payload directly
-      D. {"meetings": [...], ...} -> return payload["meetings"]
+      A. {"data": [...], ...}              -> return payload["data"]
+      B. {"data": {...}, ...}              -> wrap single meeting in list: [payload["data"]]
+      B2. {"data": {"meetings": [...]} }   -> return payload["data"]["meetings"]
+      C. [...]                             -> return payload directly
+      D. {"meetings": [...], ...}          -> return payload["meetings"]
 
     Raises ValueError with shape diagnostics if none of the above match.
     """
@@ -741,6 +742,10 @@ class OddsProConnector:
 
         for r in runners_raw:
             if not isinstance(r, dict):
+                log.warning(
+                    f"_parse_runners: skipping non-dict runner item "
+                    f"(type={type(r).__name__}) in race {race.race_uid}"
+                )
                 continue
             # Documented aliases: runnerNumber | number | saddleCloth
             number = r.get("runnerNumber") or r.get("number") or r.get("saddleCloth")
@@ -755,9 +760,6 @@ class OddsProConnector:
                 box_num = int(box_num) if box_num is not None else None
             except (TypeError, ValueError):
                 box_num = None
-
-            # barrier / barrierDraw for gallops/harness; box/boxNumber used above for greyhounds
-            barrier_raw = r.get("barrier") or r.get("barrierDraw")
 
             weight_raw = r.get("weight")
             try:
@@ -785,7 +787,8 @@ class OddsProConnector:
                         or r.get("horseName") or r.get("dogName") or ""
                     ),
                     number=number,
-                    barrier=barrier_raw,
+                    # barrier / barrierDraw for gallops/harness; box/boxNumber used above for greyhounds
+                    barrier=r.get("barrier") or r.get("barrierDraw"),
                     trainer=str(r.get("trainer") or ""),
                     jockey=str(r.get("jockey") or ""),
                     driver=str(r.get("driver") or ""),
