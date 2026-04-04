@@ -20,8 +20,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone, date
 from typing import Any
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
+
+# Australian Eastern timezone — handles both AEST (UTC+10) and AEDT (UTC+11, DST)
+_AEST = ZoneInfo("Australia/Sydney")
 
 # NTJ threshold windows in seconds
 NTJ_IMMINENT_MAX = 120      # < 2 minutes
@@ -88,7 +92,8 @@ def parse_jump_time(jump_time: str | None, race_date: str | None = None) -> date
     for fmt in ("%H:%M:%S", "%H:%M"):
         try:
             t = datetime.strptime(jump_time, fmt).time()
-            dt = datetime.combine(base_date, t, tzinfo=timezone.utc)
+            # Time-only values represent Australian local time (AEST/AEDT)
+            dt = datetime.combine(base_date, t, tzinfo=_AEST)
             return dt
         except ValueError:
             continue

@@ -24,7 +24,6 @@ from validation_engine import validate_race
 log = logging.getLogger(__name__)
 
 _NTJ_SORT_ORDER = {"IMMINENT": 0, "NEAR": 1, "UPCOMING": 2, "PAST": 3, "UNKNOWN": 4}
-_SORT_FALLBACK_TIME = "99:99"
 
 
 def build_board(
@@ -93,10 +92,10 @@ def build_board(
 
         board.append(_board_item(race, ntj, confidence))
 
-    # Sort by NTJ label order, then by jump time within each group
+    # Sort by NTJ label order, then by seconds_to_jump within each group
     board.sort(key=lambda x: (
         _NTJ_SORT_ORDER.get(x.get("ntj_label", "UNKNOWN"), 4),
-        x.get("jump_time") or _SORT_FALLBACK_TIME,
+        x.get("seconds_to_jump") if x.get("seconds_to_jump") is not None else 999999,
     ))
 
     log.info(
