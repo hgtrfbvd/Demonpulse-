@@ -15,15 +15,6 @@ log = logging.getLogger(__name__)
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
 
-def _safe_exc(exc: Exception) -> str:
-    """
-    Return an error type description safe for inclusion in API responses.
-    Only the exception class name is returned — full message and traceback
-    details are written to server logs only, avoiding py/stack-trace-exposure.
-    """
-    return type(exc).__name__
-
-
 @admin_bp.route("/sweep", methods=["POST"])
 def trigger_sweep():
     """Manually trigger a full OddsPro sweep for today."""
@@ -455,7 +446,8 @@ def admin_bootstrap_day():
     # 7. VALIDATION / FILTER
     # In full_sweep(), races_stored counts every race processed (including blocked ones).
     # races_blocked counts those that failed the integrity filter.
-    # races_passed = races_stored - races_blocked (already computed by full_sweep).
+    # full_sweep always includes races_passed on success; the fallback handles early-exit
+    # failure cases where full_sweep returns before computing it.
     races_stored = result.get("races_stored", result.get("races", 0))
     races_blocked = result.get("races_blocked", 0)
     races_passed = result.get("races_passed", max(races_stored - races_blocked, 0))
@@ -477,9 +469,10 @@ def admin_bootstrap_day():
         from db import get_db
         get_db()
     except Exception as dbe:
-        # Log full detail server-side; return sanitized message to avoid path exposure
+        # Log full detail server-side; include only a semantic code in the response
+        # to avoid py/stack-trace-exposure (no exception-derived data in output).
         log.error(f"bootstrap-day: DB connectivity check failed: {dbe}")
-        db_errors.append(_safe_exc(dbe))
+        db_errors.append("db_connectivity_failed")
         target_database = "unavailable"
     try:
         from env import env as _env
@@ -491,9 +484,8 @@ def admin_bootstrap_day():
     storage_diag = {
         "races_upsert_attempted": races_stored,
         "races_stored": races_stored,
-        # runners_found = total extracted runners (all attempted for storage).
-        # Fall back to runners_stored when extraction count is unavailable (0).
-        "runners_upsert_attempted": runners_found if runners_found > 0 else runners_stored,
+        # runners_found is the extraction count; every found runner is attempted for storage.
+        "runners_upsert_attempted": runners_found,
         "runners_stored": runners_stored,
         "db_errors": db_errors,
         "target_database": target_database,
@@ -531,8 +523,8 @@ def admin_bootstrap_day():
             "blocked_race_count": 0,
             "rejected_count": 0,
             "board_count": 0,
-            # Sanitize exception to avoid exposing internal paths (CodeQL py/stack-trace-exposure)
-            "empty_reason": f"board_build_exception: {_safe_exc(be)}",
+            # Hardcoded semantic code — no exception-derived data (py/stack-trace-exposure)
+            "empty_reason": "board_build_exception",
         }
         if not failing_stage and ok:
             failing_stage = "board"
@@ -561,8 +553,8 @@ def admin_bootstrap_day():
         health_diag = {
             "last_bootstrap_at": None,
             "last_bootstrap_ok": None,
-            # Sanitize exception to avoid exposing internal paths (CodeQL py/stack-trace-exposure)
-            "last_bootstrap_error": _safe_exc(he),
+            # Hardcoded semantic code — no exception-derived data (py/stack-trace-exposure)
+            "last_bootstrap_error": "health_service_unavailable",
             "last_bootstrap_count": 0,
             "board_count": board_count,
         }
