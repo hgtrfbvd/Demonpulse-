@@ -136,7 +136,9 @@ def build_collision_metrics(
 
         collision_risk_score     = round(min(raw_risk, 1.0), 4)
         interference_probability = round(min(raw_risk * 0.85, 1.0), 4)
-        boxed_runner_penalty     = round(min(raw_risk * 0.60, 0.40), 4)   # capped at 0.40
+        # boxed_runner_penalty capped at 0.40 (raw_risk * 0.60 can reach 0.60,
+        # so the cap applies when raw_risk > 0.667)
+        boxed_runner_penalty     = round(min(raw_risk * 0.60, 0.40), 4)
         clean_run_probability    = round(max(1.0 - raw_risk * 0.90, 0.05), 4)
 
         results.append({
