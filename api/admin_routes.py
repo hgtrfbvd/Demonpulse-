@@ -281,64 +281,305 @@ def run_all_migrations():
 @admin_bp.route("/bootstrap-day", methods=["GET", "POST"])
 def admin_bootstrap_day():
     """
-    Trigger a full OddsPro daily bootstrap sweep.
-    GET is provided for easy browser testing; POST is also accepted.
-    Calls: data_engine.full_sweep()
+    Full-pipeline diagnostic bootstrap.
+    Instruments and exposes every stage from route trigger to board output.
+
+    Returns a structured diagnostic object:
+      ok, failing_stage, route, config, request, response, normalization,
+      extraction, validation, storage, board, health
     """
-    try:
-        from data_engine import full_sweep
-        from datetime import date
-        from services.health_service import record_bootstrap
+    from datetime import date, datetime, timezone
 
-        target_date = date.today().isoformat()
-        result = full_sweep(target_date)
-        ok = result.get("ok", False)
+    # ── 1. ROUTE LAYER ───────────────────────────────────────────────────
+    route_info = {
+        "route_called": "/api/admin/bootstrap-day",
+        "function_called": "admin_bootstrap_day",
+        "module_called": "api.admin_routes",
+    }
 
+    # ── 2. CONFIG / ENV LAYER ────────────────────────────────────────────
+    config = {
+        "ODDSPRO_BASE_URL": os.getenv("ODDSPRO_BASE_URL") or None,
+        "api_key_present": bool(os.getenv("ODDSPRO_API_KEY", "").strip()),
+        "public_mode": (
+            bool(os.getenv("ODDSPRO_BASE_URL", "").strip())
+            and not bool(os.getenv("ODDSPRO_API_KEY", "").strip())
+        ),
+        "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true").lower() == "true",
+        "app_mode": os.getenv("DP_ENV", "LIVE"),
+        "oddspro_timeout": int(os.getenv("ODDSPRO_TIMEOUT", "30")),
+        "oddspro_country": os.getenv("ODDSPRO_COUNTRY", "au"),
+    }
+
+    target_date = date.today().isoformat()
+    failing_stage: str | None = None
+
+    # Placeholder dicts for each stage (populated below)
+    request_diag: dict = {}
+    response_diag: dict = {}
+    normalization_diag: dict = {}
+    extraction_diag: dict = {}
+    validation_diag: dict = {}
+    storage_diag: dict = {}
+    board_diag: dict = {}
+    health_diag: dict = {}
+
+    # ── Early-exit: config failure ───────────────────────────────────────
+    if not config["ODDSPRO_BASE_URL"]:
+        failing_stage = "config"
+
+    # ── 3–8. REQUEST → STORAGE (via full_sweep) ──────────────────────────
+    result: dict = {}
+    if failing_stage != "config":
         try:
-            record_bootstrap(ok=ok, result=result)
-        except Exception:
-            pass
+            from data_engine import full_sweep
+            result = full_sweep(target_date)
+        except Exception as exc:
+            # Log full detail server-side; use a safe code in result to avoid
+            # py/stack-trace-exposure (no str(exc) in the response chain).
+            log.error(f"/api/admin/bootstrap-day full_sweep raised: {exc}")
+            result = {"ok": False, "reason": "unexpected_exception"}
 
-        # Rebuild board after successful bootstrap
-        if ok:
-            try:
-                from board_builder import get_board_for_today
-                board = get_board_for_today()
-                result["board_count"] = board.get("count", 0)
-                result["board_diagnostics"] = board.get("diagnostics", {})
-                from services.health_service import record_board_rebuild
-                record_board_rebuild(count=board.get("count", 0))
-            except Exception as be:
-                log.warning(f"admin/bootstrap-day: board rebuild failed: {be}")
+    ok = bool(result.get("ok", False))
 
-        return jsonify({
-            "ok": ok,
-            "action": "bootstrap-day",
+    # ── Pull HTTP diagnostics from the connector singleton ───────────────
+    try:
+        from data_engine import get_oddspro_connector
+        conn = get_oddspro_connector()
+        raw_diag = getattr(conn, "_last_fetch_diag", {}) or {}
+    except Exception as _ce:
+        log.debug(f"bootstrap-day: connector diag unavailable: {_ce}")
+        raw_diag = {}
+
+    # 3. REQUEST CONSTRUCTION
+    request_diag = {
+        "final_url": raw_diag.get("final_url") or (
+            f"{config['ODDSPRO_BASE_URL']}/api/external/meetings"
+            if config["ODDSPRO_BASE_URL"] else None
+        ),
+        "params": raw_diag.get("params") or {
+            "country": config["oddspro_country"],
             "date": target_date,
-            "meetings_found": result.get("meetings_found", result.get("meetings", 0)),
-            "meetings_fetched": result.get("meetings_fetched", 0),
-            "races_found": result.get("races_found", 0),
-            "runners_found": result.get("runners_found", 0),
-            "races_stored": result.get("races_stored", result.get("races", 0)),
-            "runners_stored": result.get("runners_stored", 0),
-            "races_passed": result.get("races_passed", 0),
-            "races_blocked": result.get("races_blocked", 0),
-            "board_count": result.get("board_count"),
-            "board_diagnostics": result.get("board_diagnostics"),
-            # Always include error context; None on success
-            "error": result.get("error") or result.get("reason") if not ok else None,
-            # Parse-failure diagnostics — None on success or non-parse errors
-            "parse_stage": result.get("parse_stage") if not ok else None,
-            "exception_message": result.get("exception_message") if not ok else None,
-            "response_type": result.get("response_type") if not ok else None,
-            "top_level_keys": result.get("top_level_keys") if not ok else None,
-            "first_item_keys": result.get("first_item_keys") if not ok else None,
-            "sample_payload": result.get("sample_payload") if not ok else None,
-            "timestamp": result.get("timestamp"),
-        })
-    except Exception as e:
-        log.error(f"/api/admin/bootstrap-day failed: {e}")
-        return jsonify({"ok": False, "action": "bootstrap-day", "error": "Bootstrap failed"}), 500
+        },
+        "headers_sent": raw_diag.get("headers_sent") or {},
+        "timeout": raw_diag.get("timeout") or config["oddspro_timeout"],
+    }
+
+    # 4. RESPONSE
+    response_diag = {
+        "http_status": (
+            raw_diag.get("http_status")
+            or result.get("http_status")
+        ),
+        "content_type": (
+            raw_diag.get("content_type")
+            or result.get("content_type")
+            or ""
+        ),
+        "response_length": (
+            raw_diag.get("response_length")
+            or result.get("response_length")
+        ),
+        "response_preview": (
+            raw_diag.get("response_preview")
+            or result.get("response_preview")
+            or ""
+        ),
+        "redirected_url": (
+            raw_diag.get("redirected_url")
+            or result.get("redirected_url")
+            or ""
+        ),
+    }
+
+    # Determine response-layer failure
+    reason = result.get("reason") or ""
+    if not failing_stage:
+        if reason.startswith("oddspro_http_"):
+            failing_stage = "response"
+        elif reason == "oddspro_request_exception":
+            failing_stage = "request"
+
+    # 5. JSON / NORMALIZATION
+    parse_stage = result.get("parse_stage")
+    if parse_stage:
+        normalization_diag = {
+            "json_decode_ok": parse_stage not in (
+                "root", "oddspro_empty_payload", "oddspro_html_page"
+            ),
+            "parsed_type": result.get("response_type") or "",
+            "top_level_keys": result.get("top_level_keys") or [],
+            "normalized_meetings_count": 0,
+            # Use the structured reason/parse_stage codes, not exception-derived strings.
+            # Full parse error detail (exception_message, error) is logged server-side.
+            "error": reason or parse_stage,
+            "parse_stage": parse_stage,
+            "sample_payload": result.get("sample_payload"),
+        }
+        if not failing_stage:
+            failing_stage = "normalization"
+    else:
+        meetings_found_norm = result.get("meetings_found", result.get("meetings", 0))
+        normalization_diag = {
+            "json_decode_ok": True,
+            "parsed_type": "dict" if ok or not reason else (result.get("response_type") or ""),
+            "top_level_keys": [],
+            "normalized_meetings_count": meetings_found_norm,
+            # Use the structured reason code, not exception-derived strings.
+            "error": None if ok else (reason or None),
+            "parse_stage": None,
+            "sample_payload": None,
+        }
+
+    # 6. EXTRACTION
+    meetings_found = result.get("meetings_found", result.get("meetings", 0))
+    races_found = result.get("races_found", 0)
+    runners_found = result.get("runners_found", 0)
+    extraction_diag = {
+        "meetings_found": meetings_found,
+        "races_found": races_found,
+        "runners_found": runners_found,
+        "parse_stage_failed": result.get("parse_stage") if not ok else None,
+    }
+    if not failing_stage and ok and meetings_found > 0 and races_found == 0:
+        failing_stage = "extraction"
+
+    # 7. VALIDATION / FILTER
+    # In full_sweep(), races_stored counts every race processed (including blocked ones).
+    # races_blocked counts those that failed the integrity filter.
+    # full_sweep always includes races_passed on success; the fallback handles early-exit
+    # failure cases where full_sweep returns before computing it.
+    races_stored = result.get("races_stored", result.get("races", 0))
+    races_blocked = result.get("races_blocked", 0)
+    races_passed = result.get("races_passed", max(races_stored - races_blocked, 0))
+    runners_stored = result.get("runners_stored", 0)
+    validation_diag = {
+        "races_passed": races_passed,
+        "races_blocked": races_blocked,
+        # Per-race block reasons are not surfaced at this level (see integrity_filter logs)
+        "reasons_blocked": [],
+        "empty_board_due_to_validation": bool(races_stored > 0 and races_passed == 0),
+    }
+    if not failing_stage and ok and races_stored > 0 and races_passed == 0:
+        failing_stage = "validation"
+
+    # 8. STORAGE
+    db_errors: list[str] = []
+    target_database = "supabase"
+    try:
+        from db import get_db
+        get_db()
+    except Exception as dbe:
+        # Log full detail server-side; include only a semantic code in the response
+        # to avoid py/stack-trace-exposure (no exception-derived data in output).
+        log.error(f"bootstrap-day: DB connectivity check failed: {dbe}")
+        db_errors.append("db_connectivity_failed")
+        target_database = "unavailable"
+    try:
+        from env import env as _env
+        table_races = _env.table("today_races")
+        table_runners = _env.table("today_runners")
+    except Exception:
+        table_races = "today_races"
+        table_runners = "today_runners"
+    storage_diag = {
+        "races_upsert_attempted": races_stored,
+        "races_stored": races_stored,
+        # runners_found is the extraction count; every found runner is attempted for storage.
+        "runners_upsert_attempted": runners_found,
+        "runners_stored": runners_stored,
+        "db_errors": db_errors,
+        "target_database": target_database,
+        "table_names": [table_races, table_runners],
+    }
+    if not failing_stage and ok and races_found > 0 and races_stored == 0:
+        failing_stage = "storage"
+    if db_errors and not failing_stage:
+        failing_stage = "storage"
+
+    # ── 9. BOARD BUILD ────────────────────────────────────────────────────
+    board_count = 0
+    try:
+        from board_builder import get_board_for_today
+        board = get_board_for_today()
+        board_count = board.get("count", 0)
+        bdiag = board.get("diagnostics", {})
+        board_diag = {
+            "stored_race_count_today": bdiag.get("stored_race_count_today", 0),
+            "active_race_count": bdiag.get("active_race_count", 0),
+            "blocked_race_count": bdiag.get("blocked_race_count", 0),
+            # rejected_count: active races that didn't reach the board and weren't
+            # pre-stored as blocked (i.e., failed validation or integrity during build)
+            "rejected_count": bdiag.get("rejected_count", 0),
+            "board_count": board_count,
+            "empty_reason": bdiag.get("empty_reason"),
+        }
+        if not failing_stage and ok and races_passed > 0 and board_count == 0:
+            failing_stage = "board"
+    except Exception as be:
+        log.warning(f"admin/bootstrap-day: board build failed: {be}")
+        board_diag = {
+            "stored_race_count_today": 0,
+            "active_race_count": 0,
+            "blocked_race_count": 0,
+            "rejected_count": 0,
+            "board_count": 0,
+            # Hardcoded semantic code — no exception-derived data (py/stack-trace-exposure)
+            "empty_reason": "board_build_exception",
+        }
+        if not failing_stage and ok:
+            failing_stage = "board"
+
+    # ── Record results in health service ──────────────────────────────────
+    try:
+        from services.health_service import record_bootstrap, record_board_rebuild
+        record_bootstrap(ok=ok, result=result)
+        record_board_rebuild(count=board_count)
+    except Exception:
+        pass
+
+    # ── 10. HEALTH LAYER ──────────────────────────────────────────────────
+    try:
+        from services.health_service import get_health
+        h = get_health()
+        health_diag = {
+            "last_bootstrap_at": h.get("last_bootstrap_at"),
+            "last_bootstrap_ok": h.get("last_bootstrap_ok"),
+            "last_bootstrap_error": h.get("last_bootstrap_error"),
+            "last_bootstrap_count": h.get("last_bootstrap_count", 0),
+            "board_count": h.get("board_count", board_count),
+        }
+    except Exception as he:
+        log.error(f"bootstrap-day: health service read failed: {he}")
+        health_diag = {
+            "last_bootstrap_at": None,
+            "last_bootstrap_ok": None,
+            # Hardcoded semantic code — no exception-derived data (py/stack-trace-exposure)
+            "last_bootstrap_error": "health_service_unavailable",
+            "last_bootstrap_count": 0,
+            "board_count": board_count,
+        }
+
+    # ── Determine failing_stage for uncaught failures ─────────────────────
+    if not failing_stage and not ok:
+        failing_stage = "unknown"
+
+    return jsonify({
+        "ok": ok,
+        "failing_stage": failing_stage,
+        **route_info,
+        "date": target_date,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "config": config,
+        "request": request_diag,
+        "response": response_diag,
+        "normalization": normalization_diag,
+        "extraction": extraction_diag,
+        "validation": validation_diag,
+        "storage": storage_diag,
+        "board": board_diag,
+        "health": health_diag,
+    })
 
 
 @admin_bp.route("/run-cycle", methods=["GET", "POST"])
