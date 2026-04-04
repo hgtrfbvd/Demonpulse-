@@ -120,11 +120,13 @@ def _get_formfav() -> "FormFavConnector":  # noqa: F821
 
 def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     """
-    Daily bootstrap via OddsPro GET /meetings.
-    Fetches all meetings for the day, then fetches races and runners for each
-    meeting and writes them to the database as official truth.
+    Daily bootstrap via OddsPro GET /api/external/meetings.
+    Fetches all meetings for the day, parses races and runners from
+    the /meetings response if they are embedded inline.  Only calls
+    GET /api/external/meeting/:id when races are NOT present in the
+    /meetings response for a given meeting.
 
-    FormFav is NOT called here.
+    Writes official data to the database.  FormFav is NOT called here.
 
     Returns diagnostics:
       meetings_found, meetings_fetched, races_found, runners_found,
@@ -174,7 +176,24 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
 
     for meeting in meetings:
         try:
-            races, runners = conn.fetch_meeting_races_with_runners(meeting)
+            # Prefer races embedded in the /meetings response (extra["raw"]["races"]).
+            # Only call /meeting/:id when races are absent from the /meetings payload.
+            raw_meeting = meeting.extra.get("raw", {})
+            embedded_races = raw_meeting.get("races")
+
+            if embedded_races:
+                races, runners = conn.parse_meeting_races_with_runners(meeting, raw_meeting)
+                log.debug(
+                    f"full_sweep: meeting {meeting.meeting_id} — "
+                    f"used embedded races ({len(races)} races)"
+                )
+            else:
+                races, runners = conn.fetch_meeting_races_with_runners(meeting)
+                log.debug(
+                    f"full_sweep: meeting {meeting.meeting_id} — "
+                    f"fetched via /meeting/:id ({len(races)} races)"
+                )
+
             meetings_fetched += 1
             races_found += len(races)
             runners_found += len(runners)

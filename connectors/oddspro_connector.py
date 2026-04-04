@@ -3,17 +3,26 @@ connectors/oddspro_connector.py - OddsPro PRIMARY connector
 ============================================================
 OddsPro is the authoritative source of record for DemonPulse.
 
-Endpoints used:
-  GET /meetings          - daily bootstrap (list today's meetings)
-  GET /meeting/:meetingId - meeting refresh + races + runners
-  GET /race/:raceId      - single race refresh + runners
-  GET /results           - day-level result sweep
-  GET /race/:id/results  - single-race result confirmation
-  GET /tracks            - optional track support only
+Documented base URL: https://oddspro.com.au  (set as ODDSPRO_BASE_URL)
+
+Endpoints used (full documented paths):
+  GET /api/external/meetings          - daily bootstrap (list today's meetings)
+  GET /api/external/meeting/:meetingId - meeting refresh + races + runners
+  GET /api/external/race/:raceId      - single race refresh + runners
+  GET /api/external/results           - day-level result sweep
+  GET /api/external/tracks            - optional track support only
+  GET /api/races/:id/results          - single-race official results (NOT under /external)
+
+Standard response shape for external endpoints:
+  {"data": [...], "meta": {...}}
+
+Authentication:
+  Public endpoints do NOT require an API key.
+  API key is optional and only needed for higher rate limits.
 
 Config (env vars):
-  ODDSPRO_BASE_URL   - base URL of the OddsPro API service
-  ODDSPRO_API_KEY    - authentication key for OddsPro
+  ODDSPRO_BASE_URL   - root URL of the OddsPro API (e.g. https://oddspro.com.au)
+  ODDSPRO_API_KEY    - authentication key for OddsPro (optional)
   ODDSPRO_TIMEOUT    - request timeout in seconds (default 30)
   ODDSPRO_COUNTRY    - country filter (default "au")
 """
@@ -145,7 +154,7 @@ class OddsProConnector:
                 "reason": "ODDSPRO_BASE_URL not set",
             }
         try:
-            resp = self._get("/tracks", params={"country": self.country})
+            resp = self._get("/api/external/tracks", params={"country": self.country})
             return {
                 "ok": True,
                 "source": self.source_name,
@@ -164,8 +173,10 @@ class OddsProConnector:
 
     def fetch_meetings(self, target_date: str | None = None) -> list[MeetingRecord]:
         """
-        GET /meetings
+        GET /api/external/meetings
         Daily bootstrap — list all meetings for the given date.
+
+        Response shape: {"data": [...], "meta": {...}}
 
         Raises requests.exceptions.HTTPError on non-2xx responses so callers
         can map specific HTTP status codes to diagnostic error codes.
@@ -175,7 +186,7 @@ class OddsProConnector:
         if target_date:
             params["date"] = target_date
 
-        resp = self._get("/meetings", params=params)
+        resp = self._get("/api/external/meetings", params=params)
         try:
             payload = resp.json()
         except ValueError as e:
@@ -183,7 +194,13 @@ class OddsProConnector:
             raise
 
         meetings: list[MeetingRecord] = []
-        items = payload if isinstance(payload, list) else payload.get("meetings") or payload.get("data") or []
+        # Documented response shape: {"data": [...], "meta": {...}}
+        if isinstance(payload, dict):
+            items = payload.get("data") or payload.get("meetings") or []
+        elif isinstance(payload, list):
+            items = payload
+        else:
+            items = []
 
         for item in items:
             mid = str(item.get("id") or item.get("meetingId") or "")
@@ -207,20 +224,29 @@ class OddsProConnector:
 
     def fetch_meeting(self, meeting_id: str) -> MeetingRecord | None:
         """
-        GET /meeting/:meetingId
+        GET /api/external/meeting/:meetingId
         Refresh a single meeting record.
+
+        Response shape: {"data": {...}, "meta": {...}}
         """
         try:
-            resp = self._get(f"/meeting/{meeting_id}")
-            item = resp.json()
+            resp = self._get(f"/api/external/meeting/{meeting_id}")
+            payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting({meeting_id}) failed: {e}")
             return None
 
-        if not item:
+        if not payload:
             return None
 
-        item = item.get("meeting") or item  # unwrap if nested
+        # Documented response shape: {"data": {...}, "meta": {...}}
+        item = (
+            payload.get("data")
+            or payload.get("meeting")
+            or payload
+        )
+        if isinstance(item, list):
+            item = item[0] if item else {}
         return MeetingRecord(
             meeting_id=meeting_id,
             code=self._normalise_code(item.get("type") or item.get("code") or "HORSE"),
@@ -234,20 +260,28 @@ class OddsProConnector:
 
     def fetch_meeting_races(self, meeting: MeetingRecord) -> list[RaceRecord]:
         """
-        GET /meeting/:meetingId
+        GET /api/external/meeting/:meetingId
         Returns all races for a meeting.
+
+        Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         """
         try:
-            resp = self._get(f"/meeting/{meeting.meeting_id}")
+            resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting_races({meeting.meeting_id}) failed: {e}")
             return []
 
-        raw = payload.get("meeting") or payload
-        races_raw = raw.get("races") or raw if isinstance(raw, list) else []
-        if not races_raw and isinstance(payload, list):
-            races_raw = payload
+        # Documented response shape: {"data": {...}, "meta": {...}}
+        raw = (
+            payload.get("data")
+            or payload.get("meeting")
+            or payload
+        )
+        if isinstance(raw, list):
+            races_raw = raw
+        else:
+            races_raw = raw.get("races") or []
 
         races: list[RaceRecord] = []
         for item in races_raw:
@@ -261,21 +295,30 @@ class OddsProConnector:
         self, meeting: MeetingRecord
     ) -> tuple[list[RaceRecord], list[RunnerRecord]]:
         """
-        GET /meeting/:meetingId
+        GET /api/external/meeting/:meetingId
         Returns all races AND runners for a meeting in a single request.
-        Used by full_sweep (bootstrap) to avoid a separate /race/:id call per race.
+        Used by full_sweep (bootstrap) when races are not already embedded
+        in the /meetings response.
+
+        Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         """
         try:
-            resp = self._get(f"/meeting/{meeting.meeting_id}")
+            resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) failed: {e}")
             return [], []
 
-        raw = payload.get("meeting") or payload
-        races_raw = raw.get("races") or (raw if isinstance(raw, list) else [])
-        if not races_raw and isinstance(payload, list):
-            races_raw = payload
+        # Documented response shape: {"data": {...}, "meta": {...}}
+        raw = (
+            payload.get("data")
+            or payload.get("meeting")
+            or payload
+        )
+        if isinstance(raw, list):
+            races_raw = raw
+        else:
+            races_raw = raw.get("races") or []
 
         races: list[RaceRecord] = []
         all_runners: list[RunnerRecord] = []
@@ -288,36 +331,80 @@ class OddsProConnector:
 
         return sorted(races, key=lambda r: r.race_num), all_runners
 
+    def parse_meeting_races_with_runners(
+        self, meeting: MeetingRecord, raw_meeting: dict
+    ) -> tuple[list[RaceRecord], list[RunnerRecord]]:
+        """
+        Parse races and runners from a raw meeting dict that is already in memory
+        (e.g. embedded inside the /api/external/meetings response).
+        No HTTP request is made.  Used by full_sweep() to avoid a redundant
+        /api/external/meeting/:id call when races are already present.
+        """
+        if isinstance(raw_meeting, list):
+            races_raw = raw_meeting
+        else:
+            races_raw = raw_meeting.get("races") or []
+
+        races: list[RaceRecord] = []
+        all_runners: list[RunnerRecord] = []
+        for item in races_raw:
+            race = self._parse_race(item, meeting)
+            if race:
+                races.append(race)
+                runners = self._parse_runners(item, race)
+                all_runners.extend(runners)
+
+        return sorted(races, key=lambda r: r.race_num), all_runners
+
+
     def fetch_race(self, race_id: str, meeting: MeetingRecord | None = None) -> RaceRecord | None:
         """
-        GET /race/:raceId
+        GET /api/external/race/:raceId
         Refresh a single race record.
+
+        Response shape: {"data": {...}, "meta": {...}}
         """
         try:
-            resp = self._get(f"/race/{race_id}")
-            item = resp.json()
+            resp = self._get(f"/api/external/race/{race_id}")
+            payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_race({race_id}) failed: {e}")
             return None
 
-        item = item.get("race") or item
+        # Documented response shape: {"data": {...}, "meta": {...}}
+        item = (
+            payload.get("data")
+            or payload.get("race")
+            or payload
+        )
+        if isinstance(item, list):
+            item = item[0] if item else {}
         return self._parse_race(item, meeting)
 
     def fetch_race_with_runners(
         self, race_id: str, meeting: MeetingRecord | None = None
     ) -> tuple[RaceRecord | None, list[RunnerRecord]]:
         """
-        GET /race/:raceId
+        GET /api/external/race/:raceId
         Returns the race and its runners.
+
+        Response shape: {"data": {...}, "meta": {...}}
         """
         try:
-            resp = self._get(f"/race/{race_id}")
+            resp = self._get(f"/api/external/race/{race_id}")
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_race_with_runners({race_id}) failed: {e}")
             return None, []
 
-        item = payload.get("race") or payload
+        # Documented response shape: {"data": {...}, "meta": {...}}
+        item = (
+            payload.get("data")
+            or payload.get("race")
+            or payload
+        )
+        if isinstance(item, list):
+            item = item[0] if item else {}
         race = self._parse_race(item, meeting)
         if not race:
             return None, []
@@ -327,21 +414,29 @@ class OddsProConnector:
 
     def fetch_results(self, target_date: str | None = None) -> list[RaceResult]:
         """
-        GET /results
+        GET /api/external/results
         Day-level result sweep. Returns settled race results.
+
+        Response shape: {"data": [...], "meta": {...}}
         """
         params: dict[str, Any] = {"country": self.country}
         if target_date:
             params["date"] = target_date
 
         try:
-            resp = self._get("/results", params=params)
+            resp = self._get("/api/external/results", params=params)
             payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_results failed: {e}")
             return []
 
-        items = payload if isinstance(payload, list) else payload.get("results") or payload.get("data") or []
+        # Documented response shape: {"data": [...], "meta": {...}}
+        if isinstance(payload, dict):
+            items = payload.get("data") or payload.get("results") or []
+        elif isinstance(payload, list):
+            items = payload
+        else:
+            items = []
         results: list[RaceResult] = []
         for item in items:
             result = self._parse_result(item)
@@ -353,28 +448,41 @@ class OddsProConnector:
 
     def fetch_race_result(self, race_id: str) -> RaceResult | None:
         """
-        GET /race/:id/results
-        Single-race result confirmation.
+        GET /api/races/:id/results
+        Single-race official result confirmation.
+        This endpoint is NOT under /api/external — it has its own path.
+
+        Response shape: {"data": {...}} or raw result object.
         """
         try:
-            resp = self._get(f"/race/{race_id}/results")
-            item = resp.json()
+            resp = self._get(f"/api/races/{race_id}/results")
+            payload = resp.json()
         except Exception as e:
             log.error(f"OddsPro fetch_race_result({race_id}) failed: {e}")
             return None
 
-        item = item.get("result") or item
+        # Unwrap data/result wrapper if present
+        item = (
+            payload.get("data")
+            or payload.get("result")
+            or payload
+        )
+        if isinstance(item, list):
+            item = item[0] if item else {}
         return self._parse_result(item)
 
     def fetch_tracks(self) -> list[dict[str, Any]]:
         """
-        GET /tracks
+        GET /api/external/tracks
         Optional track support — metadata only.
         """
         try:
-            resp = self._get("/tracks", params={"country": self.country})
+            resp = self._get("/api/external/tracks", params={"country": self.country})
             payload = resp.json()
-            return payload if isinstance(payload, list) else payload.get("tracks") or []
+            # Documented response shape: {"data": [...], "meta": {...}}
+            if isinstance(payload, dict):
+                return payload.get("data") or payload.get("tracks") or []
+            return payload if isinstance(payload, list) else []
         except Exception as e:
             log.warning(f"OddsPro fetch_tracks failed (non-critical): {e}")
             return []
