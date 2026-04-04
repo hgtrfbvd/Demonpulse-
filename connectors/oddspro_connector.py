@@ -16,6 +16,12 @@ Endpoints used (full documented paths):
 Standard response shape for external endpoints:
   {"data": [...], "meta": {...}}
 
+Supported payload shapes for meetings endpoint:
+  A. {"data": [...], ...}        - data is a list of meetings
+  B. {"data": {...}, ...}        - data is a single meeting dict (wrapped into list)
+  C. [...]                       - bare list of meetings
+  D. {"meetings": [...], ...}    - meetings key holds list
+
 Authentication:
   Public endpoints do NOT require an API key.
   API key is optional and only needed for higher rate limits.
@@ -39,14 +45,76 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# PAYLOAD NORMALISATION HELPERS
+# ---------------------------------------------------------------------------
+
+def normalize_meetings_payload(payload: Any) -> list:
+    """
+    Normalise an OddsPro /meetings response into a flat list of meeting dicts.
+
+    Supported shapes:
+      A. {"data": [...], ...}     -> return payload["data"]
+      B. {"data": {...}, ...}     -> wrap single meeting in list: [payload["data"]]
+      C. [...]                    -> return payload directly
+      D. {"meetings": [...], ...} -> return payload["meetings"]
+
+    Raises ValueError with shape diagnostics if none of the above match.
+    """
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            # Single meeting object — wrap in list so downstream code is uniform
+            meetings_inner = data.get("meetings")
+            if isinstance(meetings_inner, list):
+                return meetings_inner
+            return [data]
+        meetings = payload.get("meetings")
+        if isinstance(meetings, list):
+            return meetings
+
+    raise ValueError(
+        f"Cannot normalize meetings payload: "
+        f"type={type(payload).__name__}, "
+        f"keys={list(payload.keys()) if isinstance(payload, dict) else 'N/A'}"
+    )
+
+
+def _truncate_sample(item: Any, max_str_len: int = 120) -> Any:
+    """
+    Return a shallow, string-truncated copy of *item* suitable for diagnostic
+    logging.  Only one level deep — nested dicts/lists are summarised by type
+    and length so that no large payloads are accidentally stored or returned.
+    """
+    if not isinstance(item, dict):
+        s = str(item)
+        return s[:max_str_len] + "…" if len(s) > max_str_len else s
+    result: dict[str, Any] = {}
+    for k, v in item.items():
+        if isinstance(v, list):
+            result[k] = f"[list len={len(v)}]"
+        elif isinstance(v, dict):
+            result[k] = f"{{dict keys={list(v.keys())}}}"
+        else:
+            s = str(v)
+            result[k] = s[:max_str_len] + "…" if len(s) > max_str_len else s
+    return result
+
+
+# ---------------------------------------------------------------------------
 # PARSE ERROR — carries structured diagnostics for callers
 # ---------------------------------------------------------------------------
 
 class OddsProParseError(ValueError):
     """
     Raised when the OddsPro response cannot be parsed into the expected structure.
-    Carries parse_stage, response_keys and first_item_keys so callers can return
-    structured diagnostics without needing to re-parse the error message string.
+    Carries parse_stage, response_type, response_keys, first_item_keys,
+    exception_message and sample_payload so callers can return structured
+    diagnostics without needing to re-parse the error message string.
     """
 
     def __init__(
@@ -55,11 +123,17 @@ class OddsProParseError(ValueError):
         parse_stage: str,
         response_keys: list[str],
         first_item_keys: list[str],
+        response_type: str = "",
+        exception_message: str = "",
+        sample_payload: Any = None,
     ):
         super().__init__(message)
         self.parse_stage = parse_stage
         self.response_keys = response_keys
         self.first_item_keys = first_item_keys
+        self.response_type = response_type or ""
+        self.exception_message = exception_message or message
+        self.sample_payload = sample_payload
 
 
 # ---------------------------------------------------------------------------
@@ -200,54 +274,70 @@ class OddsProConnector:
         GET /api/external/meetings
         Daily bootstrap — list all meetings for the given date.
 
-        Response shape: {"data": [...], "meta": {...}}
+        Supported response shapes (all handled):
+          A. {"data": [...], ...}     - data is a list of meetings
+          B. {"data": {...}, ...}     - data is a single meeting dict
+          C. [...]                    - bare list of meetings
+          D. {"meetings": [...], ...} - meetings key holds list
 
         Raises requests.exceptions.HTTPError on non-2xx responses so callers
         can map specific HTTP status codes to diagnostic error codes.
-        Raises ValueError on JSON parse failure.
+        Raises OddsProParseError (subclass of ValueError) on JSON parse failure,
+        carrying full diagnostics: parse_stage, response_type, response_keys,
+        first_item_keys, exception_message, sample_payload.
         """
         params: dict[str, Any] = {"country": self.country}
         if target_date:
             params["date"] = target_date
 
         resp = self._get("/api/external/meetings", params=params)
+        status_code = resp.status_code
+
         try:
             payload = resp.json()
         except ValueError as e:
-            log.error(f"OddsPro fetch_meetings: JSON parse failed: {e}")
+            log.error(f"OddsPro fetch_meetings: JSON parse failed (HTTP {status_code}): {e}")
             raise OddsProParseError(
                 f"JSON decode error: {e}",
-                parse_stage="meetings",
+                parse_stage="root",
                 response_keys=[],
                 first_item_keys=[],
+                response_type="invalid_json",
+                exception_message=str(e),
+                sample_payload=None,
             ) from e
 
-        # Documented response shape: {"data": [...], "meta": {...}}
+        response_type = type(payload).__name__
         top_keys: list[str] = list(payload.keys()) if isinstance(payload, dict) else []
         first_item_keys: list[str] = []
-        try:
-            if isinstance(payload, dict):
-                items = payload.get("data") or payload.get("meetings") or []
-            elif isinstance(payload, list):
-                items = payload
-            else:
-                items = []
+        sample_payload: Any = None
 
-            if items:
+        try:
+            items = normalize_meetings_payload(payload)
+
+            if items and isinstance(items[0], dict):
                 first_item_keys = list(items[0].keys())
+                sample_payload = _truncate_sample(items[0])
+
             meetings: list[MeetingRecord] = []
             for item in items:
+                if not isinstance(item, dict):
+                    continue
                 mid = str(item.get("id") or item.get("meetingId") or "")
                 if not mid:
                     continue
                 meetings.append(
                     MeetingRecord(
                         meeting_id=mid,
-                        code=self._normalise_code(item.get("type") or item.get("code") or "HORSE"),
+                        code=self._normalise_code(
+                            item.get("type") or item.get("code") or item.get("raceType") or "HORSE"
+                        ),
                         source=self.source_name,
-                        track=self._clean_track(item.get("track") or item.get("venue") or ""),
+                        track=self._clean_track(
+                            item.get("track") or item.get("meetingTrack")
+                            or item.get("venue") or item.get("name") or ""
+                        ),
                         meeting_date=str(item.get("date") or target_date or ""),
-                        # Documented field is "location"; also accept "state"/"region"
                         state=str(
                             item.get("location") or item.get("state") or item.get("region") or ""
                         ),
@@ -257,15 +347,30 @@ class OddsProConnector:
                 )
         except OddsProParseError:
             raise
+        except ValueError as e:
+            log.error(f"OddsPro fetch_meetings: normalize error (HTTP {status_code}): {e}")
+            raise OddsProParseError(
+                f"meetings normalize error: {e}",
+                parse_stage="root",
+                response_keys=top_keys,
+                first_item_keys=first_item_keys,
+                response_type=response_type,
+                exception_message=str(e),
+                sample_payload=sample_payload,
+            ) from e
         except Exception as e:
+            log.error(f"OddsPro fetch_meetings: parse error (HTTP {status_code}): {e}")
             raise OddsProParseError(
                 f"meetings parse error: {e}",
                 parse_stage="meetings",
                 response_keys=top_keys,
                 first_item_keys=first_item_keys,
+                response_type=response_type,
+                exception_message=str(e),
+                sample_payload=sample_payload,
             ) from e
 
-        log.info(f"OddsPro fetch_meetings: {len(meetings)} meetings for {target_date}")
+        log.info(f"OddsPro fetch_meetings: {len(meetings)} meetings for {target_date} (HTTP {status_code})")
         return meetings
 
     def fetch_meeting(self, meeting_id: str) -> MeetingRecord | None:
@@ -310,6 +415,7 @@ class OddsProConnector:
         Returns all races for a meeting.
 
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
+        Also accepts: races / events / meetingsRaces as the race list key.
         """
         try:
             resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
@@ -318,16 +424,12 @@ class OddsProConnector:
             log.error(f"OddsPro fetch_meeting_races({meeting.meeting_id}) failed: {e}")
             return []
 
-        # Documented response shape: {"data": {...}, "meta": {...}}
         raw = (
             payload.get("data")
             or payload.get("meeting")
             or payload
         )
-        if isinstance(raw, list):
-            races_raw = raw
-        else:
-            races_raw = raw.get("races") or []
+        races_raw = self._extract_races_list(raw)
 
         races: list[RaceRecord] = []
         for item in races_raw:
@@ -347,6 +449,7 @@ class OddsProConnector:
         in the /meetings response.
 
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
+        Also accepts: races / events / meetingsRaces as the race list key.
         """
         try:
             resp = self._get(f"/api/external/meeting/{meeting.meeting_id}")
@@ -355,16 +458,12 @@ class OddsProConnector:
             log.error(f"OddsPro fetch_meeting_races_with_runners({meeting.meeting_id}) failed: {e}")
             return [], []
 
-        # Documented response shape: {"data": {...}, "meta": {...}}
         raw = (
             payload.get("data")
             or payload.get("meeting")
             or payload
         )
-        if isinstance(raw, list):
-            races_raw = raw
-        else:
-            races_raw = raw.get("races") or []
+        races_raw = self._extract_races_list(raw)
 
         races: list[RaceRecord] = []
         all_runners: list[RunnerRecord] = []
@@ -385,11 +484,9 @@ class OddsProConnector:
         (e.g. embedded inside the /api/external/meetings response).
         No HTTP request is made.  Used by full_sweep() to avoid a redundant
         /api/external/meeting/:id call when races are already present.
+        Accepts: races / events / meetingsRaces as the race list key.
         """
-        if isinstance(raw_meeting, list):
-            races_raw = raw_meeting
-        else:
-            races_raw = raw_meeting.get("races") or []
+        races_raw = self._extract_races_list(raw_meeting)
 
         races: list[RaceRecord] = []
         all_runners: list[RunnerRecord] = []
@@ -537,6 +634,26 @@ class OddsProConnector:
     # INTERNAL HELPERS
     # -----------------------------------------------------------------------
 
+    def _extract_races_list(self, raw: Any) -> list:
+        """
+        Extract the list of race dicts from a meeting payload or raw meeting dict.
+        Supports the following keys for the race list:
+          - races          (primary documented key)
+          - events         (alternate)
+          - meetingsRaces  (alternate)
+        If raw is already a list, returns it directly.
+        """
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            return (
+                raw.get("races")
+                or raw.get("events")
+                or raw.get("meetingsRaces")
+                or []
+            )
+        return []
+
     def _get(self, path: str, params: dict | None = None) -> requests.Response:
         if not self.base_url:
             raise RuntimeError("ODDSPRO_BASE_URL is not configured")
@@ -576,14 +693,21 @@ class OddsProConnector:
             return None
 
         race_date = str(item.get("date") or (meeting.meeting_date if meeting else "") or "")
-        track = self._clean_track(item.get("track") or item.get("venue") or (meeting.track if meeting else ""))
+        track = self._clean_track(
+            item.get("track") or item.get("meetingTrack")
+            or item.get("venue") or (meeting.track if meeting else "")
+        )
         code = self._normalise_code(
-            item.get("type") or item.get("code") or (meeting.code if meeting else "HORSE")
+            item.get("type") or item.get("code") or item.get("raceType")
+            or (meeting.code if meeting else "HORSE")
         )
 
         race_uid = self._make_race_uid(race_date, code, track, race_num)
 
-        jump_time = item.get("jumpTime") or item.get("jump_time") or item.get("startTime")
+        jump_time = (
+            item.get("jumpTime") or item.get("jump_time")
+            or item.get("startTime") or item.get("advertisedStart")
+        )
         status_raw = (item.get("status") or "upcoming").lower()
         status = self._normalise_status(status_raw)
 
@@ -608,10 +732,16 @@ class OddsProConnector:
         )
 
     def _parse_runners(self, item: dict, race: RaceRecord) -> list[RunnerRecord]:
-        runners_raw = item.get("runners") or item.get("starters") or []
+        # Accepts: runners / field / entries / starters
+        runners_raw = (
+            item.get("runners") or item.get("field")
+            or item.get("entries") or item.get("starters") or []
+        )
         runners: list[RunnerRecord] = []
 
         for r in runners_raw:
+            if not isinstance(r, dict):
+                continue
             # Documented aliases: runnerNumber | number | saddleCloth
             number = r.get("runnerNumber") or r.get("number") or r.get("saddleCloth")
             try:
@@ -619,12 +749,15 @@ class OddsProConnector:
             except (TypeError, ValueError):
                 number = None
 
-            # Documented aliases: boxNumber | box | box_num
+            # Documented aliases: boxNumber | box | box_num (for greyhound box draw)
             box_num = r.get("boxNumber") or r.get("box") or r.get("box_num")
             try:
                 box_num = int(box_num) if box_num is not None else None
             except (TypeError, ValueError):
                 box_num = None
+
+            # barrier / barrierDraw for gallops/harness; box/boxNumber used above for greyhounds
+            barrier_raw = r.get("barrier") or r.get("barrierDraw")
 
             weight_raw = r.get("weight")
             try:
@@ -652,7 +785,7 @@ class OddsProConnector:
                         or r.get("horseName") or r.get("dogName") or ""
                     ),
                     number=number,
-                    barrier=r.get("barrier") or r.get("barrierDraw"),
+                    barrier=barrier_raw,
                     trainer=str(r.get("trainer") or ""),
                     jockey=str(r.get("jockey") or ""),
                     driver=str(r.get("driver") or ""),

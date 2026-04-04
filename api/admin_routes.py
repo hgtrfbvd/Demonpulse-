@@ -325,7 +325,15 @@ def admin_bootstrap_day():
             "races_blocked": result.get("races_blocked", 0),
             "board_count": result.get("board_count"),
             "board_diagnostics": result.get("board_diagnostics"),
+            # Always include error context; None on success
             "error": result.get("error") or result.get("reason") if not ok else None,
+            # Parse-failure diagnostics — None on success or non-parse errors
+            "parse_stage": result.get("parse_stage") if not ok else None,
+            "exception_message": result.get("exception_message") if not ok else None,
+            "response_type": result.get("response_type") if not ok else None,
+            "top_level_keys": result.get("top_level_keys") if not ok else None,
+            "first_item_keys": result.get("first_item_keys") if not ok else None,
+            "sample_payload": result.get("sample_payload") if not ok else None,
             "timestamp": result.get("timestamp"),
         })
     except Exception as e:

@@ -152,12 +152,18 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             "ok": False,
             "reason": "oddspro_parse_error",
             "detail": str(e),
+            "exception_message": str(e),
             "date": today,
         }
         if hasattr(e, "parse_stage"):
-            err_dict["parse_stage"] = e.parse_stage
-            err_dict["response_keys"] = e.response_keys
-            err_dict["first_item_keys"] = e.first_item_keys
+            err_dict["parse_stage"] = getattr(e, "parse_stage", "unknown")
+            err_dict["response_type"] = getattr(e, "response_type", "")
+            err_dict["top_level_keys"] = getattr(e, "response_keys", [])
+            err_dict["first_item_keys"] = getattr(e, "first_item_keys", [])
+            err_dict["sample_payload"] = getattr(e, "sample_payload", None)
+            # Use the structured exception_message if available
+            if getattr(e, "exception_message", None):
+                err_dict["exception_message"] = e.exception_message
         return err_dict
     except Exception as e:
         log.error(f"full_sweep: fetch_meetings failed: {e}")
