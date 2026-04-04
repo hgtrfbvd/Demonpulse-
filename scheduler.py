@@ -133,7 +133,8 @@ def _run_full_sweep():
 
 def _run_refresh():
     """Broad OddsPro refresh — skipped if already running."""
-    if not _broad_refresh_lock.acquire(blocking=False):
+    acquired = _broad_refresh_lock.acquire(blocking=False)
+    if not acquired:
         log.warning("Broad refresh still running — skipping this cycle")
         return {"ok": False, "reason": "cycle_already_running"}
 
@@ -169,7 +170,8 @@ def _run_refresh():
 
 def _run_near_jump():
     """Near-jump OddsPro refresh + FormFav overlay — skipped if already running."""
-    if not _near_jump_lock.acquire(blocking=False):
+    acquired = _near_jump_lock.acquire(blocking=False)
+    if not acquired:
         log.debug("Near-jump refresh still running — skipping this cycle")
         return {"ok": False, "reason": "cycle_already_running"}
 
@@ -208,7 +210,8 @@ def _run_result_check():
     OddsPro result sweep — skipped if already running.
     Only marks confirmed results; no false success on failed fetches.
     """
-    if not _result_check_lock.acquire(blocking=False):
+    acquired = _result_check_lock.acquire(blocking=False)
+    if not acquired:
         log.warning("Result check still running — skipping this cycle")
         return {"ok": False, "reason": "cycle_already_running"}
 
@@ -245,7 +248,8 @@ def _run_result_check():
 
 def _run_race_state_update():
     """Drive the race state machine from stored data."""
-    if not _state_update_lock.acquire(blocking=False):
+    acquired = _state_update_lock.acquire(blocking=False)
+    if not acquired:
         log.debug("Race state update still running — skipping")
         return
 
