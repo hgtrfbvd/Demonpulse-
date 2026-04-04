@@ -172,3 +172,84 @@ def get_backtest_run(run_id: str):
     except Exception as e:
         log.error(f"GET /api/predictions/backtest/{run_id} failed: {e}")
         return jsonify({"ok": False, "error": "Could not retrieve backtest run"}), 500
+
+
+# ---------------------------------------------------------------------------
+# MODEL COMPARISON (Phase 4.6)
+# ---------------------------------------------------------------------------
+
+@prediction_bp.route("/compare", methods=["POST"])
+def compare_predictions():
+    """
+    Compare DemonPulse model predictions against FormFav predictions for a race.
+
+    POST body (JSON):
+      race_uid        : race identifier (required)
+      your_preds      : list of DemonPulse runner prediction dicts
+                        (each with runner_name and predicted_rank)
+      formfav_preds   : list of FormFav runner prediction dicts
+                        (each with runner_name and predicted_rank)
+
+    Returns:
+      - disagreement score (0-1)
+      - rank_diff_top_pick
+      - flagged (True if high disagreement)
+      - both model prediction lists
+      - source_note confirming FormFav is enrichment only
+
+    Architecture rules enforced:
+      - FormFav predictions are reference only
+      - DemonPulse predictions are authoritative (OddsPro-sourced)
+      - Disagreement is a signal, not a correction
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        race_uid = data.get("race_uid") or ""
+        your_preds = data.get("your_preds") or []
+        formfav_preds = data.get("formfav_preds") or []
+
+        if not race_uid:
+            return jsonify({"ok": False, "error": "race_uid required"}), 400
+        if not your_preds:
+            return jsonify({"ok": False, "error": "your_preds required"}), 400
+
+        from ai.disagreement_engine import compare_predictions as _compare
+        from services.health_service import record_disagreement
+
+        result = _compare(race_uid, your_preds, formfav_preds)
+        disagreement = result.get("disagreement", {})
+
+        # Record disagreement for health metrics
+        record_disagreement(flagged=disagreement.get("flagged", False))
+
+        return jsonify({"ok": True, **result})
+
+    except Exception as e:
+        log.error(f"POST /api/predictions/compare failed: {e}")
+        return jsonify({"ok": False, "error": "Prediction comparison failed"}), 500
+
+
+@prediction_bp.route("/model-performance", methods=["GET"])
+def model_performance():
+    """
+    Aggregated performance stats per model version.
+
+    Query params:
+      model_version: filter to a specific model version (optional)
+      limit: max evaluations to include (default 500)
+
+    Returns performance stats per model version including:
+      - winner_hit_rate
+      - top3_hit_rate
+      - avg_winner_odds
+      - enrichment_usage_rate (fraction of predictions with enrichment)
+      - total_evaluated
+    """
+    try:
+        from ai.learning_store import get_performance_by_model
+        limit = int(request.args.get("limit", 500))
+        result = get_performance_by_model(limit=limit)
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"GET /api/predictions/model-performance failed: {e}")
+        return jsonify({"ok": False, "error": "Model performance unavailable"}), 500

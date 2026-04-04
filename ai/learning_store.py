@@ -56,6 +56,8 @@ def save_prediction_snapshot(
     model_version = prediction.get("model_version") or "baseline_v1"
     created_at = prediction.get("created_at") or _now()
     runner_predictions = prediction.get("runner_predictions") or []
+    has_enrichment = int(prediction.get("has_enrichment") or 0)
+    source_type = prediction.get("source_type") or "pre_race"
 
     try:
         from db import get_db, safe_query, T
@@ -79,6 +81,8 @@ def save_prediction_snapshot(
             "has_sectionals": 1 if sectional_metrics else 0,
             "has_race_shape": 1 if race_shape else 0,
             "has_collision": 1 if collision_metrics else 0,
+            "has_enrichment": has_enrichment,
+            "source_type": source_type,
             "created_at": created_at,
         }
         safe_query(
@@ -111,7 +115,8 @@ def save_prediction_snapshot(
 
         log.info(
             f"learning_store: saved prediction {snap_id} for {race_uid} "
-            f"({len(runner_rows)} runners, model={model_version})"
+            f"({len(runner_rows)} runners, model={model_version}, "
+            f"enrichment={has_enrichment})"
         )
         return True
 
@@ -234,6 +239,8 @@ def save_race_shape_snapshot(
 def evaluate_prediction(
     race_uid: str,
     official_result: dict[str, Any],
+    disagreement_score: float | None = None,
+    formfav_rank: int | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate outstanding predictions for a race after official result confirmation.
@@ -242,11 +249,18 @@ def evaluate_prediction(
     No provisional FormFav data may trigger evaluation.
 
     Args:
-        race_uid: the race to evaluate
-        official_result: confirmed result dict from results_log (OddsPro source only)
+        race_uid         : the race to evaluate
+        official_result  : confirmed result dict from results_log (OddsPro source only)
+        disagreement_score: optional disagreement score between model and FormFav (0-1)
+        formfav_rank     : optional FormFav rank of the actual winner (enrichment only)
 
     Returns:
-        evaluation summary dict
+        evaluation summary dict with:
+          - winner_hit
+          - top3_hit
+          - predicted_rank_of_winner
+          - disagreement_score
+          - used_enrichment (bool)
     """
     if not race_uid or not official_result:
         return {"ok": False, "error": "race_uid and official_result required"}
@@ -266,7 +280,10 @@ def evaluate_prediction(
         snapshots = safe_query(
             lambda: get_db()
             .table(T("prediction_snapshots"))
-            .select("prediction_snapshot_id,model_version,oddspro_race_id")
+            .select(
+                "prediction_snapshot_id,model_version,oddspro_race_id,"
+                "has_enrichment,source_type"
+            )
             .eq("race_uid", race_uid)
             .execute()
             .data,
@@ -285,6 +302,7 @@ def evaluate_prediction(
         for snap in snapshots:
             snap_id = snap.get("prediction_snapshot_id")
             model_version = snap.get("model_version") or "baseline_v1"
+            used_enrichment = bool(snap.get("has_enrichment") or 0)
 
             outputs = safe_query(
                 lambda: get_db()
@@ -302,6 +320,7 @@ def evaluate_prediction(
 
             predicted_winner_name = outputs[0].get("runner_name") or ""
             predicted_winner_box = outputs[0].get("box_num")
+            your_rank = outputs[0].get("predicted_rank") or 1
             top2_names = {r.get("runner_name") for r in outputs[:2] if r.get("runner_name")}
             top3_names = {r.get("runner_name") for r in outputs[:3] if r.get("runner_name")}
 
@@ -339,6 +358,10 @@ def evaluate_prediction(
                 "top3_hit": top3_hit,
                 "predicted_rank_of_winner": pred_rank_of_winner,
                 "winner_odds": _safe_float(win_price),
+                "used_enrichment": used_enrichment,
+                "disagreement_score": disagreement_score,
+                "formfav_rank": formfav_rank,
+                "your_rank": your_rank,
                 "evaluation_source": "oddspro",
                 "evaluated_at": _now(),
             }
@@ -517,6 +540,78 @@ def get_prediction_counts() -> dict[str, int]:
     except Exception as e:
         log.warning(f"learning_store: get_prediction_counts failed: {e}")
         return {"prediction_snapshots": 0, "learning_evaluations": 0}
+
+
+def get_performance_by_model(limit: int = 500) -> dict[str, Any]:
+    """
+    Return aggregated performance stats per model version.
+
+    Args:
+        limit: max evaluations to include
+
+    Returns:
+        dict with per-model stats and overall totals
+    """
+    try:
+        from db import get_db, safe_query, T
+
+        rows = safe_query(
+            lambda: get_db()
+            .table(T("learning_evaluations"))
+            .select(
+                "model_version,winner_hit,top2_hit,top3_hit,winner_odds,"
+                "used_enrichment,race_uid"
+            )
+            .order("evaluated_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data,
+            [],
+        ) or []
+
+        if not rows:
+            return {"ok": True, "models": {}, "total_evaluated": 0}
+
+        # Group by model_version
+        by_model: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            mv = row.get("model_version") or "baseline_v1"
+            by_model.setdefault(mv, []).append(row)
+
+        model_stats: dict[str, Any] = {}
+        for mv, model_rows in by_model.items():
+            total = len(model_rows)
+            winner_hits = sum(1 for r in model_rows if r.get("winner_hit"))
+            top3_hits = sum(1 for r in model_rows if r.get("top3_hit"))
+            enriched = sum(1 for r in model_rows if r.get("used_enrichment"))
+            winning_odds = [
+                float(r["winner_odds"])
+                for r in model_rows
+                if r.get("winner_hit") and r.get("winner_odds")
+            ]
+            avg_winner_odds = (
+                round(sum(winning_odds) / len(winning_odds), 2)
+                if winning_odds else None
+            )
+            model_stats[mv] = {
+                "total_evaluated": total,
+                "winner_hit_count": winner_hits,
+                "top3_hit_count": top3_hits,
+                "winner_hit_rate": round(winner_hits / total, 4) if total else 0.0,
+                "top3_hit_rate": round(top3_hits / total, 4) if total else 0.0,
+                "avg_winner_odds": avg_winner_odds,
+                "enrichment_usage_rate": round(enriched / total, 4) if total else 0.0,
+            }
+
+        return {
+            "ok": True,
+            "models": model_stats,
+            "total_evaluated": len(rows),
+        }
+
+    except Exception as e:
+        log.error(f"learning_store: get_performance_by_model failed: {e}")
+        return {"ok": False, "error": "Model performance unavailable"}
 
 
 def get_recent_backtest_runs(limit: int = 10) -> list[dict[str, Any]]:
