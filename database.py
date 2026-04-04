@@ -140,16 +140,23 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
             "race_num": r.get("race_num"),
             "box_num": r.get("box_num"),
             "name": r.get("name") or "",
+            "number": r.get("number"),
+            "barrier": r.get("barrier"),
             "trainer": r.get("trainer") or "",
+            "jockey": r.get("jockey") or "",
+            "driver": r.get("driver") or "",
             "owner": r.get("owner") or "",
             "weight": r.get("weight"),
             "run_style": r.get("run_style"),
             "early_speed": r.get("early_speed"),
             "best_time": r.get("best_time"),
             "career": r.get("career"),
+            "price": r.get("price"),
+            "rating": r.get("rating"),
             "scratched": bool(r.get("scratched")),
             # schema column is scratch_reason; source field is scratch_timing
             "scratch_reason": r.get("scratch_reason") or r.get("scratch_timing"),
+            "source_confidence": r.get("source_confidence") or "official",
         })
 
     result = safe_query(

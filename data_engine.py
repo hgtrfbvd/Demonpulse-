@@ -120,11 +120,15 @@ def _get_formfav() -> "FormFavConnector":  # noqa: F821
 
 def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     """
-    Daily bootstrap via OddsPro GET /api/external/meetings.
-    Fetches all meetings for the day, then fetches races for each meeting
-    and writes them to the database as official truth.
+    Daily bootstrap via OddsPro GET /meetings.
+    Fetches all meetings for the day, then fetches races and runners for each
+    meeting and writes them to the database as official truth.
 
     FormFav is NOT called here.
+
+    Returns diagnostics:
+      meetings_found, meetings_fetched, races_found, runners_found,
+      races_stored, runners_stored, races_blocked
     """
     today = target_date or date.today().isoformat()
     conn = _get_oddspro()
@@ -142,39 +146,78 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         return {"ok": False, "reason": reason, "http_status": status_code, "date": today}
     except ValueError as e:
         log.error(f"full_sweep: fetch_meetings parse error: {e}")
-        return {"ok": False, "reason": "oddspro_parse_error", "date": today}
+        return {"ok": False, "reason": "oddspro_parse_error", "detail": str(e), "date": today}
     except Exception as e:
         log.error(f"full_sweep: fetch_meetings failed: {e}")
         return {"ok": False, "reason": "oddspro_request_exception", "date": today}
 
-    if not meetings:
+    meetings_found = len(meetings)
+    if not meetings_found:
         log.info(f"full_sweep: no meetings returned for {today}")
-        return {"ok": True, "meetings": 0, "races": 0, "date": today}
+        return {
+            "ok": True,
+            "meetings_found": 0, "meetings_fetched": 0,
+            "races_found": 0, "runners_found": 0,
+            "races_stored": 0, "runners_stored": 0, "races_blocked": 0,
+            # legacy keys kept for callers that rely on them
+            "meetings": 0, "races": 0,
+            "reason": "no_meetings_scheduled",
+            "date": today,
+        }
 
-    races_written = 0
+    meetings_fetched = 0
+    races_found = 0
+    runners_found = 0
+    races_stored = 0
+    runners_stored = 0
     races_blocked = 0
+
     for meeting in meetings:
         try:
-            races = conn.fetch_meeting_races(meeting)
+            races, runners = conn.fetch_meeting_races_with_runners(meeting)
+            meetings_fetched += 1
+            races_found += len(races)
+            runners_found += len(runners)
+
+            # Build a mapping race_uid → runners for storage after race upsert
+            runners_by_race: dict[str, list[Any]] = {}
+            for runner in runners:
+                runners_by_race.setdefault(runner.race_uid, []).append(runner)
+
             for race in races:
                 stored_ok = _store_with_pipeline(race)
-                races_written += 1
+                races_stored += 1
                 if not stored_ok:
                     races_blocked += 1
+
+                # Store runners associated with this race
+                race_runners = runners_by_race.get(race.race_uid, [])
+                if race_runners:
+                    stored = _store_runners_for_race(race.race_uid, race_runners)
+                    runners_stored += stored
+
         except Exception as e:
             log.error(f"full_sweep: failed for meeting {meeting.meeting_id}: {e}")
 
     log.info(
-        f"full_sweep complete: {len(meetings)} meetings, {races_written} races stored "
-        f"({races_blocked} blocked) for {today}"
+        f"full_sweep complete: {meetings_found} meetings found, {meetings_fetched} fetched, "
+        f"{races_stored} races stored ({races_blocked} blocked), "
+        f"{runners_stored} runners stored for {today}"
     )
     return {
         "ok": True,
         "date": today,
-        "meetings": len(meetings),
-        "races": races_written,
+        "meetings_found": meetings_found,
+        "meetings_fetched": meetings_fetched,
+        "races_found": races_found,
+        "runners_found": runners_found,
+        "races_stored": races_stored,
+        "runners_stored": runners_stored,
         "races_blocked": races_blocked,
-        "races_passed": races_written - races_blocked,
+        "races_passed": races_stored - races_blocked,
+        # legacy keys kept for callers that rely on them
+        "meetings": meetings_found,
+        "races": races_stored,
         "source": "oddspro",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -512,6 +555,37 @@ def _write_result(result: Any) -> None:
             update_race_status(race_uid, "final")
     except Exception as e:
         log.error(f"data_engine: _write_result failed: {e}")
+
+
+def _store_runners_for_race(race_uid: str, runners: list[Any]) -> int:
+    """
+    Store runners for a race that has already been written to today_races.
+    Looks up the race's UUID primary key, then calls upsert_runners.
+    Returns the count of runners successfully stored (0 on failure).
+    """
+    if not runners:
+        return 0
+    try:
+        from database import get_race, upsert_runners
+
+        row = get_race(race_uid)
+        if not row:
+            log.warning(f"data_engine: _store_runners_for_race: race {race_uid} not found in DB")
+            return 0
+
+        race_db_id = row.get("id")
+        if not race_db_id:
+            log.warning(f"data_engine: _store_runners_for_race: race {race_uid} has no DB id")
+            return 0
+
+        runner_dicts = [r.__dict__ if hasattr(r, "__dict__") else r for r in runners]
+        stored = upsert_runners(race_db_id, runner_dicts)
+        log.debug(f"data_engine: stored {stored} runners for race {race_uid}")
+        return stored
+
+    except Exception as e:
+        log.error(f"data_engine: _store_runners_for_race({race_uid}) failed: {e}")
+        return 0
 
 
 def _apply_formfav_overlay(race: dict[str, Any]) -> None:
