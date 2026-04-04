@@ -75,8 +75,15 @@ CREATE TABLE IF NOT EXISTS today_races (
     UNIQUE (date, track, race_num, code)
 );
 
--- Ensure unique index on race_uid for fast lookups (may be '' for legacy rows)
-CREATE INDEX IF NOT EXISTS idx_today_races_race_uid     ON today_races(race_uid);
+-- Ensure oddspro_race_id exists before creating an index on it.
+-- This column was introduced in migration 006; earlier migrations (001-005)
+-- do not define it, so we must backfill it before the index is created.
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS oddspro_race_id TEXT NOT NULL DEFAULT '';
+
+-- Partial unique index on race_uid: legacy rows may carry race_uid = ''.
+-- A full UNIQUE constraint would reject multiple empty-string rows, so we
+-- use a partial index that only enforces uniqueness for non-empty values.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_today_races_race_uid ON today_races(race_uid) WHERE race_uid != '';
 CREATE INDEX IF NOT EXISTS idx_today_races_date         ON today_races(date);
 CREATE INDEX IF NOT EXISTS idx_today_races_status       ON today_races(status);
 CREATE INDEX IF NOT EXISTS idx_today_races_lifecycle    ON today_races(lifecycle_state);
@@ -106,20 +113,27 @@ ALTER TABLE today_races ADD COLUMN IF NOT EXISTS bet_logged_at      TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS result_captured_at TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS learned_at         TIMESTAMPTZ;
 
--- Ensure UNIQUE constraint on (date, track, race_num, code) for upserts
+-- Ensure UNIQUE constraint on (date, track, race_num, code) for upserts.
+-- Detection is column-based (not name-based) so it is reliable regardless
+-- of how the constraint was originally named.
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'today_races'::regclass
-          AND contype = 'u'
-          AND conname LIKE '%date%track%race_num%code%'
+        SELECT 1
+        FROM pg_constraint c
+        WHERE c.conrelid = 'today_races'::regclass
+          AND c.contype  = 'u'
+          AND array_length(c.conkey, 1) = 4
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'date')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'track')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'race_num')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'code')
     ) THEN
         ALTER TABLE today_races
             ADD CONSTRAINT today_races_date_track_race_num_code_key
             UNIQUE (date, track, race_num, code);
     END IF;
-EXCEPTION WHEN duplicate_table THEN NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 
@@ -206,20 +220,27 @@ CREATE INDEX IF NOT EXISTS idx_results_log_race_uid        ON results_log(race_u
 -- Backfill missing columns on results_log
 ALTER TABLE results_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
--- Ensure (date, track, race_num, code) unique constraint exists for upserts
+-- Ensure (date, track, race_num, code) unique constraint exists for upserts.
+-- Detection is column-based (not name-based) so it is reliable regardless
+-- of how the constraint was originally named.
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'results_log'::regclass
-          AND contype = 'u'
-          AND conname LIKE '%date%track%race_num%code%'
+        SELECT 1
+        FROM pg_constraint c
+        WHERE c.conrelid = 'results_log'::regclass
+          AND c.contype  = 'u'
+          AND array_length(c.conkey, 1) = 4
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'date')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'track')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'race_num')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'code')
     ) THEN
         ALTER TABLE results_log
             ADD CONSTRAINT results_log_date_track_race_num_code_key
             UNIQUE (date, track, race_num, code);
     END IF;
-EXCEPTION WHEN duplicate_table THEN NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 
