@@ -10,6 +10,17 @@ log = logging.getLogger(__name__)
 app = Flask(__name__, template_folder="templates", static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("FLASK_SECRET", "demonpulse-dev-secret-change-me")
 
+# Blueprint registration
+from api.health_routes import health_bp
+from api.race_routes import race_bp
+from api.board_routes import board_bp
+from api.admin_routes import admin_bp
+
+app.register_blueprint(health_bp)
+app.register_blueprint(race_bp)
+app.register_blueprint(board_bp)
+app.register_blueprint(admin_bp)
+
 
 # ------------------------------------------------------------
 # STARTUP
@@ -21,6 +32,13 @@ def startup():
     global _started
     if _started:
         return
+
+    try:
+        import database
+        database.init_db()
+        log.info("Database initialised")
+    except Exception as e:
+        log.warning(f"Database init skipped/failed: {e}")
 
     try:
         from scheduler import start_scheduler
@@ -293,34 +311,23 @@ def api_debug_thedogs_races():
 @app.route("/api/home/board", methods=["GET"])
 def api_home_board():
     try:
-        from db import get_db, safe_query, T
-        from datetime import date
-
-        races = safe_query(
-            lambda: get_db().table(T("today_races")).select("*")
-            .eq("date", date.today().isoformat())
-            .in_("status", ["upcoming", "open", "pending"])
-            .order("jump_time")
-            .limit(50)
-            .execute()
-            .data,
-            [],
-        ) or []
-
-        board = []
-        for race in races:
-            board.append({
-                "race_uid": race.get("race_uid"),
-                "code": race.get("code", "GREYHOUND"),
-                "track": race.get("track"),
-                "race_num": race.get("race_num"),
-                "jump_time": race.get("jump_time"),
-                "status": race.get("status", "upcoming"),
+        from board_builder import build_board
+        result = build_board()
+        board = result.get("board", [])
+        items = [
+            {
+                "race_id": r.get("race_id"),
+                "code": r.get("code", "GREYHOUND"),
+                "track": r.get("track"),
+                "race_num": r.get("race_num"),
+                "jump_time": r.get("jump_time"),
+                "status": r.get("status", "scheduled"),
                 "signal": None,
                 "confidence": None,
-            })
-
-        return jsonify({"ok": True, "items": board})
+            }
+            for r in board
+        ]
+        return jsonify({"ok": True, "items": items})
     except Exception as e:
         log.warning(f"/api/home/board fallback used: {e}")
         return jsonify({"ok": True, "items": []})
@@ -345,18 +352,6 @@ def api_debug_thedogs_scratchings_fetch():
     except Exception as e:
         log.exception(f"/api/debug/thedogs-scratchings-fetch failed: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
-
-# ------------------------------------------------------------
-# HEALTH
-# ------------------------------------------------------------
-@app.route("/api/health")
-def api_health():
-    return jsonify({
-        "ok": True,
-        "app": "DemonPulse",
-        "mode": env.mode,
-    })
-
 
 # ------------------------------------------------------------
 # MAIN
