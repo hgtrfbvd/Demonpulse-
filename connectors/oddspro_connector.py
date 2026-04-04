@@ -340,12 +340,10 @@ class OddsProConnector:
         No HTTP request is made.  Used by full_sweep() to avoid a redundant
         /api/external/meeting/:id call when races are already present.
         """
-        if isinstance(raw_meeting, dict):
-            races_raw = raw_meeting.get("races") or []
-        elif isinstance(raw_meeting, list):
+        if isinstance(raw_meeting, list):
             races_raw = raw_meeting
         else:
-            races_raw = []
+            races_raw = raw_meeting.get("races") or []
 
         races: list[RaceRecord] = []
         all_runners: list[RunnerRecord] = []

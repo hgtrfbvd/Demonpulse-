@@ -179,7 +179,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             # Prefer races embedded in the /meetings response (extra["raw"]["races"]).
             # Only call /meeting/:id when races are absent from the /meetings payload.
             raw_meeting = meeting.extra.get("raw", {})
-            embedded_races = raw_meeting.get("races") if isinstance(raw_meeting, dict) else None
+            embedded_races = raw_meeting.get("races")
 
             if embedded_races:
                 races, runners = conn.parse_meeting_races_with_runners(meeting, raw_meeting)
