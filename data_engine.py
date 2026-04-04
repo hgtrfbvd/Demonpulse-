@@ -133,23 +133,29 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         return {"ok": True, "meetings": 0, "races": 0, "date": today}
 
     races_written = 0
+    races_blocked = 0
     for meeting in meetings:
         try:
             races = conn.fetch_meeting_races(meeting)
             for race in races:
-                _store_with_pipeline(race)
+                stored_ok = _store_with_pipeline(race)
                 races_written += 1
+                if not stored_ok:
+                    races_blocked += 1
         except Exception as e:
             log.error(f"full_sweep: failed for meeting {meeting.meeting_id}: {e}")
 
     log.info(
-        f"full_sweep complete: {len(meetings)} meetings, {races_written} races for {today}"
+        f"full_sweep complete: {len(meetings)} meetings, {races_written} races stored "
+        f"({races_blocked} blocked) for {today}"
     )
     return {
         "ok": True,
         "date": today,
         "meetings": len(meetings),
         "races": races_written,
+        "races_blocked": races_blocked,
+        "races_passed": races_written - races_blocked,
         "source": "oddspro",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
