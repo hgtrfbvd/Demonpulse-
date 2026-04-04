@@ -267,6 +267,7 @@ _PHASE4_TABLES: list[tuple[str, str]] = [
             raw_late_time NUMERIC(10, 3),
             raw_all_sections JSONB,
             source TEXT DEFAULT 'oddspro_result',
+            source_type TEXT DEFAULT 'pre_race',
             created_at TIMESTAMPTZ DEFAULT now()
         )
         """,
@@ -297,6 +298,9 @@ _PHASE4_TABLES: list[tuple[str, str]] = [
 
 # Phase 4 — additional columns on existing tables
 _PHASE4_MIGRATIONS: list[tuple[str, str, str, str]] = [
+    # sectional_snapshots — Phase 4.5 extension column
+    ("sectional_snapshots", "source_type", "TEXT", "DEFAULT 'pre_race'"),
+
     # feature_snapshots — Phase 4 extension columns
     ("feature_snapshots", "has_sectionals",    "INTEGER",  "DEFAULT 0"),
     ("feature_snapshots", "has_race_shape",    "INTEGER",  "DEFAULT 0"),
