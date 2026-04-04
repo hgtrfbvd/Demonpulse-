@@ -267,6 +267,7 @@ def full_sweep(date_str: str | None = None) -> dict:
                 for r in runners
             ]
             confidence = score_data_quality(race_dict, runner_dicts)
+            # Confidence score (0.0-1.0) based on data completeness — must meet CONFIDENCE_THRESHOLD
 
             if confidence < CONFIDENCE_THRESHOLD:
                 log.warning(

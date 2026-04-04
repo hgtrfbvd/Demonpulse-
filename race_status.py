@@ -60,8 +60,6 @@ def get_race_status(race: dict) -> str:
     if mtj is None:
         return current
 
-    if mtj <= -CLOSED_MINUTES:
-        return STATUS_CLOSED
     if mtj <= CLOSED_MINUTES:
         return STATUS_CLOSED
     if mtj <= NEAR_JUMP_MINUTES:

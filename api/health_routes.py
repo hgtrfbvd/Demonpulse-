@@ -15,33 +15,33 @@ def api_health():
     """Returns app status + connector health + scheduler + board summary."""
     from env import env
 
-    oddspro_status = {"enabled": False}
+    oddspro_enabled = False
     try:
         from connectors.oddspro_connector import OddsProConnector
-        oddspro_status = {"enabled": OddsProConnector().is_enabled()}
+        oddspro_enabled = OddsProConnector().is_enabled()
     except Exception as e:
-        oddspro_status = {"enabled": False, "error": str(e)}
+        log.warning(f"OddsPro connector check failed: {e}")
 
-    formfav_status = {"enabled": False}
+    formfav_enabled = False
     try:
         from connectors.formfav_connector import FormFavConnector
-        formfav_status = {"enabled": FormFavConnector().is_enabled()}
+        formfav_enabled = FormFavConnector().is_enabled()
     except Exception as e:
-        formfav_status = {"enabled": False, "error": str(e)}
+        log.warning(f"FormFav connector check failed: {e}")
 
     engine_state = {}
     try:
         from data_engine import get_engine_state
         engine_state = get_engine_state()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"get_engine_state failed: {e}")
 
     scheduler_status = {}
     try:
         from scheduler import get_status
         scheduler_status = get_status()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"scheduler get_status failed: {e}")
 
     board_race_count = 0
     blocked_count = 0
@@ -52,15 +52,15 @@ def api_health():
         board_race_count = len(board.get("board", []))
         blocked_count = board.get("blocked_count", 0)
         stale_count = board.get("stale_count", 0)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"build_board failed in health check: {e}")
 
     return jsonify({
         "ok": True,
         "app": "DemonPulse",
         "mode": env.mode,
-        "oddspro": oddspro_status,
-        "formfav": formfav_status,
+        "oddspro": {"enabled": oddspro_enabled},
+        "formfav": {"enabled": formfav_enabled},
         "last_full_sweep_at": engine_state.get("last_full_sweep_at"),
         "last_refresh_at": engine_state.get("last_refresh_at"),
         "last_result_check_at": engine_state.get("last_result_check_at"),
@@ -81,30 +81,38 @@ def api_health_detailed():
     try:
         from connectors.oddspro_connector import OddsProConnector
         conn = OddsProConnector()
-        oddspro_status = conn.healthcheck()
+        hc = conn.healthcheck()
+        # Remove any raw error strings that may contain internals
+        oddspro_status = {
+            "enabled": hc.get("enabled", False),
+            "ok": hc.get("ok", False),
+        }
+        if "status_code" in hc:
+            oddspro_status["status_code"] = hc["status_code"]
     except Exception as e:
-        oddspro_status = {"enabled": False, "error": str(e)}
+        log.warning(f"OddsPro healthcheck failed: {e}")
+        oddspro_status = {"enabled": False}
 
-    formfav_status = {"enabled": False}
+    formfav_enabled = False
     try:
         from connectors.formfav_connector import FormFavConnector
-        formfav_status = {"enabled": FormFavConnector().is_enabled()}
+        formfav_enabled = FormFavConnector().is_enabled()
     except Exception as e:
-        formfav_status = {"enabled": False, "error": str(e)}
+        log.warning(f"FormFav connector check failed: {e}")
 
     engine_state = {}
     try:
         from data_engine import get_engine_state
         engine_state = get_engine_state()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"get_engine_state failed: {e}")
 
     scheduler_status = {}
     try:
         from scheduler import get_status
         scheduler_status = get_status()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"scheduler get_status failed: {e}")
 
     db_stats = {}
     try:
@@ -119,14 +127,15 @@ def api_health_detailed():
             "blocked_races": len(blocked),
         }
     except Exception as e:
-        db_stats = {"error": str(e)}
+        log.warning(f"DB stats failed: {e}")
+        db_stats = {"error": "unavailable"}
 
     return jsonify({
         "ok": True,
         "app": "DemonPulse",
         "mode": env.mode,
         "oddspro": oddspro_status,
-        "formfav": formfav_status,
+        "formfav": {"enabled": formfav_enabled},
         "engine_state": engine_state,
         "scheduler": scheduler_status,
         "db": db_stats,

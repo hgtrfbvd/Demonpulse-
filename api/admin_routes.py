@@ -8,6 +8,8 @@ from flask import Blueprint, jsonify, request
 log = logging.getLogger(__name__)
 admin_bp = Blueprint("admin", __name__)
 
+_INTERNAL_ERROR = {"ok": False, "error": "Internal server error"}
+
 
 @admin_bp.route("/api/admin/bootstrap", methods=["POST"])
 def api_bootstrap():
@@ -18,7 +20,7 @@ def api_bootstrap():
         return jsonify(result)
     except Exception as e:
         log.exception(f"/api/admin/bootstrap failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @admin_bp.route("/api/admin/sweep", methods=["POST"])
@@ -32,7 +34,7 @@ def api_sweep():
         return jsonify(result)
     except Exception as e:
         log.exception(f"/api/admin/sweep failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @admin_bp.route("/api/admin/refresh/meeting/<meeting_id>", methods=["POST"])
@@ -44,7 +46,7 @@ def api_refresh_meeting(meeting_id):
         return jsonify(result)
     except Exception as e:
         log.exception(f"/api/admin/refresh/meeting/{meeting_id} failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @admin_bp.route("/api/admin/refresh/race/<race_id>", methods=["POST"])
@@ -56,7 +58,7 @@ def api_refresh_race(race_id):
         return jsonify(result)
     except Exception as e:
         log.exception(f"/api/admin/refresh/race/{race_id} failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @admin_bp.route("/api/admin/results", methods=["POST"])
@@ -70,7 +72,7 @@ def api_recheck_results():
         return jsonify(result)
     except Exception as e:
         log.exception(f"/api/admin/results failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @admin_bp.route("/api/admin/board/rebuild", methods=["POST"])
@@ -84,7 +86,7 @@ def api_rebuild_board():
         return jsonify(result)
     except Exception as e:
         log.exception(f"/api/admin/board/rebuild failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @admin_bp.route("/api/admin/formfav/overlay", methods=["POST"])
@@ -98,4 +100,4 @@ def api_formfav_overlay():
         return jsonify(result)
     except Exception as e:
         log.exception(f"/api/admin/formfav/overlay failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500

@@ -9,6 +9,8 @@ from flask import Blueprint, jsonify, request
 log = logging.getLogger(__name__)
 race_bp = Blueprint("races", __name__)
 
+_INTERNAL_ERROR = {"ok": False, "error": "Internal server error"}
+
 
 @race_bp.route("/api/races")
 def api_races():
@@ -40,7 +42,7 @@ def api_races():
         return jsonify({"ok": True, "count": len(result), "races": result})
     except Exception as e:
         log.exception(f"/api/races failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @race_bp.route("/api/races/<race_id>")
@@ -64,7 +66,7 @@ def api_race_detail(race_id):
         return jsonify({"ok": True, "race": rd})
     except Exception as e:
         log.exception(f"/api/races/{race_id} failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @race_bp.route("/api/races/<race_id>/runners")
@@ -87,7 +89,7 @@ def api_race_runners(race_id):
         })
     except Exception as e:
         log.exception(f"/api/races/{race_id}/runners failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @race_bp.route("/api/meetings")
@@ -101,7 +103,7 @@ def api_meetings():
         return jsonify({"ok": True, "count": len(meetings), "meetings": meetings})
     except Exception as e:
         log.exception(f"/api/meetings failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
 
 
 @race_bp.route("/api/meetings/<meeting_id>/races")
@@ -122,4 +124,4 @@ def api_meeting_races(meeting_id):
                         "count": len(result), "races": result})
     except Exception as e:
         log.exception(f"/api/meetings/{meeting_id}/races failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(_INTERNAL_ERROR), 500
