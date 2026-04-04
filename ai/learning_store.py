@@ -240,7 +240,7 @@ def evaluate_prediction(
 
     except Exception as e:
         log.error(f"learning_store: evaluate_prediction failed for {race_uid}: {e}")
-        return {"ok": False, "error": str(e), "race_uid": race_uid}
+        return {"ok": False, "error": "Evaluation failed", "race_uid": race_uid}
 
 
 def get_performance_summary(
@@ -310,7 +310,7 @@ def get_performance_summary(
 
     except Exception as e:
         log.error(f"learning_store: get_performance_summary failed: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "Performance summary unavailable"}
 
 
 def get_stored_prediction(race_uid: str) -> dict[str, Any]:
@@ -361,7 +361,7 @@ def get_stored_prediction(race_uid: str) -> dict[str, Any]:
 
     except Exception as e:
         log.error(f"learning_store: get_stored_prediction failed for {race_uid}: {e}")
-        return {"ok": False, "error": str(e), "race_uid": race_uid}
+        return {"ok": False, "error": "Could not retrieve prediction", "race_uid": race_uid}
 
 
 def get_prediction_counts() -> dict[str, int]:

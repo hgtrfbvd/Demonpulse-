@@ -90,7 +90,7 @@ def backtest_date_range(
         log.error(f"backtest: failed to fetch races {date_from}—{date_to}: {e}")
         return {
             "ok": False,
-            "error": str(e),
+            "error": "Failed to fetch race data",
             "run_id": run_id,
             "date_from": date_from,
             "date_to": date_to,
@@ -207,7 +207,7 @@ def get_backtest_run(run_id: str) -> dict[str, Any]:
         return {"ok": True, "run": rows[0]}
     except Exception as e:
         log.error(f"backtest: get_backtest_run failed for {run_id}: {e}")
-        return {"ok": False, "error": str(e), "run_id": run_id}
+        return {"ok": False, "error": "Could not retrieve backtest run", "run_id": run_id}
 
 
 # ---------------------------------------------------------------------------

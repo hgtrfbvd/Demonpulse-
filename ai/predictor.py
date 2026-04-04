@@ -58,7 +58,7 @@ def predict_race(race_uid: str) -> dict[str, Any]:
         race, runners = _fetch_race_data(race_uid)
     except Exception as e:
         log.error(f"predictor: data fetch failed for {race_uid}: {e}")
-        return {"ok": False, "error": f"Data fetch failed: {e}", "race_uid": race_uid}
+        return {"ok": False, "error": "Data fetch failed", "race_uid": race_uid}
 
     if not race:
         return {"ok": False, "error": "Race not found", "race_uid": race_uid}
