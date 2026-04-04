@@ -242,6 +242,120 @@ def backtest_date_range(
     return summary
 
 
+def compare_models(
+    start_date: str,
+    end_date: str,
+    code_filter: str | None = None,
+    track_filter: str | None = None,
+) -> dict[str, Any]:
+    """
+    Run a three-way model comparison over a date range.
+
+    Runs all three model variants over the same historical data:
+      1. baseline_v1          — odds-ranked, no feature signals
+      2. v2_feature_engine    — full feature signals, no enrichment
+      3. v2_with_enrichment   — full feature signals + FormFav enrichment
+
+    Returns a performance comparison table with win_rate, top3_rate, and
+    ROI estimate per model.
+
+    Future dates are rejected (no leakage rule).
+
+    Args:
+        start_date  : start date ISO string (YYYY-MM-DD), inclusive
+        end_date    : end date ISO string (YYYY-MM-DD), inclusive
+        code_filter : optional race code filter ('GREYHOUND', 'HARNESS', 'GALLOPS')
+        track_filter: optional track name filter (substring match)
+
+    Returns:
+        dict with:
+          - ok
+          - date_from / date_to
+          - models: dict keyed by model version with performance stats
+          - best_model: model version with highest win_rate
+    """
+    from datetime import date as _date
+
+    # Guard: reject future dates
+    today_str = _date.today().isoformat()
+    if start_date > today_str or end_date > today_str:
+        return {
+            "ok": False,
+            "error": "Backtest cannot use future dates (no leakage rule)",
+            "date_from": start_date,
+            "date_to": end_date,
+            "today": today_str,
+        }
+
+    models_to_run = [
+        "baseline_v1",
+        "v2_feature_engine",
+        "v2_with_enrichment",
+    ]
+
+    model_results: dict[str, Any] = {}
+
+    for model_version in models_to_run:
+        result = backtest_date_range(
+            date_from=start_date,
+            date_to=end_date,
+            code_filter=code_filter,
+            track_filter=track_filter,
+            model_version=model_version,
+            compare_models=False,
+        )
+        if result.get("ok"):
+            model_results[model_version] = {
+                "win_rate": result.get("hit_rate", 0.0),
+                "top3_rate": result.get("top3_rate", 0.0),
+                "total_races": result.get("total_races", 0),
+                "winner_hit_count": result.get("winner_hit_count", 0),
+                "avg_winner_odds": result.get("avg_winner_odds"),
+                "run_id": result.get("run_id"),
+                # ROI estimate: avg_winner_odds * win_rate - 1 (unit stake)
+                "roi_estimate": (
+                    round(
+                        result.get("avg_winner_odds", 0.0) * result.get("hit_rate", 0.0) - 1.0,
+                        4,
+                    )
+                    if result.get("avg_winner_odds") and result.get("hit_rate")
+                    else None
+                ),
+            }
+        else:
+            model_results[model_version] = {
+                "ok": False,
+                "error": result.get("error", "Unknown error"),
+            }
+
+    # Determine best model by win_rate
+    best_model = max(
+        (m for m in model_results if model_results[m].get("win_rate") is not None),
+        key=lambda m: model_results[m].get("win_rate", 0.0),
+        default="baseline_v1",
+    )
+
+    log.info(
+        f"backtest compare_models: {start_date}—{end_date} "
+        f"best={best_model} "
+        + " ".join(
+            f"{m}={model_results[m].get('win_rate', 0.0):.1%}"
+            for m in models_to_run
+            if model_results[m].get("win_rate") is not None
+        )
+    )
+
+    return {
+        "ok": True,
+        "date_from": start_date,
+        "date_to": end_date,
+        "code_filter": code_filter or "",
+        "track_filter": track_filter or "",
+        "models": model_results,
+        "best_model": best_model,
+    }
+
+
 def get_backtest_run(run_id: str) -> dict[str, Any]:
     """Retrieve a stored backtest run summary by run_id."""
     try:

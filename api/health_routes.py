@@ -115,9 +115,15 @@ def health_intelligence():
       - stored prediction snapshot count
       - evaluated prediction count
       - active model version
+      - enrichment_usage_rate (fraction of predictions that used FormFav enrichment)
+      - disagreement_rate (fraction of disagreement checks that were flagged)
     """
     try:
-        from services.health_service import get_health
+        from services.health_service import (
+            get_health,
+            get_enrichment_usage_rate,
+            get_disagreement_rate,
+        )
         from ai.learning_store import get_prediction_counts
 
         health = get_health()
@@ -140,6 +146,8 @@ def health_intelligence():
             "prediction_snapshots_stored": counts.get("prediction_snapshots", 0),
             "evaluations_stored": counts.get("learning_evaluations", 0),
             "active_model_version": health.get("active_model_version", "baseline_v1"),
+            "enrichment_usage_rate": get_enrichment_usage_rate(),
+            "disagreement_rate": get_disagreement_rate(),
         })
     except Exception as e:
         log.error(f"/api/health/intelligence failed: {e}")

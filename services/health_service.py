@@ -58,6 +58,11 @@ _state: dict[str, Any] = {
     "last_sectional_extraction_count": 0,
     "last_race_shape_build_at": None,
     "last_race_shape_build_count": 0,
+    # Phase 4.6 — enrichment / disagreement tracking
+    "enrichment_usage_count": 0,
+    "enrichment_usage_total": 0,
+    "disagreement_flagged_count": 0,
+    "disagreement_total": 0,
 }
 
 
@@ -175,6 +180,54 @@ def record_race_shape_build(*, count: int = 0) -> None:
         last_race_shape_build_count=count,
     )
     log.debug(f"health_service: race_shape_build recorded count={count}")
+
+
+# ---------------------------------------------------------------------------
+# PHASE 4.6 — ENRICHMENT / DISAGREEMENT TRACKING
+# ---------------------------------------------------------------------------
+
+def record_enrichment_usage(*, used: bool) -> None:
+    """
+    Record whether a prediction used FormFav enrichment.
+
+    Args:
+        used: True if enrichment was present and applied to this prediction
+    """
+    with _lock:
+        _state["enrichment_usage_total"] = _state.get("enrichment_usage_total", 0) + 1
+        if used:
+            _state["enrichment_usage_count"] = _state.get("enrichment_usage_count", 0) + 1
+    log.debug(f"health_service: enrichment_usage recorded used={used}")
+
+
+def record_disagreement(*, flagged: bool) -> None:
+    """
+    Record a disagreement check result.
+
+    Args:
+        flagged: True if this check was flagged as high-disagreement
+    """
+    with _lock:
+        _state["disagreement_total"] = _state.get("disagreement_total", 0) + 1
+        if flagged:
+            _state["disagreement_flagged_count"] = _state.get("disagreement_flagged_count", 0) + 1
+    log.debug(f"health_service: disagreement recorded flagged={flagged}")
+
+
+def get_enrichment_usage_rate() -> float:
+    """Return the fraction of predictions that used enrichment (0.0–1.0)."""
+    with _lock:
+        total = _state.get("enrichment_usage_total", 0)
+        used = _state.get("enrichment_usage_count", 0)
+    return round(used / total, 4) if total > 0 else 0.0
+
+
+def get_disagreement_rate() -> float:
+    """Return the fraction of disagreement checks that were flagged (0.0–1.0)."""
+    with _lock:
+        total = _state.get("disagreement_total", 0)
+        flagged = _state.get("disagreement_flagged_count", 0)
+    return round(flagged / total, 4) if total > 0 else 0.0
 
 
 def set_active_model_version(model_version: str) -> None:
