@@ -482,6 +482,11 @@ class OddsProConnector:
                 )
                 if not mid:
                     continue
+                if not item.get("id") and not item.get("meetingId"):
+                    log.debug(
+                        f"[ODDSPRO] meeting item has no id/meetingId — "
+                        f"falling back to meetingName as identifier: {mid!r}"
+                    )
                 meetings.append(
                     MeetingRecord(
                         meeting_id=mid,
@@ -528,6 +533,11 @@ class OddsProConnector:
                 )
                 if not mid:
                     continue
+                if not item.get("id") and not item.get("meetingId"):
+                    log.debug(
+                        f"[ODDSPRO] meeting item has no id/meetingId — "
+                        f"falling back to meetingName as identifier: {mid!r}"
+                    )
                 meetings.append(
                     MeetingRecord(
                         meeting_id=mid,
