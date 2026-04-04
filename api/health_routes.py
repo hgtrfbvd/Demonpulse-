@@ -7,6 +7,7 @@ scheduler status, and data source health.
 from __future__ import annotations
 
 import logging
+import os
 from flask import Blueprint, jsonify
 
 from env import env
@@ -72,8 +73,6 @@ def health_live():
     Includes last cycle timestamps, blocked/stale counts, and result confirmations.
     """
     try:
-        import os
-        from env import env
         from services.health_service import get_health, is_engine_healthy
         health = get_health()
 

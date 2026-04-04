@@ -7,6 +7,7 @@ and running migrations. Protected by auth in production.
 from __future__ import annotations
 
 import logging
+import os
 from flask import Blueprint, jsonify, request
 
 log = logging.getLogger(__name__)
@@ -504,7 +505,6 @@ def admin_engine_status():
     try:
         from datetime import date
         from env import env
-        import os
 
         health: dict = {}
         scheduler_status: dict = {}
