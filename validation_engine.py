@@ -27,8 +27,19 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------
 THRESHOLD_VALIDATED = 0.85
 THRESHOLD_CAUTION = 0.65
-MAX_BLOCKED_SCORE = THRESHOLD_CAUTION - 0.01  # Maximum score allowed in blocked state
+BLOCKED_SCORE_BUFFER = 0.01             # Gap below caution threshold for blocked scores
+MAX_BLOCKED_SCORE = THRESHOLD_CAUTION - BLOCKED_SCORE_BUFFER
 
+# Thresholds for runner name overlap scoring
+NAME_OVERLAP_HIGH_THRESHOLD = 0.7      # Above → names_overlap bonus
+NAME_OVERLAP_LOW_THRESHOLD = 0.4       # Below → names_mismatch penalty
+
+# Runner count variance tolerance
+MIN_RUNNER_VARIANCE = 2                 # Absolute minimum allowed count difference
+RUNNER_COUNT_TOLERANCE_RATIO = 0.2     # 20% relative tolerance
+
+# Stale data threshold (seconds) — consistent with integrity_filter
+STALE_THRESHOLD_SECONDS = 600          # 10 minutes
 # ---------------------------------------------------------------
 # VALIDATION REASON CODES
 # ---------------------------------------------------------------
@@ -111,7 +122,7 @@ def _analyse_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     fetched_at = envelope.get("fetched_at")
 
     age_s = _data_age_seconds(fetched_at)
-    stale = age_s is not None and age_s > 600  # >10 min = stale
+    stale = age_s is not None and age_s > STALE_THRESHOLD_SECONDS
 
     meetings = data.get("meetings") or []
     races = data.get("races") or []
@@ -233,7 +244,7 @@ def validate_race_sources(
         max_count = max(runner_counts)
         min_count = min(runner_counts)
         if max_count >= min_runner_count:
-            if (max_count - min_count) <= max(2, max_count * 0.2):
+            if (max_count - min_count) <= max(MIN_RUNNER_VARIANCE, max_count * RUNNER_COUNT_TOLERANCE_RATIO):
                 score += 0.15
                 reason_codes.append(REASON_RUNNER_COUNT_MATCH)
             else:
@@ -253,10 +264,10 @@ def validate_race_sources(
     ]
     if len(runner_name_lists) >= 2:
         overlap = _names_overlap_score(runner_name_lists[0], runner_name_lists[1])
-        if overlap >= 0.7:
+        if overlap >= NAME_OVERLAP_HIGH_THRESHOLD:
             score += 0.10
             reason_codes.append(REASON_NAMES_OVERLAP)
-        elif overlap < 0.4:
+        elif overlap < NAME_OVERLAP_LOW_THRESHOLD:
             score -= 0.10
             reason_codes.append(REASON_NAMES_MISMATCH)
 

@@ -83,6 +83,24 @@ _formfav: FormFavConnector | None = None
 _thedogs: TheDogsConnector | None = None
 
 
+def _to_dict(obj: Any) -> dict[str, Any]:
+    """Safely convert an object to a dict (supports __dict__ and plain dicts)."""
+    if isinstance(obj, dict):
+        return obj
+    return obj.__dict__ if hasattr(obj, "__dict__") else {}
+
+
+def _extract_track_name(race: dict[str, Any]) -> str:
+    """Extract the track name from a normalized race dict, with fallbacks."""
+    extra = race.get("extra") or {}
+    return (
+        extra.get("track")
+        or race.get("track_name")
+        or race.get("meeting_id_internal", "").split("_")[-1]
+        or "unknown"
+    )
+
+
 def _get_formfav() -> FormFavConnector:
     global _formfav
     if _formfav is None:
@@ -172,7 +190,7 @@ def _fetch_formfav_meetings(target_date: str) -> dict[str, Any]:
                 "error": None,
                 "meta": {"request_url": "", "response_type": "api", "latency_ms": 0},
                 "data": {
-                    "meetings": [m.__dict__ if hasattr(m, "__dict__") else m for m in meetings],
+                    "meetings": [_to_dict(m) for m in meetings],
                     "races": [], "runners": [], "odds": [], "results": [],
                 },
             }
@@ -222,8 +240,8 @@ def _fetch_formfav_race(target_date: str, track: str, race_num: int, code: str) 
             code=code,
         )
 
-        race_dict = race.__dict__ if hasattr(race, "__dict__") else race
-        runner_dicts = [r.__dict__ if hasattr(r, "__dict__") else r for r in runners]
+        race_dict = _to_dict(race)
+        runner_dicts = [_to_dict(r) for r in runners]
 
         # Annotate with normalized keys for downstream use
         race_norm = {
@@ -318,7 +336,7 @@ def _fetch_thedogs_meetings(target_date: str) -> dict[str, Any]:
                 "data": {"meetings": [], "races": [], "runners": [], "odds": [], "results": []},
             }
         else:
-            m_dicts = [m.__dict__ if hasattr(m, "__dict__") else m for m in meetings]
+            m_dicts = [_to_dict(m) for m in meetings]
             # Normalize to standard meeting schema
             norm_meetings = []
             for m in m_dicts:
@@ -411,7 +429,7 @@ def _try_build_board_entry(
 
     return {
         "race_uid": race.get("race_id_internal"),
-        "track": (race.get("extra") or {}).get("track") or race.get("meeting_id_internal", "").split("_")[-1],
+        "track": _extract_track_name(race),
         "race_num": race.get("race_number"),
         "code": (race.get("extra") or {}).get("code", "UNKNOWN"),
         "scheduled_jump_time": race.get("scheduled_jump_time"),

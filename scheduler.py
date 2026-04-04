@@ -136,7 +136,13 @@ def _run_meetings_refresh():
 
 
 def _run_race_detail_refresh():
-    """Refresh near-start race details (odds, scratchings, status)."""
+    """
+    Refresh near-start race details (odds, scratchings, runner status).
+
+    Uses rolling_refresh() which re-fetches from all active sources.
+    When dedicated race-detail and scratchings endpoints are added to
+    the data engine, this function should call them directly instead.
+    """
     log.info("[scheduler] Running race detail refresh...")
     result = rolling_refresh()
     ok = result.get("ok", False)
@@ -150,9 +156,14 @@ def _run_race_detail_refresh():
 
 
 def _run_scratchings_refresh():
-    """Refresh scratchings for active races."""
+    """
+    Refresh scratchings for active races.
+
+    Uses rolling_refresh() which re-fetches from all active sources.
+    When a dedicated scratchings endpoint is added to the data engine,
+    this function should call it directly instead.
+    """
     log.info("[scheduler] Running scratchings refresh...")
-    # Scratchings refresh uses rolling_refresh which handles FormFav/TheDogs
     result = rolling_refresh()
     ok = result.get("ok", False)
     log.info("[scheduler] Scratchings refresh: ok=%s", ok)

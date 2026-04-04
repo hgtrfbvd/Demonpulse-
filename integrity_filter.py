@@ -57,6 +57,7 @@ BLOCK_ODDS_MISSING = "ODDS_MISSING"
 # ---------------------------------------------------------------
 MIN_RUNNER_COUNT = 2
 MAX_STALE_DATA_SECONDS = 600       # 10 minutes
+MAX_PAST_JUMP_MINUTES = 60         # race started > 60min ago with no result = stale
 MAX_FUTURE_JUMP_MINUTES = 1440     # races must jump within 24h
 MIN_ODDS_COVERAGE_RATIO = 0.0      # 0 = odds not required by default
 RESULT_BLOCK_STATUSES = {"result", "official", "abandoned", "finished"}
@@ -114,8 +115,8 @@ def _check_race_time(race: dict[str, Any]) -> list[str]:
         return blocks
 
     now = _utc_now()
-    if dt < now - timedelta(minutes=60):
-        # Race started more than 60 minutes ago with no result update → stale
+    if dt < now - timedelta(minutes=MAX_PAST_JUMP_MINUTES):
+        # Race started more than MAX_PAST_JUMP_MINUTES ago with no result update → stale
         blocks.append(BLOCK_STALE_DATA)
 
     if dt > now + timedelta(minutes=MAX_FUTURE_JUMP_MINUTES):
