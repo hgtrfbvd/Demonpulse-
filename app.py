@@ -10,6 +10,20 @@ log = logging.getLogger(__name__)
 app = Flask(__name__, template_folder="templates", static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("FLASK_SECRET", "demonpulse-dev-secret-change-me")
 
+# Register API blueprints at module load time (always, regardless of startup mode)
+try:
+    from api.health_routes import health_bp
+    from api.race_routes import race_bp
+    from api.board_routes import board_bp
+    from api.admin_routes import admin_bp
+    app.register_blueprint(health_bp)
+    app.register_blueprint(race_bp)
+    app.register_blueprint(board_bp)
+    app.register_blueprint(admin_bp)
+    log.info("API blueprints registered")
+except Exception as _bp_err:
+    log.warning(f"Blueprint registration failed: {_bp_err}")
+
 
 # ------------------------------------------------------------
 # STARTUP
@@ -292,35 +306,14 @@ def api_debug_thedogs_races():
 # ------------------------------------------------------------
 @app.route("/api/home/board", methods=["GET"])
 def api_home_board():
+    """
+    Home board endpoint — delegates to board_builder which uses OddsPro data.
+    NTJ computed from stored jump_time (no external scraping).
+    """
     try:
-        from db import get_db, safe_query, T
-        from datetime import date
-
-        races = safe_query(
-            lambda: get_db().table(T("today_races")).select("*")
-            .eq("date", date.today().isoformat())
-            .in_("status", ["upcoming", "open", "pending"])
-            .order("jump_time")
-            .limit(50)
-            .execute()
-            .data,
-            [],
-        ) or []
-
-        board = []
-        for race in races:
-            board.append({
-                "race_uid": race.get("race_uid"),
-                "code": race.get("code", "GREYHOUND"),
-                "track": race.get("track"),
-                "race_num": race.get("race_num"),
-                "jump_time": race.get("jump_time"),
-                "status": race.get("status", "upcoming"),
-                "signal": None,
-                "confidence": None,
-            })
-
-        return jsonify({"ok": True, "items": board})
+        from board_builder import get_board_for_today
+        result = get_board_for_today()
+        return jsonify(result)
     except Exception as e:
         log.warning(f"/api/home/board fallback used: {e}")
         return jsonify({"ok": True, "items": []})
