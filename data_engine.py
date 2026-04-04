@@ -94,7 +94,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         try:
             races = conn.fetch_meeting_races(meeting)
             for race in races:
-                _write_race(race)
+                _store_with_pipeline(race)
                 races_written += 1
         except Exception as e:
             log.error(f"full_sweep: failed for meeting {meeting.meeting_id}: {e}")
@@ -137,7 +137,6 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
     try:
         from database import get_active_races
         from race_status import should_trigger_formfav_overlay
-        from integrity_filter import guard_formfav_overwrite
 
         active_races = get_active_races(today)
 
@@ -151,7 +150,7 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
                 fresh_race, runners = conn.fetch_race_with_runners(oddspro_race_id)
                 if fresh_race:
                     fresh_dict = _race_to_dict(fresh_race)
-                    _write_race(fresh_race)
+                    _store_with_pipeline(fresh_race)
                     races_refreshed += 1
 
                     # Near-jump FormFav provisional overlay (enrichment only)
@@ -281,6 +280,49 @@ def _write_race(race: Any) -> None:
         upsert_race(race_dict)
     except Exception as e:
         log.error(f"data_engine: _write_race failed: {e}")
+
+
+def _store_with_pipeline(race: Any) -> None:
+    """
+    Enforce pipeline order before storing an OddsPro race record:
+      1. Normalize  (already done by connector)
+      2. Validate   (log warning; OddsPro data is stored regardless)
+      3. Integrity  (if blocked, mark before storing)
+      4. Store
+
+    Blocked races are stored with status='blocked' so they are tracked
+    explicitly rather than silently dropped.
+    """
+    try:
+        from database import upsert_race
+        from validation_engine import validate_race
+        from integrity_filter import filter_race
+
+        race_dict = _race_to_dict(race)
+        race_uid = race_dict.get("race_uid") or "(no uid)"
+
+        # Step 2 — Validate (informational; OddsPro data is always stored)
+        passes, confidence, issues = validate_race(race_dict)
+        if not passes:
+            log.warning(
+                f"data_engine: pipeline validate: race {race_uid} "
+                f"confidence={confidence} issues={issues} — storing for tracking"
+            )
+
+        # Step 3 — Integrity filter (hard gate; mark as blocked if rejected)
+        allowed, block_code = filter_race(race_dict)
+        if not allowed:
+            log.warning(
+                f"data_engine: pipeline integrity: race {race_uid} blocked [{block_code}] — storing as blocked"
+            )
+            race_dict["status"] = "blocked"
+            race_dict["block_code"] = block_code
+
+        # Step 4 — Store
+        upsert_race(race_dict)
+
+    except Exception as e:
+        log.error(f"data_engine: _store_with_pipeline failed: {e}")
 
 
 def _write_result(result: Any) -> None:
