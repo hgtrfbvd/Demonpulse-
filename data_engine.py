@@ -148,7 +148,17 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         return {"ok": False, "reason": reason, "http_status": status_code, "date": today}
     except ValueError as e:
         log.error(f"full_sweep: fetch_meetings parse error: {e}")
-        return {"ok": False, "reason": "oddspro_parse_error", "detail": str(e), "date": today}
+        err_dict: dict[str, Any] = {
+            "ok": False,
+            "reason": "oddspro_parse_error",
+            "detail": str(e),
+            "date": today,
+        }
+        if hasattr(e, "parse_stage"):
+            err_dict["parse_stage"] = e.parse_stage
+            err_dict["response_keys"] = e.response_keys
+            err_dict["first_item_keys"] = e.first_item_keys
+        return err_dict
     except Exception as e:
         log.error(f"full_sweep: fetch_meetings failed: {e}")
         return {"ok": False, "reason": "oddspro_request_exception", "date": today}

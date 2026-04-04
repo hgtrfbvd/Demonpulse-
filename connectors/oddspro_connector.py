@@ -39,6 +39,30 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# PARSE ERROR — carries structured diagnostics for callers
+# ---------------------------------------------------------------------------
+
+class OddsProParseError(ValueError):
+    """
+    Raised when the OddsPro response cannot be parsed into the expected structure.
+    Carries parse_stage, response_keys and first_item_keys so callers can return
+    structured diagnostics without needing to re-parse the error message string.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        parse_stage: str,
+        response_keys: list[str],
+        first_item_keys: list[str],
+    ):
+        super().__init__(message)
+        self.parse_stage = parse_stage
+        self.response_keys = response_keys
+        self.first_item_keys = first_item_keys
+
+
+# ---------------------------------------------------------------------------
 # DATA RECORDS (shared with data_engine / board_builder)
 # ---------------------------------------------------------------------------
 
@@ -191,33 +215,55 @@ class OddsProConnector:
             payload = resp.json()
         except ValueError as e:
             log.error(f"OddsPro fetch_meetings: JSON parse failed: {e}")
-            raise
+            raise OddsProParseError(
+                f"JSON decode error: {e}",
+                parse_stage="meetings",
+                response_keys=[],
+                first_item_keys=[],
+            ) from e
 
-        meetings: list[MeetingRecord] = []
         # Documented response shape: {"data": [...], "meta": {...}}
-        if isinstance(payload, dict):
-            items = payload.get("data") or payload.get("meetings") or []
-        elif isinstance(payload, list):
-            items = payload
-        else:
-            items = []
+        top_keys: list[str] = list(payload.keys()) if isinstance(payload, dict) else []
+        first_item_keys: list[str] = []
+        try:
+            if isinstance(payload, dict):
+                items = payload.get("data") or payload.get("meetings") or []
+            elif isinstance(payload, list):
+                items = payload
+            else:
+                items = []
 
-        for item in items:
-            mid = str(item.get("id") or item.get("meetingId") or "")
-            if not mid:
-                continue
-            meetings.append(
-                MeetingRecord(
-                    meeting_id=mid,
-                    code=self._normalise_code(item.get("type") or item.get("code") or "HORSE"),
-                    source=self.source_name,
-                    track=self._clean_track(item.get("track") or item.get("venue") or ""),
-                    meeting_date=str(item.get("date") or target_date or ""),
-                    state=str(item.get("state") or item.get("region") or ""),
-                    country=str(item.get("country") or self.country),
-                    extra={"raw": item},
+            if items:
+                first_item_keys = list(items[0].keys())
+            meetings: list[MeetingRecord] = []
+            for item in items:
+                mid = str(item.get("id") or item.get("meetingId") or "")
+                if not mid:
+                    continue
+                meetings.append(
+                    MeetingRecord(
+                        meeting_id=mid,
+                        code=self._normalise_code(item.get("type") or item.get("code") or "HORSE"),
+                        source=self.source_name,
+                        track=self._clean_track(item.get("track") or item.get("venue") or ""),
+                        meeting_date=str(item.get("date") or target_date or ""),
+                        # Documented field is "location"; also accept "state"/"region"
+                        state=str(
+                            item.get("location") or item.get("state") or item.get("region") or ""
+                        ),
+                        country=str(item.get("country") or self.country),
+                        extra={"raw": item},
+                    )
                 )
-            )
+        except OddsProParseError:
+            raise
+        except Exception as e:
+            raise OddsProParseError(
+                f"meetings parse error: {e}",
+                parse_stage="meetings",
+                response_keys=top_keys,
+                first_item_keys=first_item_keys,
+            ) from e
 
         log.info(f"OddsPro fetch_meetings: {len(meetings)} meetings for {target_date}")
         return meetings
@@ -566,13 +612,15 @@ class OddsProConnector:
         runners: list[RunnerRecord] = []
 
         for r in runners_raw:
-            number = r.get("number") or r.get("saddleCloth")
+            # Documented aliases: runnerNumber | number | saddleCloth
+            number = r.get("runnerNumber") or r.get("number") or r.get("saddleCloth")
             try:
                 number = int(number) if number is not None else None
             except (TypeError, ValueError):
                 number = None
 
-            box_num = r.get("boxNumber") or r.get("box_num")
+            # Documented aliases: boxNumber | box | box_num
+            box_num = r.get("boxNumber") or r.get("box") or r.get("box_num")
             try:
                 box_num = int(box_num) if box_num is not None else None
             except (TypeError, ValueError):
@@ -598,7 +646,11 @@ class OddsProConnector:
                     race_uid=race.race_uid,
                     oddspro_race_id=race.oddspro_race_id,
                     box_num=box_num if race.code == "GREYHOUND" else None,
-                    name=str(r.get("name") or r.get("horseName") or r.get("dogName") or ""),
+                    # Documented aliases: runnerName | name | horseName | dogName
+                    name=str(
+                        r.get("runnerName") or r.get("name")
+                        or r.get("horseName") or r.get("dogName") or ""
+                    ),
                     number=number,
                     barrier=r.get("barrier") or r.get("barrierDraw"),
                     trainer=str(r.get("trainer") or ""),
