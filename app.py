@@ -342,6 +342,22 @@ def api_debug_thedogs_scratchings_fetch():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
+# SMOKE TEST
+# ------------------------------------------------------------
+@app.route("/api/smoke-test", methods=["GET"])
+def run_smoke_test():
+    if os.environ.get("DP_ENV") != "TEST":
+        return jsonify({"status": "error", "message": "DP_ENV must be TEST"}), 400
+
+    try:
+        from smoke_test import run_all_tests
+        result = run_all_tests()
+        return jsonify({"status": "ok", "result": result})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ------------------------------------------------------------
 # HEALTH
 # ------------------------------------------------------------
 @app.route("/api/health")
