@@ -24,7 +24,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from supabase_client import get_client, safe_execute, resolve_table
+from db import get_db, safe_query, T
 from supabase_config import VALID_RACE_CODES
 
 log = logging.getLogger(__name__)
@@ -93,15 +93,14 @@ class DataIntegrityService:
     @staticmethod
     def _check_race_code_validity(target_date: str) -> dict:
         """Ensure all races for the date have a valid racing code."""
-        races = safe_execute(
-            lambda: get_client()
-                .table(resolve_table("today_races"))
+        races = safe_query(
+            lambda: get_db()
+                .table(T("today_races"))
                 .select("race_uid,code")
                 .eq("date", target_date)
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_race_code_validity",
         ) or []
 
         invalid = [r for r in races if r.get("code", "") not in VALID_RACE_CODES]
@@ -121,26 +120,24 @@ class DataIntegrityService:
     @staticmethod
     def _check_runner_race_links(target_date: str) -> dict:
         """Ensure all runners for today link back to a valid race."""
-        races = safe_execute(
-            lambda: get_client()
-                .table(resolve_table("today_races"))
+        races = safe_query(
+            lambda: get_db()
+                .table(T("today_races"))
                 .select("race_uid")
                 .eq("date", target_date)
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_runner_race_links.races",
         ) or []
         race_uids = {r["race_uid"] for r in races if r.get("race_uid")}
 
-        runners = safe_execute(
-            lambda: get_client()
-                .table(resolve_table("today_runners"))
+        runners = safe_query(
+            lambda: get_db()
+                .table(T("today_runners"))
                 .select("race_uid,box_num")
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_runner_race_links.runners",
         ) or []
 
         # Runners whose race_uid is not in today's race set
@@ -167,26 +164,24 @@ class DataIntegrityService:
     @staticmethod
     def _check_result_race_links(target_date: str) -> dict:
         """Ensure all result rows link to a valid race."""
-        races = safe_execute(
-            lambda: get_client()
-                .table(resolve_table("today_races"))
+        races = safe_query(
+            lambda: get_db()
+                .table(T("today_races"))
                 .select("race_uid")
                 .eq("date", target_date)
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_result_race_links.races",
         ) or []
         race_uids = {r["race_uid"] for r in races if r.get("race_uid")}
 
-        results = safe_execute(
-            lambda: get_client()
-                .table(resolve_table("results_log"))
+        results = safe_query(
+            lambda: get_db()
+                .table(T("results_log"))
                 .select("race_uid")
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_result_race_links.results",
         ) or []
 
         orphaned = [r for r in results if r.get("race_uid") and r["race_uid"] not in race_uids]
@@ -210,15 +205,14 @@ class DataIntegrityService:
         results_log is race-level (not per-runner) so we verify only the
         winner_box field against today_runners.
         """
-        results = safe_execute(
-            lambda: get_client()
-                .table(resolve_table("results_log"))
+        results = safe_query(
+            lambda: get_db()
+                .table(T("results_log"))
                 .select("race_uid,winner_box")
                 .eq("date", target_date)
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_result_runner_links.results",
         ) or []
 
         mismatches = []
@@ -228,15 +222,14 @@ class DataIntegrityService:
             if not race_uid or winner_box is None:
                 continue
 
-            runners = safe_execute(
-                lambda: get_client()
-                    .table(resolve_table("today_runners"))
+            runners = safe_query(
+                lambda: get_db()
+                    .table(T("today_runners"))
                     .select("box_num")
                     .eq("race_uid", race_uid)
                     .execute()
                     .data,
                 default=[],
-                context="integrity._check_result_runner_links.runners",
             ) or []
 
             runner_boxes = {r["box_num"] for r in runners}
@@ -269,15 +262,14 @@ class DataIntegrityService:
         (date, track, race_num, code) combination.
         This should never happen if upsert keys are enforced correctly.
         """
-        races = safe_execute(
-            lambda: get_client()
-                .table(resolve_table("today_races"))
+        races = safe_query(
+            lambda: get_db()
+                .table(T("today_races"))
                 .select("date,track,race_num,code")
                 .eq("date", target_date)
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_duplicate_races",
         ) or []
 
         seen: dict[tuple, int] = {}
