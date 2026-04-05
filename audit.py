@@ -28,7 +28,7 @@ def log_event(user_id=None, username=None, event_type="", resource="", data=None
                 "event_type": event_type,
                 "resource":   resource,
                 "data":       data or {},
-                "ip_address": None,
+                "ip":         None,
                 "severity":   severity,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
