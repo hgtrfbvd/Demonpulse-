@@ -199,9 +199,10 @@ def api_auth_login():
         reset_rate_limit(ip)
 
         try:
-            from users import register_session, _record_activity
+            from users import register_session, record_login, _record_activity
             ttl = int(os.environ.get("SESSION_TIMEOUT_MIN", "480")) * 60
             register_session(user["id"], jti, ip, request.headers.get("User-Agent", ""), ttl)
+            record_login(user["id"], ip)
             _record_activity(user["id"], "LOGIN", {"ip": ip})
         except Exception as e:
             log.warning(f"Session/activity logging skipped: {e}")

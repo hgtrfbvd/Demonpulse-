@@ -183,20 +183,32 @@ class UsersRepo:
 
     @staticmethod
     def record_login(user_id: str, ip: str = "") -> bool:
-        """Update last_login timestamp."""
+        """Update last_login, last_ip, and increment login_count atomically."""
+        update: dict = {
+            "last_login":  _now(),
+            "updated_at":  _now(),
+        }
+        if ip:
+            update["last_ip"] = ip
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USERS))
-                .update({
-                    "last_login":  _now(),
-                    "updated_at":  _now(),
-                })
+                .update(update)
                 .eq("id", user_id)
                 .execute()
                 .data,
             default=None,
             context="UsersRepo.record_login",
         )
+        # Atomically increment login_count via the SQL function (avoids read-modify-write).
+        # Best-effort: a counter increment failure does not invalidate the login itself.
+        if result is not None:
+            safe_execute(
+                lambda: get_client()
+                    .rpc("increment_login_count", {"p_user_id": user_id})
+                    .execute(),
+                context="UsersRepo.record_login.increment_count",
+            )
         return bool(result)
 
     # ── USER ACCOUNTS ─────────────────────────────────────────────

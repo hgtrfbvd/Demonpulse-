@@ -4,7 +4,7 @@ Handles: CRUD, per-user accounts, permissions, sessions, activity
 """
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger(__name__)
 
@@ -227,6 +227,25 @@ def delete_user(user_id: str, actor_username: str) -> bool:
 # ─────────────────────────────────────────────────────────────────
 # SESSIONS / FORCE LOGOUT
 # ─────────────────────────────────────────────────────────────────
+def record_login(user_id: str, ip: str | None = None) -> None:
+    """Update last_login, last_ip, and increment login_count on successful login."""
+    from db import get_db, safe_query, T
+    now = datetime.now(timezone.utc).isoformat()
+    patch: dict = {"last_login": now, "updated_at": now}
+    if ip:
+        patch["last_ip"] = ip
+    result = safe_query(lambda: get_db().table(T("users")).update(patch).eq("id", user_id).execute())
+    if result is None:
+        log.warning(f"record_login: DB update failed for user_id={user_id}; skipping counter increment")
+        return
+    # Atomic counter increment via the SQL helper function (best-effort)
+    try:
+        from supabase_client import get_client
+        get_client().rpc("increment_login_count", {"p_user_id": user_id}).execute()
+    except Exception as e:
+        log.warning(f"login_count increment skipped for user_id={user_id}: {e}")
+
+
 def register_session(user_id: str, jti: str, ip: str | None, user_agent: str | None, ttl_seconds: int):
     """Record a new token in user_sessions."""
     from db import get_db, safe_query, T

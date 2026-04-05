@@ -499,10 +499,14 @@ CREATE TABLE IF NOT EXISTS user_activity (
     id          BIGSERIAL   PRIMARY KEY,
     user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     action      TEXT        NOT NULL,
+    resource    TEXT,
     detail      JSONB,
     ip_address  TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Backfill resource column added after initial table creation
+ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS resource TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_user_activity_user_id    ON user_activity(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_activity_created_at ON user_activity(created_at DESC);
@@ -1392,6 +1396,9 @@ ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS price            NUMERIC
 ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS rating           NUMERIC(10,4);
 ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS source_confidence TEXT                DEFAULT 'official';
 ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS scratch_reason   TEXT                 DEFAULT '';
+
+-- test_user_activity — resource column added after initial table creation
+ALTER TABLE test_user_activity ADD COLUMN IF NOT EXISTS resource TEXT;
 
 -- test_bet_log — user_id was added by migration 004 to bet_log; test_ table
 -- from 003 predates that and needs the FK column added.
