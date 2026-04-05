@@ -237,11 +237,32 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
     rows = []
     for r in runners:
         race_uid = r.get("race_uid") or ""
-        box_num = r.get("box_num")
-        if not race_uid or box_num is None:
+        if not race_uid:
             log.warning(
-                f"database.upsert_runners: skipping runner missing race_uid/box_num "
+                f"database.upsert_runners: skipping runner missing race_uid "
                 f"(name={r.get('name')!r})"
+            )
+            continue
+
+        # Resolve box_num: use stored value first, then fall back to barrier, then number.
+        box_num = r.get("box_num")
+        if box_num is None:
+            barrier = r.get("barrier")
+            try:
+                box_num = int(barrier) if barrier is not None else None
+            except (TypeError, ValueError):
+                box_num = None
+        if box_num is None:
+            number_val = r.get("number")
+            try:
+                box_num = int(number_val) if number_val is not None else None
+            except (TypeError, ValueError):
+                box_num = None
+
+        if box_num is None:
+            log.warning(
+                f"database.upsert_runners: skipping runner missing box_num/barrier/number "
+                f"(race_uid={race_uid!r}, name={r.get('name')!r})"
             )
             continue
         rows.append({
