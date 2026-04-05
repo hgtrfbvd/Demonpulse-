@@ -94,7 +94,6 @@ def write_source_log(entry: dict[str, Any]) -> dict[str, Any] | None:
         "url":           entry.get("url") or "",
         "method":        entry.get("method") or "GET",
         "status":        entry.get("status") or "",
-        "grv_detected":  bool(entry.get("grv_detected")),
         "rows_returned": entry.get("rows_returned"),
         "created_at":    datetime.now(timezone.utc).isoformat(),
     }

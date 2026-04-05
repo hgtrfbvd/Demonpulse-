@@ -18,15 +18,14 @@ LAW 4: Source trace mandatory on every live refresh.
 LAW 5: Learning never affects live decisions.
 LAW 6: Learning updates only after result logging.
 LAW 7: No cross-code contamination.
-LAW 8: GRV.ORG.AU permanently banned.
-LAW 9: Time from user only.
-LAW 10: Board without real tool call = invalid.
-LAW 11: PASS is valid. Never force a bet.
-LAW 12: Pressure/urgency/losses never loosen rules.
-LAW 13: E39 is sole final decision authority.
-LAW 14: No bet without positive EV confirmed.
-LAW 15: VERIFIED to PARTIAL downgrades stated explicitly.
-LAW 16: Prior race result never influences next selection.
+LAW 8: Time from user only.
+LAW 9: Board without real tool call = invalid.
+LAW 10: PASS is valid. Never force a bet.
+LAW 11: Pressure/urgency/losses never loosen rules.
+LAW 12: E39 is sole final decision authority.
+LAW 13: No bet without positive EV confirmed.
+LAW 14: VERIFIED to PARTIAL downgrades stated explicitly.
+LAW 15: Prior race result never influences next selection.
 
 ================================================================
 PACKET FORMAT
