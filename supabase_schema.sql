@@ -179,6 +179,15 @@ CREATE INDEX IF NOT EXISTS idx_results_log_date_code ON results_log(date, code);
 -- ================================================================
 -- SECTION 2: USERS & AUTH
 -- ================================================================
+-- CANONICAL model (aligned with sql/001_canonical_schema.sql):
+--   • users         — expanded table (display_name, email, login_count, last_ip, etc.)
+--   • user_accounts — per-user bankroll/settings (unchanged)
+--   • user_permissions — ONE row per user, JSONB arrays: granted / revoked / effective
+--   • user_sessions — token_jti (JWT jti claim), revoked / revoked_at / revoked_by
+--   • user_activity — per-user activity log (unchanged)
+--
+-- ALTER TABLE guards ensure existing databases are upgraded safely.
+-- ================================================================
 
 -- ----------------------------------------------------------------
 -- users
@@ -191,12 +200,28 @@ CREATE TABLE IF NOT EXISTS users (
     role          TEXT        NOT NULL    DEFAULT 'operator'
                               CHECK (role IN ('admin', 'operator', 'viewer')),
     active        BOOLEAN                 DEFAULT TRUE,
+    display_name  TEXT,
+    email         TEXT,
+    created_by    TEXT,
+    login_count   INTEGER                 DEFAULT 0,
     last_login    TIMESTAMPTZ,
+    last_ip       TEXT,
     created_at    TIMESTAMPTZ             DEFAULT NOW(),
     updated_at    TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill any missing columns on existing users tables.
+-- CREATE TABLE IF NOT EXISTS above is skipped on existing databases.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by    TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count   INTEGER     DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ip       TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at    TIMESTAMPTZ DEFAULT NOW();
+
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_role     ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_active   ON users(active);
 
 -- ----------------------------------------------------------------
 -- user_accounts
@@ -219,40 +244,70 @@ CREATE TABLE IF NOT EXISTS user_accounts (
     updated_at          TIMESTAMPTZ             DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_user_accounts_user_id ON user_accounts(user_id);
+
 -- ----------------------------------------------------------------
 -- user_permissions
--- Per-user page/feature access control.
+-- ONE row per user — JSONB array model (not row-per-page).
+-- granted   = pages explicitly granted beyond role defaults
+-- revoked   = pages explicitly revoked below role defaults
+-- effective = final resolved page set (pre-computed for fast reads)
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_permissions (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    page        TEXT        NOT NULL,
-    can_view    BOOLEAN                 DEFAULT TRUE,
-    can_edit    BOOLEAN                 DEFAULT FALSE,
-    granted_by  UUID,
-    granted_at  TIMESTAMPTZ             DEFAULT NOW(),
-    UNIQUE (user_id, page)
+    user_id     UUID        NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    granted     JSONB                   DEFAULT '[]',
+    revoked     JSONB                   DEFAULT '[]',
+    effective   JSONB                   DEFAULT '[]',
+    updated_at  TIMESTAMPTZ             DEFAULT NOW(),
+    updated_by  TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+-- Backfill missing columns on existing user_permissions tables.
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS granted    JSONB       DEFAULT '[]';
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS revoked    JSONB       DEFAULT '[]';
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS effective  JSONB       DEFAULT '[]';
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS updated_by TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions(user_id);
 
 -- ----------------------------------------------------------------
 -- user_sessions
--- Auth session tokens.
+-- Tracks active JWT sessions by JTI (jti claim from the token).
+-- token_jti is NOT the raw token — it is the unique jti identifier.
+-- revoked / revoked_at / revoked_by support force-logout.
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_sessions (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token       TEXT        NOT NULL UNIQUE,
+    token_jti   TEXT        NOT NULL UNIQUE,
     expires_at  TIMESTAMPTZ NOT NULL,
     ip_address  TEXT,
     user_agent  TEXT,
+    revoked     BOOLEAN                 DEFAULT FALSE,
+    revoked_at  TIMESTAMPTZ,
+    revoked_by  TEXT,
     created_at  TIMESTAMPTZ             DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user       ON user_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_token      ON user_sessions(token);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_expires    ON user_sessions(expires_at);
+-- Backfill missing columns on existing user_sessions tables.
+-- token_jti is added as a plain nullable column first; the unique index
+-- below enforces uniqueness only for non-NULL values, which is safe on
+-- existing databases that have rows with no jti yet recorded.
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS token_jti  TEXT;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS user_agent TEXT;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked    BOOLEAN     DEFAULT FALSE;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked_by TEXT;
+
+-- Unique index on token_jti (partial: only non-NULL values) so that
+-- existing rows with token_jti = NULL don't violate uniqueness.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sessions_token_jti
+    ON user_sessions(token_jti) WHERE token_jti IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id   ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_revoked   ON user_sessions(revoked, expires_at);
 
 -- ----------------------------------------------------------------
 -- user_activity
@@ -268,8 +323,9 @@ CREATE TABLE IF NOT EXISTS user_activity (
     created_at  TIMESTAMPTZ             DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_activity_user ON user_activity(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_activity_time ON user_activity(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_activity_user_id    ON user_activity(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_activity_created_at ON user_activity(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_activity_action     ON user_activity(action);
 
 -- ================================================================
 -- SECTION 3: BETTING & SIGNALS
