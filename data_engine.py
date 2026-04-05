@@ -694,7 +694,6 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
                 "decorators": r.decorators,       # full array
                 "classProfile": r.classProfile,   # stored separately
                 "raceClassFit": r.raceClassFit,   # stored separately
-                "stats_json": r.stats_json,
             }
         if runners_enrichment:
             enriched["runners_enrichment"] = runners_enrichment
