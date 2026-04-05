@@ -1418,6 +1418,7 @@ ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS block_code        TEXT    
 ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS source            TEXT         DEFAULT 'oddspro';
 ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS condition         TEXT         DEFAULT '';
 ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS race_name         TEXT         DEFAULT '';
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS country           TEXT         DEFAULT 'au';
 ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ  DEFAULT NOW();
 ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS completed_at      TIMESTAMPTZ;
 
