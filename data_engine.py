@@ -783,86 +783,141 @@ def _get_formfav_country(race: dict[str, Any]) -> str:
 def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     """
     Persistent FormFav enrichment sync — fetches full FormFav data for all
-    today's races and stores it in formfav_race_enrichment /
+    today's live races and stores it in formfav_race_enrichment /
     formfav_runner_enrichment tables.
 
     This is a SECONDARY enrichment source only. OddsPro remains the primary
     source of record. FormFav data is stored separately and never overwrites
     official race/runner records.
 
+    Only AU and NZ races are processed; all other races are SKIPPED and logged.
+    Per-race logging uses [FORMFAV] SKIPPED / [FORMFAV] CALL / [FORMFAV] SUCCESS
+    / [FORMFAV] FAILED prefixes for clear pipeline observability.
+
+    Race code mapping: HORSE→gallops, HARNESS→harness, GREYHOUND→greyhounds.
+    GALLOPS (legacy OddsPro code) is remapped to HORSE before the FormFav call.
+
+    Uses get_races_for_date + LIVE_STATUSES filter so that near_jump,
+    jumped_estimated and awaiting_result races are all included — not just
+    the upcoming/open/interim subset returned by get_active_races.
+
     Called by the scheduler every 300s when FormFav API key is configured.
     Returns a summary dict for health tracking.
     """
     ff = _get_formfav()
     if not ff.is_enabled():
+        log.warning("[FORMFAV] Connector not enabled — FORMFAV_API_KEY is missing or empty. Enrichment skipped.")
         return {"ok": False, "reason": "formfav_not_enabled", "races_enriched": 0, "runners_enriched": 0}
 
     td = target_date or date.today().isoformat()
 
     try:
         from database import (
-            get_active_races,
+            get_races_for_date,
             upsert_formfav_race_enrichment,
             upsert_formfav_runner_enrichment,
         )
+        from race_status import LIVE_STATUSES
     except ImportError as e:
-        log.error(f"data_engine.formfav_sync: import error: {e}")
+        log.error(f"[FORMFAV] import error: {e}")
         return {"ok": False, "reason": "import_error", "races_enriched": 0, "runners_enriched": 0}
 
-    races = get_active_races(td)
+    # Fetch ALL races for the day, then filter to live statuses.
+    # This includes near_jump/jumped_estimated/awaiting_result which
+    # get_active_races() excludes — ensuring FormFav runs for the full
+    # live window, not just the upstream "upcoming/open/interim" subset.
+    all_races = get_races_for_date(td)
+    races = [r for r in all_races if (r.get("status") or "").lower() in LIVE_STATUSES]
     if not races:
-        log.debug(f"data_engine.formfav_sync: no active races for {td}")
-        return {"ok": True, "races_enriched": 0, "runners_enriched": 0, "date": td}
+        log.info(f"[FORMFAV] No live races found for {td} (total_stored={len(all_races)}). Enrichment skipped.")
+        return {"ok": True, "races_enriched": 0, "runners_enriched": 0, "date": td,
+                "reason": "no_live_races"}
 
-    # FormFav supports AU and NZ races — filter to AU/NZ races only.
-    # All other international races remain in the system but are excluded from
-    # FormFav processing.
-    au_nz_races = [r for r in races if _is_au_nz_race(r)]
-    skipped_intl = len(races) - len(au_nz_races)
-    if skipped_intl:
-        log.info(
-            f"data_engine.formfav_sync: skipping {skipped_intl} non-AU/NZ races "
-            f"(FormFav supports AU and NZ only); processing {len(au_nz_races)} AU/NZ races"
-        )
     log.info(
-        f"data_engine.formfav_sync: date={td} "
-        f"total_races={len(races)} au_nz_eligible={len(au_nz_races)} "
-        f"skipped_international={skipped_intl}"
+        f"[FORMFAV] Starting enrichment sync: date={td} "
+        f"live_races={len(races)} total_stored={len(all_races)}"
     )
 
     races_enriched = 0
     runners_enriched = 0
     requests_made = 0
     errors = 0
+    skipped_intl = 0
+    skipped_fields = 0
+    au_nz_eligible = 0
     fetched_at = datetime.now(timezone.utc).isoformat()
+    # FormFav API endpoint — defined once outside the per-race loop
+    _ff_form_url = "https://api.formfav.com/v1/form"
 
-    for race in au_nz_races:
+    for race in races:
         race_uid = race.get("race_uid") or ""
-        if not race_uid:
-            continue
-
-        # Map OddsPro canonical code to FormFav code.
-        # OddsPro normalises to HORSE/HARNESS/GREYHOUND; the FormFavConnector's
-        # RACE_CODE_MAP converts these to gallops/harness/greyhounds respectively.
-        # If the code is still stored as GALLOPS (from earlier OddsPro builds),
-        # remap it to HORSE so the connector handles it correctly.
-        raw_code = (race.get("code") or "HORSE").upper()
-        ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
-
-        # Determine the correct country to send to FormFav (au or nz).
-        ff_country = _get_formfav_country(race)
-
         track = race.get("track") or ""
-        race_num = int(race.get("race_num") or 0)
+        race_num_raw = race.get("race_num")
+        race_num = int(race_num_raw) if race_num_raw is not None else 0
         race_date = race.get("date") or td
 
+        # ── 1. Country filter — AU and NZ only ──────────────────────────────
+        if not _is_au_nz_race(race):
+            country_val = race.get("country") or race.get("state") or "(none)"
+            log.info(
+                f"[FORMFAV] SKIPPED race_uid={race_uid!r} track={track!r} race_num={race_num} "
+                f"reason=invalid_country country={country_val!r}"
+            )
+            skipped_intl += 1
+            continue
+
+        # Race is AU/NZ — count as region-eligible regardless of whether it
+        # subsequently passes field/code validation. au_nz_eligible reflects
+        # "matched country filter" not "successfully called". Use requests_made
+        # and races_enriched for counts of actually processed races.
+        au_nz_eligible += 1
+
+        # ── 2. Field validation — must have track and race_num ───────────────
+        if not track:
+            log.info(
+                f"[FORMFAV] SKIPPED race_uid={race_uid!r} race_num={race_num} "
+                f"reason=missing_track"
+            )
+            skipped_fields += 1
+            continue
+        if not race_num:
+            log.info(
+                f"[FORMFAV] SKIPPED race_uid={race_uid!r} track={track!r} "
+                f"reason=missing_race_num"
+            )
+            skipped_fields += 1
+            continue
+        if not race_uid:
+            log.info(
+                f"[FORMFAV] SKIPPED track={track!r} race_num={race_num} "
+                f"reason=missing_race_uid"
+            )
+            skipped_fields += 1
+            continue
+
+        # ── 3. Race code mapping ─────────────────────────────────────────────
+        # OddsPro normalises to HORSE/HARNESS/GREYHOUND.
+        # GALLOPS is a legacy code from earlier OddsPro builds — remap to HORSE.
+        # Correct mapping: HORSE→gallops, HARNESS→harness, GREYHOUND→greyhounds
+        raw_code = (race.get("code") or "HORSE").upper()
+        ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
+        if ff_code not in ("HORSE", "HARNESS", "GREYHOUND"):
+            log.info(
+                f"[FORMFAV] SKIPPED race_uid={race_uid!r} track={track!r} race_num={race_num} "
+                f"reason=bad_code_mapping raw_code={raw_code!r}"
+            )
+            skipped_fields += 1
+            continue
+
+        # ── 4. Country for FormFav API (au or nz) ────────────────────────────
+        ff_country = _get_formfav_country(race)
         mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
 
+        # ── 5. Make FormFav API call ─────────────────────────────────────────
         log.info(
-            f"data_engine.formfav_sync: REQUEST "
-            f"track={track!r} country={ff_country!r} race_num={race_num} "
-            f"code={ff_code!r} mapped_race_code={mapped_race_code!r} "
-            f"race_uid={race_uid!r}"
+            f"[FORMFAV] CALL url={_ff_form_url} "
+            f"track={track!r} race_num={race_num} race_code={mapped_race_code!r} "
+            f"country={ff_country!r} date={race_date!r} race_uid={race_uid!r}"
         )
 
         try:
@@ -940,8 +995,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                     race_runners_enriched += 1
 
             log.info(
-                f"data_engine.formfav_sync: ENRICHED "
-                f"track={track!r} race_num={race_num} "
+                f"[FORMFAV] SUCCESS race_uid={race_uid!r} track={track!r} race_num={race_num} "
                 f"runners_enriched={race_runners_enriched}"
             )
 
@@ -956,38 +1010,40 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 except Exception:
                     pass
             log.warning(
-                f"data_engine.formfav_sync: FAILED request — "
-                f"track={track!r} race_num={race_num} code={ff_code!r} "
-                f"country={ff_country!r} status={status_code} "
-                f"response_body={resp_body!r} error={e}"
+                f"[FORMFAV] FAILED race_uid={race_uid!r} track={track!r} race_num={race_num} "
+                f"code={ff_code!r} country={ff_country!r} "
+                f"http_status={status_code} response_body={resp_body!r} error={e}"
             )
             errors += 1
             continue
 
     log.info(
-        f"data_engine.formfav_sync: date={td} "
-        f"au_nz_eligible={len(au_nz_races)} requests_made={requests_made} "
-        f"races_enriched={races_enriched} runners_enriched={runners_enriched} "
-        f"errors={errors} skipped_international={skipped_intl}"
+        f"[FORMFAV] Sync complete: date={td} "
+        f"live_races={len(races)} au_nz_eligible={au_nz_eligible} "
+        f"requests_made={requests_made} races_enriched={races_enriched} "
+        f"runners_enriched={runners_enriched} errors={errors} "
+        f"skipped_international={skipped_intl} skipped_fields={skipped_fields}"
     )
     # Mandatory pipeline validation output
     log.info(
         f"PIPELINE VALIDATION: date={td} "
-        f"formfav_au_nz_eligible={len(au_nz_races)} "
+        f"formfav_au_nz_eligible={au_nz_eligible} "
         f"formfav_requests_made={requests_made} "
         f"formfav_races_enriched={races_enriched} "
         f"formfav_runners_enriched={runners_enriched} "
-        f"formfav_skipped_international={skipped_intl}"
+        f"formfav_skipped_international={skipped_intl} "
+        f"formfav_skipped_fields={skipped_fields}"
     )
     return {
         "ok": True,
         "date": td,
-        "au_nz_eligible": len(au_nz_races),
+        "au_nz_eligible": au_nz_eligible,
         "requests_made": requests_made,
         "races_enriched": races_enriched,
         "runners_enriched": runners_enriched,
         "errors": errors,
         "skipped_international": skipped_intl,
+        "skipped_fields": skipped_fields,
         "source": "formfav",
     }
 

@@ -327,8 +327,8 @@ def _run_health_snapshot():
 def _run_formfav_sync():
     """
     FormFav persistent enrichment sync — stores full FormFav data for all
-    today's active races in the formfav_race_enrichment / formfav_runner_enrichment
-    tables. Skipped silently when FormFav is not enabled.
+    today's live races in the formfav_race_enrichment / formfav_runner_enrichment
+    tables. Logs clearly when FormFav is not enabled or no races are enriched.
     """
     try:
         from data_engine import formfav_sync
@@ -336,6 +336,7 @@ def _run_formfav_sync():
         ok = result.get("ok", False)
         races = result.get("races_enriched", 0)
         runners = result.get("runners_enriched", 0)
+        reason = result.get("reason") or ""
 
         _set_status(
             last_formfav_sync_at=_utc_now(),
@@ -343,11 +344,13 @@ def _run_formfav_sync():
         )
 
         if races > 0:
-            log.info(f"scheduler: formfav_sync: races={races} runners={runners}")
+            log.info(f"scheduler: formfav_sync: races={races} runners={runners} ok={ok}")
+        elif not ok and reason == "formfav_not_enabled":
+            log.warning("scheduler: formfav_sync: FormFav not enabled — FORMFAV_API_KEY is not set")
         else:
-            log.debug(f"scheduler: formfav_sync: {result.get('reason', 'no races enriched')}")
+            log.info(f"scheduler: formfav_sync: no races enriched reason={reason or 'none'} ok={ok}")
     except Exception as e:
-        log.error(f"FormFav sync failed: {e}")
+        log.error(f"scheduler: formfav_sync failed: {e}")
 
 
 # --------------------------------------------------------
