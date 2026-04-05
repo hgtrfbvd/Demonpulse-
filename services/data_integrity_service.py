@@ -206,23 +206,28 @@ class DataIntegrityService:
     @staticmethod
     def _check_result_runner_links(target_date: str) -> dict:
         """
-        Ensure result box_num values correspond to known runners.
-        Cross-checks results_log against today_runners per race.
+        Ensure winner_box in results_log matches a known runner box_num.
+        results_log is race-level (not per-runner) so we verify only the
+        winner_box field against today_runners.
         """
-        races = safe_execute(
+        results = safe_execute(
             lambda: get_client()
-                .table(resolve_table("today_races"))
-                .select("race_uid")
+                .table(resolve_table("results_log"))
+                .select("race_uid,winner_box")
                 .eq("date", target_date)
                 .execute()
                 .data,
             default=[],
-            context="integrity._check_result_runner_links.races",
+            context="integrity._check_result_runner_links.results",
         ) or []
-        race_uids = [r["race_uid"] for r in races if r.get("race_uid")]
 
         mismatches = []
-        for race_uid in race_uids[:50]:  # Cap scan to 50 races
+        for res in results:
+            race_uid = res.get("race_uid")
+            winner_box = res.get("winner_box")
+            if not race_uid or winner_box is None:
+                continue
+
             runners = safe_execute(
                 lambda: get_client()
                     .table(resolve_table("today_runners"))
@@ -233,22 +238,10 @@ class DataIntegrityService:
                 default=[],
                 context="integrity._check_result_runner_links.runners",
             ) or []
+
             runner_boxes = {r["box_num"] for r in runners}
-
-            results = safe_execute(
-                lambda: get_client()
-                    .table(resolve_table("results_log"))
-                    .select("box_num")
-                    .eq("race_uid", race_uid)
-                    .execute()
-                    .data,
-                default=[],
-                context="integrity._check_result_runner_links.results",
-            ) or []
-
-            for res in results:
-                if res.get("box_num") and res["box_num"] not in runner_boxes:
-                    mismatches.append({"race_uid": race_uid, "box_num": res["box_num"]})
+            if runner_boxes and winner_box not in runner_boxes:
+                mismatches.append({"race_uid": race_uid, "winner_box": winner_box})
 
         ok = len(mismatches) == 0
         return {
@@ -257,16 +250,17 @@ class DataIntegrityService:
             "severity": "WARN",
             "count":    len(mismatches),
             "message":  (
-                f"{len(mismatches)} result box_num(s) don't match known runners"
-                if not ok else "All result→runner box links valid"
+                f"{len(mismatches)} result winner_box value(s) don't match known runners"
+                if not ok else "All result winner_box values match known runners"
             ),
         }
 
     @staticmethod
     def _check_orphaned_runners(target_date: str) -> dict:
-        """Check for runners whose race has been deleted or is missing."""
-        # Quick check: runners with no matching race_uid in today_races at all
-        return DataIntegrityService._check_runner_race_links(target_date)
+        """Check for runners whose race has been deleted or is missing (alias for runner_race_links)."""
+        result = DataIntegrityService._check_runner_race_links(target_date)
+        result["check"] = "orphaned_runners"
+        return result
 
     @staticmethod
     def _check_duplicate_races(target_date: str) -> dict:

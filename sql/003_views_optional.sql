@@ -76,8 +76,8 @@ SELECT
         SUM(CASE WHEN winner_hit THEN 1 ELSE 0 END)::NUMERIC
         / NULLIF(COUNT(*), 0) * 100, 2
     )                                                  AS winner_pct,
-    MIN(created_at)                                    AS first_eval,
-    MAX(created_at)                                    AS last_eval
+    MIN(evaluated_at)                                    AS first_eval,
+    MAX(evaluated_at)                                    AS last_eval
 FROM learning_evaluations
 GROUP BY model_version, race_code
 ORDER BY model_version, race_code;
