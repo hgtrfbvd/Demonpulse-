@@ -138,13 +138,9 @@ def page_settings():
 # ------------------------------------------------------------
 @app.route("/api/system/status")
 def api_system_status():
+    # CF-07: core.shadow_learning (core/ package) does not exist.
+    # shadow_active is always False until a real shadow-learning module is wired in.
     shadow_active = False
-    try:
-        from core.shadow_learning import get_shadow_status
-        s = get_shadow_status() or {}
-        shadow_active = bool(s.get("active"))
-    except Exception:
-        shadow_active = False
 
     return jsonify({
         "ok": True,
@@ -222,7 +218,7 @@ def api_auth_login():
             token,
             httponly=True,
             samesite="Lax",
-            secure=False,
+            secure=env.is_live,
             max_age=int(os.environ.get("SESSION_TIMEOUT_MIN", "480")) * 60,
         )
         return response

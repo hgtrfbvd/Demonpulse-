@@ -127,6 +127,9 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
     Insert or replace runners for a race.
     race_id_uuid is the UUID primary key of the today_races row.
     Returns count of upserted runners.
+
+    Conflict key: (race_uid, box_num) — canonical identity per supabase_config.UPSERT_KEYS.
+    race_id (UUID FK) is still populated for relational integrity.
     """
     if not runners:
         return 0
@@ -135,6 +138,7 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
     for r in runners:
         rows.append({
             "race_id": race_id_uuid,
+            "race_uid": r.get("race_uid") or "",
             "date": r.get("date") or date.today().isoformat(),
             "track": r.get("track") or "",
             "race_num": r.get("race_num"),
@@ -154,7 +158,7 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
             "price": r.get("price"),
             "rating": r.get("rating"),
             "scratched": bool(r.get("scratched")),
-            # schema column is scratch_reason; source field is scratch_timing
+            # CF-06: normalise scratch field — connectors may provide scratch_timing
             "scratch_reason": r.get("scratch_reason") or r.get("scratch_timing"),
             "source_confidence": r.get("source_confidence") or "official",
         })
@@ -162,7 +166,7 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
     result = safe_query(
         lambda: get_db()
         .table(T("today_runners"))
-        .upsert(rows, on_conflict="race_id,box_num")
+        .upsert(rows, on_conflict="race_uid,box_num")
         .execute()
         .data
     )

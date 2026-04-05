@@ -1,8 +1,19 @@
 """
-learning_engine.py - Post-race learning layer
-EPR, AEEE, GPIL, ETG, calibration, shadow mode
-Feature coverage: F26-F32, E22
-ISOLATION RULE: Never affects live decisions. Only runs post-result.
+learning_engine.py - RETIRED LEGACY MODULE
+===========================================
+This module is no longer the active learning layer.
+It has been superseded by ai/learning_store.py (active, Phase 3+).
+
+STATUS: DEAD / DISCONNECTED
+  - No active callers import this module.
+  - DB access still uses the legacy db.py path with T() resolution.
+  - Do NOT add new callers. Use ai/learning_store.py instead.
+
+RETAINED FOR:
+  - Historical reference and data-format documentation only.
+  - Will be removed in a future cleanup pass once ai/ coverage is confirmed.
+
+CF-08: confirmed legacy/disconnected path in the DemonPulse structural audit.
 """
 import logging
 from datetime import date, datetime

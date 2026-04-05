@@ -1,6 +1,9 @@
 -- ================================================================
 -- DEMONPULSE V8 — CANONICAL SCHEMA  (sql/001_canonical_schema.sql)
 -- ================================================================
+-- ✅  SOLE SCHEMA AUTHORITY — this file drives all migrations.
+-- supabase_schema.sql is a retired legacy copy; ignore any divergence.
+-- ================================================================
 -- Single source of truth for the Supabase schema.
 -- Replaces all previous migration files in supabase/migrations/.
 --
@@ -164,7 +167,8 @@ END $$;
 -- ----------------------------------------------------------------
 -- today_runners
 -- Per-runner data for each race. FK to today_races.
--- Conflict key: (race_id, box_num)
+-- Conflict key: (race_uid, box_num) — canonical identity per supabase_config.UPSERT_KEYS.
+-- race_id (UUID FK) is retained for relational joins but is NOT the upsert key.
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS today_runners (
     id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -189,12 +193,13 @@ CREATE TABLE IF NOT EXISTS today_runners (
     career              TEXT                    DEFAULT '',
     price               NUMERIC(10,4),
     rating              NUMERIC(10,4),
+    is_fav              BOOLEAN                 DEFAULT FALSE,
     scratched           BOOLEAN                 DEFAULT FALSE,
     scratch_reason      TEXT                    DEFAULT '',
     source_confidence   TEXT                    DEFAULT 'official',
     raw_hash            TEXT                    DEFAULT '',
     created_at          TIMESTAMPTZ             DEFAULT NOW(),
-    UNIQUE (race_id, box_num)
+    UNIQUE (race_uid, box_num)
 );
 
 -- Backfill missing columns on today_runners BEFORE creating indexes that
@@ -207,17 +212,46 @@ ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS jockey            TEXT       
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS driver            TEXT                 DEFAULT '';
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS price             NUMERIC(10,4);
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS rating            NUMERIC(10,4);
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS is_fav            BOOLEAN              DEFAULT FALSE;
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS source_confidence TEXT                 DEFAULT 'official';
 -- scratch_reason replaces scratch_timing as the canonical column name.
 -- Migration 001 used scratch_timing; the application now writes scratch_reason.
 -- Add both so old and new schemas are fully compatible.
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS scratch_reason    TEXT                 DEFAULT '';
 
+-- CF-01: Ensure the canonical (race_uid, box_num) unique constraint exists.
+-- On databases that were created from an older schema with (race_id, box_num)
+-- we add the new constraint if it is absent. The old (race_id, box_num)
+-- constraint is intentionally left in place to avoid blocking legacy rows;
+-- runners_repo and database.py both use race_uid,box_num as the upsert key.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid = 'today_runners'::regclass
+          AND c.contype = 'u'
+          AND array_length(c.conkey, 1) = 2
+          AND EXISTS (SELECT 1 FROM pg_attribute
+                      WHERE attrelid = c.conrelid
+                        AND attnum = ANY(c.conkey)
+                        AND attname = 'race_uid')
+          AND EXISTS (SELECT 1 FROM pg_attribute
+                      WHERE attrelid = c.conrelid
+                        AND attnum = ANY(c.conkey)
+                        AND attname = 'box_num')
+    ) THEN
+        ALTER TABLE today_runners
+            ADD CONSTRAINT today_runners_race_uid_box_num_key UNIQUE (race_uid, box_num);
+    END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_today_runners_race_id    ON today_runners(race_id);
 CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid   ON today_runners(race_uid);
 CREATE INDEX IF NOT EXISTS idx_today_runners_name       ON today_runners(name);
 CREATE INDEX IF NOT EXISTS idx_today_runners_track_race ON today_runners(track, race_num);
 CREATE INDEX IF NOT EXISTS idx_today_runners_scratched  ON today_runners(scratched);
+CREATE INDEX IF NOT EXISTS idx_today_runners_is_fav     ON today_runners(is_fav) WHERE is_fav = TRUE;
 
 -- ----------------------------------------------------------------
 -- results_log

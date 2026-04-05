@@ -81,22 +81,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_user_event
 -- databases that were created from an old migration set.
 -- ================================================================
 
--- today_runners: (race_uid, box_num) — needed by runners_repo upsert
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint c
-        WHERE c.conrelid = 'today_runners'::regclass
-          AND c.contype = 'u'
-          AND array_length(c.conkey, 1) = 2
-          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'race_uid')
-          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'box_num')
-    ) THEN
-        ALTER TABLE today_runners
-            ADD CONSTRAINT today_runners_race_uid_box_num_key UNIQUE (race_uid, box_num);
-    END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+-- today_runners: (race_uid, box_num) unique constraint
+-- This block is retained for databases that run 002 before the updated 001.
+-- The identical DO block in 001_canonical_schema.sql handles the primary case.
 
 -- ================================================================
 -- DONE

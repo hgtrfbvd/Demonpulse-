@@ -18,6 +18,42 @@ class RaceCode(str, Enum):
     THOROUGHBRED = "thoroughbred"
     HARNESS      = "harness"
 
+
+# CF-15: Translation table from canonical DB/config race codes (VALID_RACE_CODES in
+# supabase_config.py) to simulation RaceCode values.
+# supabase_config uses "GALLOPS" for thoroughbred horse races.
+RACE_CODE_ALIASES: dict[str, "RaceCode"] = {
+    # Canonical simulation values (pass-through)
+    "greyhound":    RaceCode.GREYHOUND,
+    "thoroughbred": RaceCode.THOROUGHBRED,
+    "harness":      RaceCode.HARNESS,
+    # DB / config uppercase values
+    "GREYHOUND":    RaceCode.GREYHOUND,
+    "GALLOPS":      RaceCode.THOROUGHBRED,   # "GALLOPS" is the DB name for thoroughbreds
+    "HARNESS":      RaceCode.HARNESS,
+    # Alternate spellings encountered in connector payloads
+    "THOROUGHBRED": RaceCode.THOROUGHBRED,
+}
+
+
+def normalize_race_code(raw: str) -> "RaceCode":
+    """
+    Translate any known race-code string to a canonical RaceCode enum.
+
+    Accepts both DB-layer codes (GALLOPS, GREYHOUND, HARNESS) and
+    simulation-layer codes (thoroughbred, greyhound, harness).
+
+    Raises ValueError for unknown values so callers cannot silently
+    use a wrong code.
+    """
+    code = RACE_CODE_ALIASES.get(raw) or RACE_CODE_ALIASES.get((raw or "").upper())
+    if code is None:
+        raise ValueError(
+            f"Unknown race code '{raw}'. "
+            f"Valid values: {list(RACE_CODE_ALIASES.keys())}"
+        )
+    return code
+
 class RacePattern(str, Enum):
     LEADER   = "LEADER"
     STALKER  = "STALKER"
