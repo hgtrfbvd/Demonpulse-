@@ -591,3 +591,28 @@ def get_formfav_enrichments_for_date(target_date: str) -> list[dict[str, Any]]:
         .data,
         [],
     ) or []
+
+
+def get_formfav_runner_enrichments_for_races(race_uids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """
+    Fetch all FormFav runner enrichments for a list of race UIDs in a single query.
+    Returns a dict mapping race_uid → list of runner enrichment rows (sorted by number).
+    """
+    if not race_uids:
+        return {}
+    rows = safe_query(
+        lambda: get_db()
+        .table(T("formfav_runner_enrichment"))
+        .select("*")
+        .in_("race_uid", race_uids)
+        .order("number")
+        .execute()
+        .data,
+        [],
+    ) or []
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        uid = row.get("race_uid") or ""
+        if uid:
+            result.setdefault(uid, []).append(row)
+    return result

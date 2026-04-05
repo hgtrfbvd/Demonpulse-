@@ -1364,7 +1364,78 @@ CREATE TABLE IF NOT EXISTS sectional_benchmarks (
 
 
 -- ================================================================
--- SECTION 12: TEST-MODE MIRROR TABLES
+-- SECTION 12: FORMFAV ENRICHMENT TABLES
+-- Persistent secondary enrichment from FormFav API.
+-- Keyed by race_uid (race) and (race_uid, number) (runner).
+-- Never overwrites OddsPro authoritative records.
+-- ================================================================
+
+CREATE TABLE IF NOT EXISTS formfav_race_enrichment (
+    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    race_uid            TEXT        NOT NULL,
+    date                DATE,
+    track               TEXT        DEFAULT '',
+    race_num            INTEGER,
+    race_code           TEXT        DEFAULT '',
+    race_name           TEXT        DEFAULT '',
+    distance            TEXT        DEFAULT '',
+    grade               TEXT        DEFAULT '',
+    condition           TEXT        DEFAULT '',
+    weather             TEXT        DEFAULT '',
+    start_time          TEXT        DEFAULT '',
+    start_time_utc      TEXT        DEFAULT '',
+    timezone            TEXT        DEFAULT '',
+    abandoned           BOOLEAN     DEFAULT false,
+    number_of_runners   INTEGER     DEFAULT 0,
+    pace_scenario       TEXT        DEFAULT '',
+    raw_response        JSONB,
+    fetched_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (race_uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_formfav_race_enrichment_race_uid ON formfav_race_enrichment(race_uid);
+CREATE INDEX IF NOT EXISTS idx_formfav_race_enrichment_date ON formfav_race_enrichment(date);
+
+CREATE TABLE IF NOT EXISTS formfav_runner_enrichment (
+    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    race_uid            TEXT        NOT NULL,
+    runner_name         TEXT        DEFAULT '',
+    number              INTEGER,
+    barrier             INTEGER,
+    age                 TEXT        DEFAULT '',
+    claim               TEXT        DEFAULT '',
+    scratched           BOOLEAN     DEFAULT false,
+    form_string         TEXT        DEFAULT '',
+    trainer             TEXT        DEFAULT '',
+    jockey              TEXT        DEFAULT '',
+    driver              TEXT        DEFAULT '',
+    weight              NUMERIC,
+    decorators          JSONB       DEFAULT '[]'::jsonb,
+    speed_map           JSONB,
+    class_profile       JSONB,
+    race_class_fit      JSONB,
+    stats_overall       JSONB,
+    stats_track         JSONB,
+    stats_distance      JSONB,
+    stats_condition     JSONB,
+    stats_track_distance JSONB,
+    stats_full          JSONB,
+    win_prob            NUMERIC,
+    place_prob          NUMERIC,
+    model_rank          INTEGER,
+    confidence          TEXT        DEFAULT '',
+    model_version       TEXT        DEFAULT '',
+    fetched_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (race_uid, number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_uid ON formfav_runner_enrichment(race_uid);
+CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_num ON formfav_runner_enrichment(race_uid, number);
+
+-- ================================================================
+-- SECTION 13: TEST-MODE MIRROR TABLES
 -- In TEST mode, env.table() prefixes all testable tables with
 -- "test_" so production data is never touched.
 -- ================================================================
@@ -1399,6 +1470,8 @@ CREATE TABLE IF NOT EXISTS test_sectional_snapshots (       LIKE sectional_snaps
 CREATE TABLE IF NOT EXISTS test_race_shape_snapshots (      LIKE race_shape_snapshots       INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_chat_history (    LIKE chat_history    INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_training_logs (   LIKE training_logs   INCLUDING ALL );
+CREATE TABLE IF NOT EXISTS test_formfav_race_enrichment (   LIKE formfav_race_enrichment    INCLUDING ALL );
+CREATE TABLE IF NOT EXISTS test_formfav_runner_enrichment ( LIKE formfav_runner_enrichment  INCLUDING ALL );
 
 -- Remove NOT NULL on race_uid in test_today_races to allow test-mode inserts
 -- without a pre-generated race_uid
@@ -1477,7 +1550,7 @@ CREATE INDEX IF NOT EXISTS idx_test_results_log_uid     ON test_results_log(race
 
 
 -- ================================================================
--- SECTION 13: HELPER FUNCTIONS AND TRIGGERS
+-- SECTION 14: HELPER FUNCTIONS AND TRIGGERS
 -- ================================================================
 
 -- ----------------------------------------------------------------
@@ -1520,7 +1593,7 @@ $$ LANGUAGE plpgsql;
 
 
 -- ================================================================
--- SECTION 14: BACKFILL — existing users missing account/permission rows
+-- SECTION 15: BACKFILL — existing users missing account/permission rows
 -- ================================================================
 
 INSERT INTO user_accounts (user_id)
