@@ -1452,6 +1452,234 @@ ALTER TABLE test_epr_data ADD COLUMN IF NOT EXISTS date          DATE DEFAULT CU
 -- test_source_log — call_num added by 006
 ALTER TABLE test_source_log ADD COLUMN IF NOT EXISTS call_num INTEGER;
 
+-- ================================================================
+-- DATA-CONTRACT ALIGNMENT PASS — ensure ALL test_ tables carry every
+-- column that the active code writes/reads.  These ADD COLUMN IF NOT
+-- EXISTS guards are idempotent: they are no-ops when the column is
+-- already present (e.g. tables created after the canonical schema was
+-- applied).  They are essential for test_ tables that were originally
+-- created from an older LIKE snapshot and therefore missed columns
+-- introduced in later phases.
+-- ================================================================
+
+-- ----------------------------------------------------------------
+-- test_today_runners — race_id / date / track / race_num / raw_hash
+-- These columns exist in today_runners (canonical schema lines 173-203)
+-- but were absent from the legacy supabase_schema.sql snapshot used to
+-- seed test_today_runners on some environments.
+-- database.py upsert_runners() writes all four + created_at.
+-- ----------------------------------------------------------------
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS race_id    UUID;
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS date       DATE        NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS track      TEXT                 DEFAULT '';
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS race_num   INTEGER;
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS raw_hash   TEXT                 DEFAULT '';
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ          DEFAULT NOW();
+
+-- Ensure (race_uid, box_num) UNIQUE constraint — required for upsert
+-- on_conflict="race_uid,box_num" in database.upsert_runners().
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid = 'test_today_runners'::regclass
+          AND c.contype  = 'u'
+          AND array_length(c.conkey, 1) = 2
+          AND EXISTS (SELECT 1 FROM pg_attribute
+                      WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey)
+                        AND attname = 'race_uid')
+          AND EXISTS (SELECT 1 FROM pg_attribute
+                      WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey)
+                        AND attname = 'box_num')
+    ) THEN
+        ALTER TABLE test_today_runners
+            ADD CONSTRAINT test_today_runners_race_uid_box_num_key
+            UNIQUE (race_uid, box_num);
+    END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- ----------------------------------------------------------------
+-- test_results_log — recorded_at
+-- database.py upsert_result() writes "recorded_at" (not "created_at").
+-- The legacy supabase_schema.sql results_log used "created_at" instead.
+-- Adding recorded_at here ensures the INSERT never fails with
+-- "column recorded_at does not exist".
+-- ----------------------------------------------------------------
+ALTER TABLE test_results_log ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Ensure (date, track, race_num, code) UNIQUE constraint for upsert.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid = 'test_results_log'::regclass
+          AND c.contype  = 'u'
+          AND array_length(c.conkey, 1) = 4
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'date')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'track')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'race_num')
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'code')
+    ) THEN
+        ALTER TABLE test_results_log
+            ADD CONSTRAINT test_results_log_date_track_race_num_code_key
+            UNIQUE (date, track, race_num, code);
+    END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- ----------------------------------------------------------------
+-- test_source_log — canonical columns written by database.write_source_log()
+-- The legacy supabase_schema.sql source_log had entirely different
+-- columns (source TEXT NOT NULL, endpoint, status_code, response_ms,
+-- success, error_msg, records_fetched).  The canonical source_log uses
+-- date, call_num, url, method, status, rows_returned, created_at.
+-- Adding the canonical columns ensures inserts succeed.
+-- ----------------------------------------------------------------
+ALTER TABLE test_source_log ADD COLUMN IF NOT EXISTS date          DATE        DEFAULT CURRENT_DATE;
+ALTER TABLE test_source_log ADD COLUMN IF NOT EXISTS url           TEXT;
+ALTER TABLE test_source_log ADD COLUMN IF NOT EXISTS status        TEXT;
+ALTER TABLE test_source_log ADD COLUMN IF NOT EXISTS rows_returned INTEGER;
+
+-- If test_source_log was created from the legacy schema it has a
+-- "source TEXT NOT NULL" column with no default, which causes every
+-- INSERT from the canonical code to fail.  Make it nullable + defaulted.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'test_source_log'::regclass
+          AND attname   = 'source'
+          AND attnotnull = TRUE
+    ) THEN
+        ALTER TABLE test_source_log ALTER COLUMN source DROP NOT NULL;
+        ALTER TABLE test_source_log ALTER COLUMN source SET DEFAULT '';
+    END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- ----------------------------------------------------------------
+-- test_feature_snapshots — Phase 4 columns
+-- ai/learning_store._save_feature_snapshot() writes:
+--   oddspro_race_id, snapshot_date, has_sectionals, has_race_shape,
+--   has_collision, sectional_metrics, race_shape, collision_metrics
+-- Legacy feature_snapshots lacked all of these.
+-- ----------------------------------------------------------------
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS oddspro_race_id    TEXT    DEFAULT '';
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS snapshot_date      DATE;
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS has_sectionals     INTEGER DEFAULT 0;
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS has_race_shape     INTEGER DEFAULT 0;
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS has_collision      INTEGER DEFAULT 0;
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS sectional_metrics  JSONB   DEFAULT '[]';
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS race_shape         JSONB   DEFAULT '{}';
+ALTER TABLE test_feature_snapshots ADD COLUMN IF NOT EXISTS collision_metrics  JSONB   DEFAULT '[]';
+
+-- ----------------------------------------------------------------
+-- test_prediction_snapshots — Phase 4 / Phase 4.6 columns
+-- ai/learning_store.save_prediction_snapshot() upserts on
+-- prediction_snapshot_id and writes:
+--   oddspro_race_id, feature_snapshot_id, runner_count,
+--   has_sectionals, has_race_shape, has_collision,
+--   has_enrichment (Phase 4.6), source_type (Phase 4.6)
+-- Legacy prediction_snapshots lacked all of these.
+-- ----------------------------------------------------------------
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS oddspro_race_id      TEXT    DEFAULT '';
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS feature_snapshot_id  TEXT    DEFAULT '';
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS runner_count         INTEGER DEFAULT 0;
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS has_sectionals       INTEGER DEFAULT 0;
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS has_race_shape       INTEGER DEFAULT 0;
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS has_collision        INTEGER DEFAULT 0;
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS has_enrichment       INTEGER DEFAULT 0;
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS source_type          TEXT    DEFAULT 'pre_race';
+
+-- ----------------------------------------------------------------
+-- test_prediction_runner_outputs — model_version
+-- ai/learning_store.save_prediction_snapshot() inserts rows with
+-- model_version.  Canonical schema has it; legacy snapshot may not.
+-- ----------------------------------------------------------------
+ALTER TABLE test_prediction_runner_outputs ADD COLUMN IF NOT EXISTS model_version TEXT DEFAULT 'baseline_v1';
+
+-- ----------------------------------------------------------------
+-- test_learning_evaluations — Phase 4.6 columns + UNIQUE constraint
+-- ai/learning_store.evaluate_prediction() upserts on
+-- prediction_snapshot_id and writes:
+--   oddspro_race_id, predicted_winner, actual_winner, winner_hit,
+--   top2_hit, top3_hit, predicted_rank_of_winner, winner_odds,
+--   used_enrichment, disagreement_score, formfav_rank, your_rank,
+--   evaluation_source, evaluated_at
+-- Legacy learning_evaluations was missing most of these and had
+-- prediction_snapshot_id as plain nullable TEXT (no UNIQUE).
+-- ----------------------------------------------------------------
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS oddspro_race_id          TEXT        DEFAULT '';
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS predicted_winner         TEXT        DEFAULT '';
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS actual_winner            TEXT        DEFAULT '';
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS winner_hit               BOOLEAN     DEFAULT FALSE;
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS top2_hit                 BOOLEAN     DEFAULT FALSE;
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS top3_hit                 BOOLEAN     DEFAULT FALSE;
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS predicted_rank_of_winner INTEGER;
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS winner_odds              NUMERIC(8,2);
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS used_enrichment          BOOLEAN     DEFAULT FALSE;
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS disagreement_score       NUMERIC(8,4);
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS formfav_rank             INTEGER;
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS your_rank                INTEGER;
+ALTER TABLE test_learning_evaluations ADD COLUMN IF NOT EXISTS evaluation_source        TEXT        DEFAULT 'oddspro';
+
+-- Ensure UNIQUE constraint on prediction_snapshot_id so that
+-- on_conflict="prediction_snapshot_id" in evaluate_prediction() works.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid = 'test_learning_evaluations'::regclass
+          AND c.contype  = 'u'
+          AND EXISTS (SELECT 1 FROM pg_attribute
+                      WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey)
+                        AND attname = 'prediction_snapshot_id')
+    ) THEN
+        ALTER TABLE test_learning_evaluations
+            ADD CONSTRAINT test_learning_evaluations_prediction_snapshot_id_key
+            UNIQUE (prediction_snapshot_id);
+    END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- ----------------------------------------------------------------
+-- test_backtest_runs — canonical column names
+-- Legacy backtest_runs used: winner_hits / winner_accuracy.
+-- Canonical backtest_runs uses: winner_hit_count / hit_rate.
+-- ai/backtest_engine._save_backtest_run() writes the canonical names.
+-- Also missing: code_filter, track_filter, total_runners,
+--               top2_hit_count, top3_hit_count, top2_rate, top3_rate.
+-- ----------------------------------------------------------------
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS code_filter      TEXT         DEFAULT '';
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS track_filter     TEXT         DEFAULT '';
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS total_runners    INTEGER      DEFAULT 0;
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS winner_hit_count INTEGER      DEFAULT 0;
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS top2_hit_count   INTEGER      DEFAULT 0;
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS top3_hit_count   INTEGER      DEFAULT 0;
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS hit_rate         NUMERIC(8,4) DEFAULT 0;
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS top2_rate        NUMERIC(8,4) DEFAULT 0;
+ALTER TABLE test_backtest_runs ADD COLUMN IF NOT EXISTS top3_rate        NUMERIC(8,4) DEFAULT 0;
+
+-- ----------------------------------------------------------------
+-- test_backtest_run_items — Phase 3/4 columns
+-- ai/backtest_engine._save_backtest_items() inserts items with:
+--   run_id, race_uid, model_version, predicted_winner, actual_winner,
+--   winner_hit, winner_odds, created_at
+-- ai/backtest_engine._backtest_single_race() also writes:
+--   race_date, track, code, runner_count, top2_hit, top3_hit,
+--   score, used_stored_snapshot
+-- Legacy backtest_run_items was missing: model_version, winner_odds,
+-- race_date, top2_hit, top3_hit, used_stored_snapshot, runner_count.
+-- ----------------------------------------------------------------
+ALTER TABLE test_backtest_run_items ADD COLUMN IF NOT EXISTS race_date            DATE;
+ALTER TABLE test_backtest_run_items ADD COLUMN IF NOT EXISTS top2_hit             BOOLEAN      DEFAULT FALSE;
+ALTER TABLE test_backtest_run_items ADD COLUMN IF NOT EXISTS top3_hit             BOOLEAN      DEFAULT FALSE;
+ALTER TABLE test_backtest_run_items ADD COLUMN IF NOT EXISTS winner_odds          NUMERIC(8,2);
+ALTER TABLE test_backtest_run_items ADD COLUMN IF NOT EXISTS model_version        TEXT         DEFAULT 'baseline_v1';
+ALTER TABLE test_backtest_run_items ADD COLUMN IF NOT EXISTS used_stored_snapshot BOOLEAN      DEFAULT FALSE;
+ALTER TABLE test_backtest_run_items ADD COLUMN IF NOT EXISTS runner_count         INTEGER      DEFAULT 0;
+
 -- Seed test_system_state row
 INSERT INTO test_system_state (id, bankroll, current_pl, bank_mode, active_code,
     posture, sys_state, variance, session_type, time_anchor)
@@ -1531,7 +1759,7 @@ ON CONFLICT DO NOTHING;
 
 
 -- ================================================================
--- DONE — Migration 006 complete.
+-- DONE — Full data-contract alignment pass complete.
 --
 -- What was reconciled:
 --   today_races      — added block_code, source, oddspro_race_id,
@@ -1570,18 +1798,43 @@ ON CONFLICT DO NOTHING;
 --                      moved manual_override backfill to before all indexes
 --                      (same root cause as aeee_adjustments.session_id)
 --   All Phase 3/4/4.5/4.6 intelligence tables fully defined
---   All test_ mirror tables ensured for TEST mode isolation:
---     test_meetings        — mirror of meetings; date/code indexes added
---     test_today_races     — backfilled oddspro_race_id, block_code, source,
---                            condition, race_name, updated_at, completed_at
---     test_today_runners   — backfilled oddspro_race_id, number, barrier,
---                            jockey, driver, price, rating, source_confidence,
---                            scratch_reason
---     test_results_log     — mirror of results_log; date/race_uid indexes added
---     test_bet_log         — backfilled user_id, placed_by, signal, exotic_type,
---                            manual_tag_override
---     test_etg_tags        — backfilled session_id, manual_override
---     test_aeee_adjustments— backfilled session_id
---     test_epr_data        — backfilled meeting_state, condition, date
---     test_source_log      — backfilled call_num
+--
+--   DATA-CONTRACT ALIGNMENT PASS (smoke-test fix):
+--   All test_ mirror tables now fully aligned to what the active code
+--   writes and reads.  Previously the backfill section only covered
+--   columns from early migrations; the following were added:
+--     test_today_runners   — backfilled race_id, date, track, race_num,
+--                            raw_hash, created_at; ensured (race_uid, box_num)
+--                            UNIQUE constraint for upsert conflict key
+--     test_results_log     — backfilled recorded_at (database.py writes
+--                            recorded_at, not created_at); ensured
+--                            (date, track, race_num, code) UNIQUE constraint
+--     test_source_log      — backfilled date, url, status, rows_returned;
+--                            made legacy 'source NOT NULL' column nullable
+--                            so canonical inserts never fail
+--     test_feature_snapshots — backfilled Phase 4 columns: oddspro_race_id,
+--                            snapshot_date, has_sectionals, has_race_shape,
+--                            has_collision, sectional_metrics, race_shape,
+--                            collision_metrics
+--     test_prediction_snapshots — backfilled Phase 4/4.6 columns:
+--                            oddspro_race_id, feature_snapshot_id,
+--                            runner_count, has_sectionals, has_race_shape,
+--                            has_collision, has_enrichment, source_type
+--     test_prediction_runner_outputs — backfilled model_version
+--     test_learning_evaluations — backfilled Phase 4.6 columns:
+--                            oddspro_race_id, predicted_winner, actual_winner,
+--                            winner_hit, top2_hit, top3_hit,
+--                            predicted_rank_of_winner, winner_odds,
+--                            used_enrichment, disagreement_score,
+--                            formfav_rank, your_rank, evaluation_source;
+--                            ensured UNIQUE constraint on prediction_snapshot_id
+--                            (legacy had it as plain nullable TEXT)
+--     test_backtest_runs   — backfilled canonical column names:
+--                            code_filter, track_filter, total_runners,
+--                            winner_hit_count, top2_hit_count, top3_hit_count,
+--                            hit_rate, top2_rate, top3_rate
+--                            (legacy used winner_hits/winner_accuracy instead)
+--     test_backtest_run_items — backfilled Phase 3/4 columns:
+--                            race_date, top2_hit, top3_hit, winner_odds,
+--                            model_version, used_stored_snapshot, runner_count
 -- ================================================================
