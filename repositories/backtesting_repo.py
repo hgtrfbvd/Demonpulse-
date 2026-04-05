@@ -151,20 +151,23 @@ class BacktestingRepo:
     @staticmethod
     def _build_run_payload(run: dict[str, Any]) -> dict:
         return {
-            "run_id":          str(run["run_id"]),
-            "model_version":   run.get("model_version", "baseline_v1"),
-            "race_code":       run.get("race_code", "GREYHOUND"),
-            "date_from":       run.get("date_from"),
-            "date_to":         run.get("date_to"),
-            "total_races":     int(run.get("total_races") or 0),
-            "winner_hits":     int(run.get("winner_hits") or 0),
-            "top2_hits":       int(run.get("top2_hits") or 0),
-            "top3_hits":       int(run.get("top3_hits") or 0),
-            "winner_accuracy": _to_numeric(run.get("winner_accuracy")),
-            "notes":           run.get("notes", ""),
-            "status":          run.get("status", "running"),
-            "created_at":      run.get("created_at", _now()),
-            "updated_at":      _now(),
+            "run_id":           str(run["run_id"]),
+            "model_version":    run.get("model_version", "baseline_v1"),
+            "code_filter":      run["code_filter"] if "code_filter" in run else run.get("race_code", ""),
+            "track_filter":     run.get("track_filter", ""),
+            "date_from":        run.get("date_from"),
+            "date_to":          run.get("date_to"),
+            "total_races":      int(run.get("total_races") or 0),
+            "total_runners":    int(run.get("total_runners") or 0),
+            "winner_hit_count": int(run["winner_hit_count"] if "winner_hit_count" in run else run.get("winner_hits", 0)),
+            "top2_hit_count":   int(run["top2_hit_count"] if "top2_hit_count" in run else run.get("top2_hits", 0)),
+            "top3_hit_count":   int(run["top3_hit_count"] if "top3_hit_count" in run else run.get("top3_hits", 0)),
+            "hit_rate":         _to_numeric(run["hit_rate"] if "hit_rate" in run else run.get("winner_accuracy")),
+            "top2_rate":        _to_numeric(run.get("top2_rate")),
+            "top3_rate":        _to_numeric(run.get("top3_rate")),
+            "avg_winner_odds":  _to_numeric(run.get("avg_winner_odds")),
+            "created_at":       run.get("created_at", _now()),
+            "updated_at":       _now(),
         }
 
     @staticmethod

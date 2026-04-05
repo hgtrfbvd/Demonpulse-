@@ -271,12 +271,51 @@ class UsersRepo:
 
     @staticmethod
     def set_permission(user_id: str, page: str, allowed: bool) -> bool:
+        """Grant or revoke a named permission for a user.
+
+        The user_permissions table stores permissions as TEXT arrays
+        (granted, revoked, effective).  This helper adds or removes
+        *page* from the appropriate array and upserts the row.
+        """
+        rows = safe_execute(
+            lambda: get_client()
+                .table(resolve_table(TABLE_USER_PERMS))
+                .select("granted,revoked")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+                .data,
+            default=[],
+            context="UsersRepo.set_permission.fetch",
+        ) or []
+        current = rows[0] if rows else {}
+        raw_granted = current.get("granted")
+        raw_revoked = current.get("revoked")
+        granted: list = list(raw_granted) if isinstance(raw_granted, list) else []
+        revoked: list = list(raw_revoked) if isinstance(raw_revoked, list) else []
+
+        if allowed:
+            if page not in granted:
+                granted.append(page)
+            if page in revoked:
+                revoked.remove(page)
+        else:
+            if page not in revoked:
+                revoked.append(page)
+            if page in granted:
+                granted.remove(page)
+
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_PERMS))
                 .upsert(
-                    {"user_id": user_id, "page": page, "allowed": allowed, "updated_at": _now()},
-                    on_conflict="user_id,page",
+                    {
+                        "user_id":    user_id,
+                        "granted":    granted,
+                        "revoked":    revoked,
+                        "updated_at": _now(),
+                    },
+                    on_conflict="user_id",
                 )
                 .execute()
                 .data,
@@ -288,7 +327,7 @@ class UsersRepo:
     # ── USER SESSIONS ─────────────────────────────────────────────
 
     @staticmethod
-    def create_session(user_id: str, token_hash: str, ip: str = "", ttl_minutes: int = 480) -> Optional[dict]:
+    def create_session(user_id: str, token_jti: str, ip_address: str = "", user_agent: str = "", ttl_minutes: int = 480) -> Optional[dict]:
         from datetime import timedelta
         expires = datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
         result = safe_execute(
@@ -296,9 +335,10 @@ class UsersRepo:
                 .table(resolve_table(TABLE_USER_SESSIONS))
                 .insert({
                     "user_id":    user_id,
-                    "token_hash": token_hash,
-                    "ip":         ip,
-                    "active":     True,
+                    "token_jti":  token_jti,
+                    "ip_address": ip_address,
+                    "user_agent": user_agent,
+                    "revoked":    False,
                     "expires_at": expires.isoformat(),
                     "created_at": _now(),
                 })
@@ -314,7 +354,7 @@ class UsersRepo:
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_SESSIONS))
-                .update({"active": False})
+                .update({"revoked": True, "revoked_at": _now()})
                 .eq("user_id", user_id)
                 .execute()
                 .data,
@@ -327,14 +367,24 @@ class UsersRepo:
 
     @staticmethod
     def log_activity(user_id: str, action: str, page: str = "", data: Optional[dict] = None) -> None:
+        """Record a user activity event.
+
+        The user_activity table uses ``detail`` (JSONB) and ``ip_address`` (TEXT).
+        The ``page`` parameter is folded into ``detail`` for context, and ``data``
+        is stored under the ``detail`` key for backward compatibility.
+        """
+        detail: dict = {}
+        if page:
+            detail["page"] = page
+        if data:
+            detail.update(data)
         safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_ACTIVITY))
                 .insert({
                     "user_id":    user_id,
                     "action":     action,
-                    "page":       page,
-                    "data":       data or {},
+                    "detail":     detail,
                     "created_at": _now(),
                 })
                 .execute(),
