@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
 import requests
+
+log = logging.getLogger(__name__)
 
 BASE_URL = "https://api.formfav.com"
 
@@ -114,9 +117,12 @@ class FormFavConnector:
     }
 
     def __init__(self):
-        self.api_key = os.getenv("FORMFAV_API_KEY", "").strip()
-        self.country = os.getenv("FORMFAV_COUNTRY", "au").strip().lower() or "au"
-        self.timeout = int(os.getenv("FORMFAV_TIMEOUT", "30"))
+        _raw_key = os.environ.get("FORMFAV_API_KEY")
+        if not _raw_key:
+            log.error("[FORMFAV] Missing API Key")
+        self.api_key = (_raw_key or "").strip()
+        self.country = (os.environ.get("FORMFAV_COUNTRY") or "au").strip().lower() or "au"
+        self.timeout = int(os.environ.get("FORMFAV_TIMEOUT") or "30")
 
     def is_enabled(self) -> bool:
         return bool(self.api_key)
@@ -147,6 +153,7 @@ class FormFavConnector:
         country: str | None = None,
     ) -> dict[str, Any] | None:
         if not self.api_key:
+            log.error("[FORMFAV] Missing API Key")
             return None
 
         race_code = self.RACE_CODE_MAP.get(code.upper(), "gallops")
@@ -157,9 +164,16 @@ class FormFavConnector:
             "race_code": race_code,
             "country": (country or self.country).lower(),
         }
+        url = f"{BASE_URL}/v1/form"
+        log.debug(
+            "[FORMFAV] CALL → url=%s params=%s api_key_present=%s",
+            url,
+            params,
+            bool(self.api_key),
+        )
 
         response = requests.get(
-            f"{BASE_URL}/v1/form",
+            url,
             params=params,
             headers=self._headers(),
             timeout=self.timeout,
@@ -178,6 +192,7 @@ class FormFavConnector:
     ) -> dict[str, Any] | None:
         """Fetch win/place probabilities and model metadata from /v1/predictions (Pro tier)."""
         if not self.api_key:
+            log.error("[FORMFAV] Missing API Key")
             return None
 
         race_code = self.RACE_CODE_MAP.get(code.upper(), "gallops")
@@ -188,10 +203,17 @@ class FormFavConnector:
             "race_code": race_code,
             "country": (country or self.country).lower(),
         }
+        url = f"{BASE_URL}/v1/predictions"
+        log.debug(
+            "[FORMFAV] CALL → url=%s params=%s api_key_present=%s",
+            url,
+            params,
+            bool(self.api_key),
+        )
 
         try:
             response = requests.get(
-                f"{BASE_URL}/v1/predictions",
+                url,
                 params=params,
                 headers=self._headers(),
                 timeout=self.timeout,
@@ -205,6 +227,7 @@ class FormFavConnector:
     def _request_meetings(self, target_date: str, code: str) -> list[dict[str, Any]]:
         """Fetch list of meetings for a date from /v1/form/meetings."""
         if not self.api_key:
+            log.error("[FORMFAV] Missing API Key")
             return []
 
         race_code = self.RACE_CODE_MAP.get(code.upper(), "gallops")
@@ -213,10 +236,17 @@ class FormFavConnector:
             "race_code": race_code,
             "country": self.country,
         }
+        url = f"{BASE_URL}/v1/form/meetings"
+        log.debug(
+            "[FORMFAV] CALL → url=%s params=%s api_key_present=%s",
+            url,
+            params,
+            bool(self.api_key),
+        )
 
         try:
             response = requests.get(
-                f"{BASE_URL}/v1/form/meetings",
+                url,
                 params=params,
                 headers=self._headers(),
                 timeout=self.timeout,
