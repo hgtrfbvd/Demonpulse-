@@ -649,7 +649,8 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
     roi              NUMERIC,
     status           TEXT                    DEFAULT 'completed',
     notes            TEXT,
-    created_at       TIMESTAMPTZ             DEFAULT NOW()
+    created_at       TIMESTAMPTZ             DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ             DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_model ON backtest_runs(model_version, created_at DESC);
@@ -844,6 +845,9 @@ ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ
 
 -- results_log — race_uid added in V8
 ALTER TABLE results_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
+-- backtest_runs — updated_at added so update_run() writes succeed
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- system_state — tuning columns added in V8
 ALTER TABLE system_state ADD COLUMN IF NOT EXISTS confidence_threshold NUMERIC(4,2) DEFAULT 0.65;
