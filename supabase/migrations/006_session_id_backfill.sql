@@ -1,3 +1,7 @@
+-- [LEGACY] This file is superseded by sql/001_canonical_schema.sql.
+-- Do NOT run this file. It is kept for historical reference only.
+-- See docs/supabase_rebuild_notes.md for migration instructions.
+
 -- ================================================================
 -- DEMONPULSE V8 — MIGRATION 006: session_id backfill
 -- Run AFTER 001, 002, 003, 004, 005
