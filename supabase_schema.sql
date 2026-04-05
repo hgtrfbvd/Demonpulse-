@@ -101,13 +101,13 @@ CREATE TABLE IF NOT EXISTS today_races (
     UNIQUE (date, track, race_num, code)
 );
 
-CREATE INDEX IF NOT EXISTS idx_today_races_date           ON today_races(date);
-CREATE INDEX IF NOT EXISTS idx_today_races_code           ON today_races(code);
-CREATE INDEX IF NOT EXISTS idx_today_races_race_uid       ON today_races(race_uid);
-CREATE INDEX IF NOT EXISTS idx_today_races_oddspro_id     ON today_races(oddspro_race_id);
-CREATE INDEX IF NOT EXISTS idx_today_races_date_code      ON today_races(date, code);
-CREATE INDEX IF NOT EXISTS idx_today_races_date_status    ON today_races(date, status);
-CREATE INDEX IF NOT EXISTS idx_today_races_lifecycle_date ON today_races(lifecycle_state, date DESC);
+CREATE INDEX IF NOT EXISTS idx_today_races_date        ON today_races(date);
+CREATE INDEX IF NOT EXISTS idx_today_races_code        ON today_races(code);
+CREATE INDEX IF NOT EXISTS idx_today_races_date_code   ON today_races(date, code);
+CREATE INDEX IF NOT EXISTS idx_today_races_date_status ON today_races(date, status);
+-- NOTE: idx_today_races_race_uid, idx_today_races_oddspro_id, idx_today_races_lifecycle_date
+--       are deferred to Section 8B — those columns are only guaranteed to exist after the
+--       ALTER TABLE … ADD COLUMN IF NOT EXISTS guards run (upgrade-safe ordering).
 
 -- ----------------------------------------------------------------
 -- today_runners
@@ -141,9 +141,9 @@ CREATE TABLE IF NOT EXISTS today_runners (
     UNIQUE (race_uid, box_num)
 );
 
-CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid     ON today_runners(race_uid);
-CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid_box ON today_runners(race_uid, box_num);
-CREATE INDEX IF NOT EXISTS idx_today_runners_is_fav       ON today_runners(is_fav) WHERE is_fav = TRUE;
+CREATE INDEX IF NOT EXISTS idx_today_runners_is_fav ON today_runners(is_fav) WHERE is_fav = TRUE;
+-- NOTE: idx_today_runners_race_uid and idx_today_runners_race_uid_box are deferred to
+--       Section 8B — race_uid is only guaranteed to exist after the ALTER TABLE guard runs.
 
 -- ----------------------------------------------------------------
 -- results_log
@@ -171,9 +171,10 @@ CREATE TABLE IF NOT EXISTS results_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_results_log_date      ON results_log(date);
-CREATE INDEX IF NOT EXISTS idx_results_log_race_uid  ON results_log(race_uid);
 CREATE INDEX IF NOT EXISTS idx_results_log_code      ON results_log(code);
 CREATE INDEX IF NOT EXISTS idx_results_log_date_code ON results_log(date, code);
+-- NOTE: idx_results_log_race_uid is deferred to Section 8B — race_uid is only guaranteed
+--       to exist after the ALTER TABLE guard runs (upgrade-safe ordering).
 
 -- ================================================================
 -- SECTION 2: USERS & AUTH
@@ -852,9 +853,26 @@ ALTER TABLE system_state ADD COLUMN IF NOT EXISTS tempo_weight         NUMERIC(4
 ALTER TABLE system_state ADD COLUMN IF NOT EXISTS traffic_penalty      NUMERIC(4,2) DEFAULT 0.8;
 ALTER TABLE system_state ADD COLUMN IF NOT EXISTS closer_boost         NUMERIC(4,2) DEFAULT 1.1;
 
--- Indexes for oddspro_race_id (no-op if already present)
-CREATE INDEX IF NOT EXISTS idx_today_races_oddspro_id   ON today_races(oddspro_race_id);
-CREATE INDEX IF NOT EXISTS idx_today_runners_oddspro_id ON today_runners(oddspro_race_id);
+-- ----------------------------------------------------------------
+-- Indexes for guard-added columns
+-- All CREATE INDEX statements below reference columns that are only
+-- guaranteed to exist AFTER the ALTER TABLE … ADD COLUMN IF NOT EXISTS
+-- guards above.  Placing them here ensures they are safe on both a
+-- brand-new database and any older database being upgraded.
+-- ----------------------------------------------------------------
+
+-- today_races — columns guarded above
+CREATE INDEX IF NOT EXISTS idx_today_races_race_uid       ON today_races(race_uid);
+CREATE INDEX IF NOT EXISTS idx_today_races_oddspro_id     ON today_races(oddspro_race_id);
+CREATE INDEX IF NOT EXISTS idx_today_races_lifecycle_date ON today_races(lifecycle_state, date DESC);
+
+-- today_runners — columns guarded above
+CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid     ON today_runners(race_uid);
+CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid_box ON today_runners(race_uid, box_num);
+CREATE INDEX IF NOT EXISTS idx_today_runners_oddspro_id   ON today_runners(oddspro_race_id);
+
+-- results_log — race_uid guarded above
+CREATE INDEX IF NOT EXISTS idx_results_log_race_uid ON results_log(race_uid);
 
 -- ================================================================
 -- SECTION 9: ADDITIONAL INDEXES & CONFLICT CONSTRAINTS
