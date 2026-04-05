@@ -190,6 +190,7 @@ class RaceRecord:
     code: str
     source: str = "oddspro"
     state: str = ""
+    country: str = "au"
     race_name: str = ""
     distance: str = ""
     grade: str = ""
@@ -1501,6 +1502,12 @@ class OddsProConnector:
             code=code,
             source=self.source_name,
             state=str(item.get("state") or (meeting.state if meeting else "") or ""),
+            country=str(
+                item.get("country")
+                or (meeting.country if meeting else None)
+                or self.country
+                or "au"
+            ).lower(),
             race_name=str(item.get("raceName") or item.get("name") or ""),
             distance=str(item.get("distance") or ""),
             grade=str(item.get("grade") or item.get("raceClass") or ""),

@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS today_races (
     date                DATE        NOT NULL    DEFAULT CURRENT_DATE,
     track               TEXT        NOT NULL    DEFAULT '',
     state               TEXT                    DEFAULT '',
+    country             TEXT                    DEFAULT 'au',
     race_num            INTEGER     NOT NULL    DEFAULT 0,
     code                TEXT        NOT NULL    DEFAULT 'GREYHOUND',
     distance            TEXT                    DEFAULT '',
@@ -117,6 +118,7 @@ ALTER TABLE today_races ADD COLUMN IF NOT EXISTS source_url         TEXT        
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS time_status        TEXT        NOT NULL DEFAULT 'PARTIAL';
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS condition          TEXT                 DEFAULT '';
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS race_name          TEXT                 DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS country            TEXT                 DEFAULT 'au';
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ          DEFAULT NOW();
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS completed_at       TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS completeness_score INTEGER              DEFAULT 0;
