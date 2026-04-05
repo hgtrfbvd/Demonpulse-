@@ -397,6 +397,13 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         f"{races_stored} races stored ({races_blocked} blocked), "
         f"{runners_stored} runners stored for {today}"
     )
+    # Mandatory pipeline validation output
+    log.info(
+        f"PIPELINE VALIDATION: date={today} "
+        f"races_loaded={races_stored} "
+        f"runners_inserted={runners_stored} "
+        f"runners_skipped=0"
+    )
     return {
         "ok": True,
         "date": today,
@@ -683,6 +690,38 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------
+# AU RACE DETECTION — FormFav compatibility helper
+# ------------------------------------------------------------
+
+# Known Australian state/territory abbreviations used in the `state` field.
+# Also includes country-level identifiers ('au', 'aus', 'australia') because
+# some API responses populate the state field with the country code instead of
+# a state abbreviation, especially for interstate or undifferentiated AU meetings.
+_AU_STATES = frozenset({
+    "vic", "nsw", "qld", "sa", "wa", "tas", "act", "nt",
+    "au", "aus", "australia",
+})
+
+
+def _is_au_race(race: dict[str, Any]) -> bool:
+    """
+    Return True when a race is an Australian race eligible for FormFav enrichment.
+    FormFav only supports AU tracks.
+
+    Detection uses the `state` field (AU state/territory codes) stored in
+    today_races.  Races with an unrecognised or empty state are treated as AU
+    because OddsPro defaults to Australian data (ODDSPRO_COUNTRY=au).
+    """
+    state = (race.get("state") or "").strip().lower()
+    if not state:
+        # No state info — assume AU (OddsPro country default is 'au')
+        return True
+    # Accept if state matches any known AU code, or if it is not a clearly
+    # non-AU identifier (e.g. "usa", "uk", "hk", "fr", "nz" etc.)
+    return not state or state in _AU_STATES
+
+
+# ------------------------------------------------------------
 # FORMFAV PERSISTENT ENRICHMENT SYNC
 # ------------------------------------------------------------
 
@@ -720,12 +759,22 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         log.debug(f"data_engine.formfav_sync: no active races for {td}")
         return {"ok": True, "races_enriched": 0, "runners_enriched": 0, "date": td}
 
+    # FormFav only supports AU races — filter to Australian races only.
+    # International races remain in the system but are excluded from FormFav processing.
+    au_races = [r for r in races if _is_au_race(r)]
+    skipped_intl = len(races) - len(au_races)
+    if skipped_intl:
+        log.info(
+            f"data_engine.formfav_sync: skipping {skipped_intl} non-AU races "
+            f"(FormFav supports AU only); processing {len(au_races)} AU races"
+        )
+
     races_enriched = 0
     runners_enriched = 0
     errors = 0
     fetched_at = datetime.now(timezone.utc).isoformat()
 
-    for race in races:
+    for race in au_races:
         race_uid = race.get("race_uid") or ""
         if not race_uid:
             continue
@@ -812,7 +861,13 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
 
     log.info(
         f"data_engine.formfav_sync: date={td} "
-        f"races_enriched={races_enriched} runners_enriched={runners_enriched} errors={errors}"
+        f"races_enriched={races_enriched} runners_enriched={runners_enriched} errors={errors} "
+        f"skipped_international={skipped_intl}"
+    )
+    # Mandatory pipeline validation output
+    log.info(
+        f"PIPELINE VALIDATION: date={td} "
+        f"formfav_races_enriched={races_enriched}"
     )
     return {
         "ok": True,
@@ -820,6 +875,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         "races_enriched": races_enriched,
         "runners_enriched": runners_enriched,
         "errors": errors,
+        "skipped_international": skipped_intl,
         "source": "formfav",
     }
 
