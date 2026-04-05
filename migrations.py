@@ -731,7 +731,7 @@ _PHASE5_TABLES: list[tuple[str, str]] = [
         """
         CREATE TABLE IF NOT EXISTS formfav_race_enrichment (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            race_uid TEXT NOT NULL DEFAULT '',
+            race_uid TEXT NOT NULL,
             date DATE,
             track TEXT DEFAULT '',
             race_num INTEGER,
@@ -759,7 +759,7 @@ _PHASE5_TABLES: list[tuple[str, str]] = [
         """
         CREATE TABLE IF NOT EXISTS formfav_runner_enrichment (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            race_uid TEXT NOT NULL DEFAULT '',
+            race_uid TEXT NOT NULL,
             runner_name TEXT DEFAULT '',
             number INTEGER,
             barrier INTEGER,

@@ -50,11 +50,10 @@ class RaceRecord:
     abandoned: bool = False
     number_of_runners: int = 0
     pace_scenario: str = ""
-    raw_response: dict[str, Any] | None = None
+    raw_response: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.raw_response is None:
-            self.raw_response = {}
+        pass
 
 
 @dataclass
@@ -84,7 +83,7 @@ class RunnerRecord:
     age: str = ""
     claim: str = ""
     form_string: str = ""
-    decorators: list[dict[str, Any]] | None = None
+    decorators: list[dict[str, Any]] = field(default_factory=list)
     speed_map: dict[str, Any] | None = None
     class_profile: dict[str, Any] | None = None
     race_class_fit: dict[str, Any] | None = None
@@ -102,8 +101,6 @@ class RunnerRecord:
     def __post_init__(self):
         if self.stats_json is None:
             self.stats_json = {}
-        if self.decorators is None:
-            self.decorators = []
 
 
 class FormFavConnector:

@@ -713,7 +713,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         )
     except ImportError as e:
         log.error(f"data_engine.formfav_sync: import error: {e}")
-        return {"ok": False, "reason": f"import_error: {e}", "races_enriched": 0, "runners_enriched": 0}
+        return {"ok": False, "reason": "import_error", "races_enriched": 0, "runners_enriched": 0}
 
     races = get_active_races(td)
     if not races:

@@ -13,10 +13,20 @@ from __future__ import annotations
 import logging
 from datetime import datetime, date, timezone
 from typing import Any
+import json
 
 from db import get_db, safe_query, T
 
 log = logging.getLogger(__name__)
+
+
+def _as_json(val: Any) -> Any:
+    """Serialise dict/list values to JSON strings for JSONB columns."""
+    if val is None:
+        return None
+    if isinstance(val, (dict, list)):
+        return json.dumps(val)
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -414,20 +424,10 @@ def upsert_formfav_race_enrichment(data: dict[str, Any]) -> dict[str, Any] | Non
     Conflict key: race_uid (one enrichment row per race).
     Never overwrites primary OddsPro records.
     """
-    import json
-
     race_uid = data.get("race_uid") or ""
     if not race_uid:
         log.warning("database.upsert_formfav_race_enrichment: skipping row missing race_uid")
         return None
-
-    def _as_json(val: Any) -> Any:
-        """Ensure dict/list values are JSON-serialisable strings for JSONB columns."""
-        if val is None:
-            return None
-        if isinstance(val, (dict, list)):
-            return json.dumps(val)
-        return val
 
     payload = {
         "race_uid":          race_uid,
@@ -469,20 +469,11 @@ def upsert_formfav_runner_enrichment(data: dict[str, Any]) -> dict[str, Any] | N
     Insert or update a FormFav runner enrichment record.
     Conflict key: (race_uid, number).
     """
-    import json
-
     race_uid = data.get("race_uid") or ""
     number = data.get("number")
     if not race_uid or number is None:
         log.warning("database.upsert_formfav_runner_enrichment: skipping row missing race_uid or number")
         return None
-
-    def _as_json(val: Any) -> Any:
-        if val is None:
-            return None
-        if isinstance(val, (dict, list)):
-            return json.dumps(val)
-        return val
 
     payload = {
         "race_uid":           race_uid,
