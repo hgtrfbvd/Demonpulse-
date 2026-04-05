@@ -18,7 +18,7 @@ LAW 4: Source trace mandatory on every live refresh.
 LAW 5: Learning never affects live decisions.
 LAW 6: Learning updates only after result logging.
 LAW 7: No cross-code contamination.
-LAW 8: GRV.ORG.AU permanently banned.
+LAW 8: No banned or unauthorised data sources.
 LAW 9: Time from user only.
 LAW 10: Board without real tool call = invalid.
 LAW 11: PASS is valid. Never force a bet.
