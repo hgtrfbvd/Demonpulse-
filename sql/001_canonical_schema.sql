@@ -1365,8 +1365,10 @@ CREATE TABLE IF NOT EXISTS sectional_benchmarks (
 -- "test_" so production data is never touched.
 -- ================================================================
 
+CREATE TABLE IF NOT EXISTS test_meetings (        LIKE meetings        INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_today_races (     LIKE today_races     INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_today_runners (   LIKE today_runners   INCLUDING ALL );
+CREATE TABLE IF NOT EXISTS test_results_log (     LIKE results_log     INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_bet_log (         LIKE bet_log         INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_signals (         LIKE signals         INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_sessions (        LIKE sessions        INCLUDING ALL );
@@ -1457,11 +1459,16 @@ VALUES (1, 10000, 0, 'STANDARD', 'GREYHOUND', 'NORMAL', 'STABLE', 'NORMAL', 'Tes
 ON CONFLICT DO NOTHING;
 
 -- Test-mode indexes
+CREATE INDEX IF NOT EXISTS idx_test_meetings_date         ON test_meetings(date);
+CREATE INDEX IF NOT EXISTS idx_test_meetings_code         ON test_meetings(code);
+CREATE INDEX IF NOT EXISTS idx_test_meetings_date_code    ON test_meetings(date, code);
 CREATE INDEX IF NOT EXISTS idx_test_today_races_date    ON test_today_races(date);
 CREATE INDEX IF NOT EXISTS idx_test_today_runners_uid   ON test_today_runners(race_uid);
 CREATE INDEX IF NOT EXISTS idx_test_bet_log_date        ON test_bet_log(date);
 CREATE INDEX IF NOT EXISTS idx_test_signals_race_uid    ON test_signals(race_uid);
 CREATE INDEX IF NOT EXISTS idx_test_source_log_date     ON test_source_log(date);
+CREATE INDEX IF NOT EXISTS idx_test_results_log_date    ON test_results_log(date);
+CREATE INDEX IF NOT EXISTS idx_test_results_log_uid     ON test_results_log(race_uid);
 
 
 -- ================================================================
@@ -1564,11 +1571,13 @@ ON CONFLICT DO NOTHING;
 --                      (same root cause as aeee_adjustments.session_id)
 --   All Phase 3/4/4.5/4.6 intelligence tables fully defined
 --   All test_ mirror tables ensured for TEST mode isolation:
+--     test_meetings        — mirror of meetings; date/code indexes added
 --     test_today_races     — backfilled oddspro_race_id, block_code, source,
 --                            condition, race_name, updated_at, completed_at
 --     test_today_runners   — backfilled oddspro_race_id, number, barrier,
 --                            jockey, driver, price, rating, source_confidence,
 --                            scratch_reason
+--     test_results_log     — mirror of results_log; date/race_uid indexes added
 --     test_bet_log         — backfilled user_id, placed_by, signal, exotic_type,
 --                            manual_tag_override
 --     test_etg_tags        — backfilled session_id, manual_override
