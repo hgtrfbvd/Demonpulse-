@@ -883,6 +883,141 @@ def test_source_logging() -> _Result:
     return r
 
 
+
+def test_formfav_enrichment() -> _Result:
+    """
+    9. FORMFAV ENRICHMENT — write + read back via DB (no live API call)
+    Code path : database.upsert_formfav_race_enrichment() →
+                db.T("formfav_race_enrichment") → test_formfav_race_enrichment
+    Code path : database.upsert_formfav_runner_enrichment() →
+                db.T("formfav_runner_enrichment") → test_formfav_runner_enrichment
+    Validates enrichment linkage via race_uid, table routing, and read-back.
+    """
+    r = _Result("formfav_enrichment")
+    r.code_path = (
+        "database.upsert_formfav_race_enrichment() → "
+        "db.T('formfav_race_enrichment') → test_formfav_race_enrichment"
+    )
+
+    from env import env
+    from database import (
+        upsert_formfav_race_enrichment,
+        upsert_formfav_runner_enrichment,
+        get_formfav_race_enrichment,
+        get_formfav_runner_enrichments,
+        get_formfav_enrichments_for_date,
+    )
+
+    r.check(
+        env.table("formfav_race_enrichment") == "test_formfav_race_enrichment",
+        f"Routing: env.table('formfav_race_enrichment') → "
+        f"'{env.table('formfav_race_enrichment')}' "
+        "(expected 'test_formfav_race_enrichment')",
+    )
+    r.check(
+        env.table("formfav_runner_enrichment") == "test_formfav_runner_enrichment",
+        f"Routing: env.table('formfav_runner_enrichment') → "
+        f"'{env.table('formfav_runner_enrichment')}' "
+        "(expected 'test_formfav_runner_enrichment')",
+    )
+
+    uid = _uid()
+    track = f"smoke-ff-{uid}"
+    race_num = 3
+    race_uid = f"{_today()}_GREYHOUND_{track}_{race_num}"
+
+    # Pre-test cleanup
+    _cleanup("formfav_race_enrichment", "race_uid", race_uid)
+    _cleanup("formfav_runner_enrichment", "race_uid", race_uid)
+
+    # Write race enrichment
+    race_payload = {
+        "race_uid":          race_uid,
+        "date":              _today(),
+        "track":             track,
+        "race_num":          race_num,
+        "race_code":         "GREYHOUND",
+        "race_name":         "Smoke Test FF Race",
+        "distance":          "515m",
+        "grade":             "5",
+        "condition":         "Good",
+        "weather":           "FINE",
+        "start_time":        "14:00",
+        "start_time_utc":    "04:00",
+        "timezone":          "AEST",
+        "abandoned":         False,
+        "number_of_runners": 2,
+        "pace_scenario":     "LEADER_DOMINANT",
+        "raw_response":      {"test": True},
+        "fetched_at":        _now(),
+    }
+    written_race = upsert_formfav_race_enrichment(race_payload)
+    r.check(written_race is not None, "upsert_formfav_race_enrichment returned None")
+
+    # Write runner enrichment
+    runner_payload = {
+        "race_uid":    race_uid,
+        "runner_name": "FAST DOG",
+        "number":      1,
+        "barrier":     1,
+        "scratched":   False,
+        "form_string": "1-1-2",
+        "fetched_at":  _now(),
+    }
+    written_runner = upsert_formfav_runner_enrichment(runner_payload)
+    r.check(written_runner is not None, "upsert_formfav_runner_enrichment returned None")
+
+    # Read back race enrichment by race_uid
+    race_row = get_formfav_race_enrichment(race_uid)
+    r.check(race_row is not None, "get_formfav_race_enrichment returned None after write")
+    if race_row:
+        r.check_fields_present(race_row, [
+            "race_uid", "date", "track", "race_num", "race_code",
+            "race_name", "condition", "fetched_at",
+        ])
+        r.check(race_row.get("race_uid") == race_uid, "race_uid mismatch on read-back")
+        r.check(race_row.get("race_code") == "GREYHOUND", "race_code mismatch")
+        r.check(race_row.get("number_of_runners") == 2, "number_of_runners mismatch")
+
+    # Read back runner enrichments by race_uid
+    runner_rows = get_formfav_runner_enrichments(race_uid)
+    r.check(len(runner_rows) >= 1, f"get_formfav_runner_enrichments returned {len(runner_rows)}, expected >= 1")
+    if runner_rows:
+        rr = runner_rows[0]
+        r.check_fields_present(rr, ["race_uid", "number", "runner_name", "fetched_at"])
+        r.check(rr.get("race_uid") == race_uid, "runner race_uid linkage mismatch")
+        r.check(rr.get("runner_name") == "FAST DOG", "runner_name mismatch")
+
+    # Validate enrichments for today's date — ensures enriched_races_today > 0
+    today_enrichments = get_formfav_enrichments_for_date(_today())
+    matching = [e for e in today_enrichments if e.get("race_uid") == race_uid]
+    r.check(
+        len(matching) >= 1,
+        f"get_formfav_enrichments_for_date: race_uid={race_uid!r} not found in today's enrichments "
+        f"(total_today={len(today_enrichments)})",
+    )
+
+    # Conflict-key idempotency: second upsert must update, not duplicate
+    upsert_formfav_race_enrichment({**race_payload, "number_of_runners": 5})
+    race_row2 = get_formfav_race_enrichment(race_uid)
+    r.check(race_row2 is not None, "get_formfav_race_enrichment returned None after second upsert")
+    if race_row2:
+        r.check(
+            race_row2.get("number_of_runners") == 5,
+            f"Upsert did not update number_of_runners: got {race_row2.get('number_of_runners')!r} (expected 5)",
+        )
+
+    r.detail = (
+        f"race_uid={race_uid}, "
+        f"enriched_races_today={len(today_enrichments)}"
+    )
+
+    # Post-test cleanup
+    _cleanup("formfav_runner_enrichment", "race_uid", race_uid)
+    _cleanup("formfav_race_enrichment", "race_uid", race_uid)
+    return r
+
+
 # =============================================================================
 # REPORT GENERATOR
 # =============================================================================
@@ -984,6 +1119,7 @@ def main() -> int:
         test_learning,
         test_backtesting,
         test_source_logging,
+        test_formfav_enrichment,
     ]
 
     results = []
@@ -1024,6 +1160,7 @@ def run_all_tests() -> dict:
         test_learning,
         test_backtesting,
         test_source_logging,
+        test_formfav_enrichment,
     ]
 
     results = []

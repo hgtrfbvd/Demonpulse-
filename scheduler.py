@@ -135,6 +135,15 @@ def _run_full_sweep():
     except Exception:
         pass
 
+    # Second-stage enrichment: run FormFav sync immediately after OddsPro ingestion
+    # so that FormFav enrichment is available as soon as races are stored.
+    # The scheduler also runs formfav_sync every 300s to keep enrichment fresh.
+    if ok and result.get("races_stored", 0) > 0:
+        try:
+            _run_formfav_sync()
+        except Exception as _ff_exc:
+            log.warning(f"scheduler: post-sweep formfav_sync failed: {_ff_exc}")
+
     return result
 
 

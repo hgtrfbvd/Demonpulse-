@@ -2,8 +2,8 @@
 data_engine.py - DemonPulse Data Engine
 =========================================
 OddsPro is the PRIMARY and AUTHORITATIVE source of record.
-FormFav is a PROVISIONAL OVERLAY only — never used for daily bootstrap
-or official board state.
+FormFav is a SECONDARY enrichment source — stored separately and never
+overwrites OddsPro authoritative fields.
 
 Core functions:
   full_sweep()          - OddsPro daily bootstrap via /api/external/meetings
@@ -11,15 +11,20 @@ Core functions:
   rolling_refresh()     - OddsPro meeting/race refresh via /api/external/meeting/:id
   near_jump_refresh()   - OddsPro near-jump refresh + FormFav provisional overlay
   check_results()       - OddsPro result sweep via /api/external/results
-  formfav_overlay()     - FormFav provisional enrichment (near-jump only)
+  formfav_overlay()     - FormFav provisional enrichment (near-jump only, in-memory)
+  formfav_sync()        - FormFav persistent enrichment (AU/NZ races, stored in DB)
   get_provisional_overlays() - Return current provisional overlay store
 
 Architecture rules enforced here:
   - OddsPro builds the day (full_sweep)
   - OddsPro builds official board state (rolling_refresh, near_jump_refresh)
   - OddsPro-confirmed data is official truth
-  - FormFav never calls for bootstrap, never overwrites official fields
-  - FormFav overlays stored in-memory separately from official tables
+  - FormFav never overwrites OddsPro authoritative fields
+  - FormFav provisional overlays stored in-memory only (near-jump)
+  - FormFav persistent enrichment stored in formfav_race_enrichment /
+    formfav_runner_enrichment tables (separate from official tables)
+  - formfav_sync() runs as second-stage enrichment AFTER OddsPro ingestion
+  - Only AU and NZ races are eligible for FormFav enrichment
   - NTJ calculated from stored jump_time (race_status.compute_ntj)
   - Blocked races tracked explicitly in database
 """
@@ -815,15 +820,21 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         return {"ok": True, "races_enriched": 0, "runners_enriched": 0, "date": td}
 
     # FormFav supports AU and NZ races — filter to AU/NZ races only.
-    # All other international races remain in the system but are excluded from
-    # FormFav processing.
-    au_nz_races = [r for r in races if _is_au_nz_race(r)]
-    skipped_intl = len(races) - len(au_nz_races)
-    if skipped_intl:
-        log.info(
-            f"data_engine.formfav_sync: skipping {skipped_intl} non-AU/NZ races "
-            f"(FormFav supports AU and NZ only); processing {len(au_nz_races)} AU/NZ races"
-        )
+    # Per-race SKIPPED logs are emitted for every excluded international race.
+    au_nz_races = []
+    skipped_intl = 0
+    for _r in races:
+        if _is_au_nz_race(_r):
+            au_nz_races.append(_r)
+        else:
+            skipped_intl += 1
+            _r_uid = _r.get("race_uid") or "(no uid)"
+            _r_country = (_r.get("country") or _r.get("state") or "unknown").strip().lower()
+            log.info(
+                f"[FORMFAV] SKIPPED (international race: country={_r_country!r}, "
+                f"FormFav supports AU/NZ only) race_uid={_r_uid!r}"
+            )
+
     log.info(
         f"data_engine.formfav_sync: date={td} "
         f"total_races={len(races)} au_nz_eligible={len(au_nz_races)} "
@@ -858,11 +869,28 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
 
         mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
 
+        # Per-race validation — skip races with missing required fields.
+        if not track:
+            log.info(
+                f"[FORMFAV] SKIPPED (missing track) race_uid={race_uid!r}"
+            )
+            continue
+        if not race_num:
+            log.info(
+                f"[FORMFAV] SKIPPED (missing race number) race_uid={race_uid!r}"
+            )
+            continue
+        if ff_code not in ff.RACE_CODE_MAP:
+            log.info(
+                f"[FORMFAV] SKIPPED (invalid race code: {ff_code!r}) race_uid={race_uid!r}"
+            )
+            continue
+
         log.info(
-            f"data_engine.formfav_sync: REQUEST "
-            f"track={track!r} country={ff_country!r} race_num={race_num} "
-            f"code={ff_code!r} mapped_race_code={mapped_race_code!r} "
-            f"race_uid={race_uid!r}"
+            f"[FORMFAV] CALLED url=https://api.formfav.com/v1/form "
+            f"track={track!r} race={race_num} "
+            f"race_code={mapped_race_code!r} country={ff_country!r} "
+            f"date={race_date!r} race_uid={race_uid!r}"
         )
 
         try:
@@ -940,7 +968,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                     race_runners_enriched += 1
 
             log.info(
-                f"data_engine.formfav_sync: ENRICHED "
+                f"[FORMFAV] SUCCESS race_uid={race_uid!r} "
                 f"track={track!r} race_num={race_num} "
                 f"runners_enriched={race_runners_enriched}"
             )
@@ -956,7 +984,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 except Exception:
                     pass
             log.warning(
-                f"data_engine.formfav_sync: FAILED request — "
+                f"[FORMFAV] FAILED race_uid={race_uid!r} "
                 f"track={track!r} race_num={race_num} code={ff_code!r} "
                 f"country={ff_country!r} status={status_code} "
                 f"response_body={resp_body!r} error={e}"
