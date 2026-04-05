@@ -241,12 +241,47 @@ class UsersRepo:
 
     @staticmethod
     def set_permission(user_id: str, page: str, allowed: bool) -> bool:
+        """Grant or revoke a single page in the user's effective permissions array.
+
+        Aligns with the canonical array-based user_permissions design used by
+        users.py (granted[], revoked[], effective[]) on_conflict="user_id".
+        """
+        rows = safe_execute(
+            lambda: get_client()
+                .table(resolve_table(TABLE_USER_PERMS))
+                .select("granted,revoked,effective")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+                .data,
+            default=[],
+            context="UsersRepo.set_permission.read",
+        ) or []
+        row = rows[0] if len(rows) > 0 else {}
+        granted      = list(row.get("granted") or [])
+        revoked_list = list(row.get("revoked") or [])
+        if allowed:
+            if page not in granted:
+                granted.append(page)
+            if page in revoked_list:
+                revoked_list.remove(page)
+        else:
+            if page in granted:
+                granted.remove(page)
+            if page not in revoked_list:
+                revoked_list.append(page)
+        effective = sorted(set(granted) - set(revoked_list))
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_PERMS))
                 .upsert(
-                    {"user_id": user_id, "page": page, "can_view": allowed, "can_edit": allowed},
-                    on_conflict="user_id,page",
+                    {
+                        "user_id":   user_id,
+                        "granted":   granted,
+                        "revoked":   revoked_list,
+                        "effective": effective,
+                    },
+                    on_conflict="user_id",
                 )
                 .execute()
                 .data,
@@ -266,7 +301,7 @@ class UsersRepo:
                 .table(resolve_table(TABLE_USER_SESSIONS))
                 .insert({
                     "user_id":    user_id,
-                    "token":      token_hash,
+                    "token_jti":  token_hash,
                     "ip_address": ip,
                     "expires_at": expires.isoformat(),
                     "created_at": _now(),
