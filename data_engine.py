@@ -655,9 +655,6 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
     Does NOT write to official tables.
 
     Returns enriched race dict (provisional, not stored as official truth).
-    Race-level paceScenario is stored under 'formfav_pace_scenario'.
-    Runner-level enrichment (speedMap, decorators, classProfile, raceClassFit)
-    is stored under 'runners_enrichment' keyed by runner name.
     """
     ff = _get_formfav()
     if not ff.is_enabled():
@@ -677,27 +674,6 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
 
         # Guard: FormFav cannot overwrite OddsPro authoritative fields
         enriched = guard_formfav_overwrite(race, provisional)
-
-        # Preserve race-level paceScenario explicitly at a dedicated key
-        if ff_race.paceScenario:
-            enriched["formfav_pace_scenario"] = ff_race.paceScenario
-
-        # Build per-runner enrichment: full speedMap object, full decorators array,
-        # separate classProfile and raceClassFit — nothing flattened here
-        runners_enrichment: dict[str, Any] = {}
-        for r in ff_runners:
-            runner_name = (r.name or "").strip()
-            if not runner_name:
-                continue
-            runners_enrichment[runner_name] = {
-                "speedMap": r.speedMap,          # full object: {runningStyle, earlySpeedIndex, settlingPosition}
-                "decorators": r.decorators,       # full array
-                "classProfile": r.classProfile,   # stored separately
-                "raceClassFit": r.raceClassFit,   # stored separately
-            }
-        if runners_enrichment:
-            enriched["runners_enrichment"] = runners_enrichment
-
         log.debug(f"data_engine: FormFav overlay applied to {race_uid}")
         return enriched
 
