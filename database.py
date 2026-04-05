@@ -234,6 +234,10 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
     if not runners:
         return 0
 
+    # Per-race counter used only when all of box_num/barrier/number are absent.
+    # Fallback values start at 9001 to avoid collisions with real stall/box numbers.
+    _race_fallback_seq: dict[str, int] = {}
+
     rows = []
     for r in runners:
         race_uid = r.get("race_uid") or ""
@@ -260,11 +264,16 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
                 box_num = None
 
         if box_num is None:
-            log.warning(
-                f"database.upsert_runners: skipping runner missing box_num/barrier/number "
-                f"(race_uid={race_uid!r}, name={r.get('name')!r})"
+            # Generate a stable fallback box_num so no runner is ever skipped.
+            # Use 9000 + position within this race's fallback sequence to avoid
+            # conflicts with real barrier/box numbers (which are never > a few dozen).
+            _race_fallback_seq[race_uid] = _race_fallback_seq.get(race_uid, 0) + 1
+            box_num = 9000 + _race_fallback_seq[race_uid]
+            log.info(
+                f"database.upsert_runners: runner missing box_num/barrier/number "
+                f"(race_uid={race_uid!r}, name={r.get('name')!r}) "
+                f"— assigned fallback box_num={box_num}"
             )
-            continue
         rows.append({
             "race_id": race_id_uuid,
             "race_uid": race_uid,
