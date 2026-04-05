@@ -26,7 +26,7 @@ import logging
 import threading
 from datetime import datetime, date
 
-from data_engine import full_sweep, rolling_refresh, check_results, near_jump_refresh, formfav_sync
+from data_engine import full_sweep, rolling_refresh, check_results, near_jump_refresh
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,6 @@ NEAR_JUMP_INTERVAL = 60         # 1 min — near-jump OddsPro + FormFav
 RESULT_CHECK_INTERVAL = 300     # 5 min — OddsPro result sweep
 RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
-FORMFAV_SYNC_INTERVAL = 300     # 5 min — FormFav persistent enrichment sync
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -73,15 +72,12 @@ _scheduler_status = {
     "last_result_check_result": None,
     "last_race_state_update_at": None,
     "last_health_snapshot_at": None,
-    "last_formfav_sync_at": None,
-    "last_formfav_sync_result": None,
     "last_error": None,
     "refresh_interval": REFRESH_INTERVAL,
     "near_jump_interval": NEAR_JUMP_INTERVAL,
     "result_check_interval": RESULT_CHECK_INTERVAL,
     "race_state_interval": RACE_STATE_INTERVAL,
     "health_snapshot_interval": HEALTH_SNAPSHOT_INTERVAL,
-    "formfav_sync_interval": FORMFAV_SYNC_INTERVAL,
 }
 
 
@@ -217,36 +213,6 @@ def _run_near_jump():
         return result
     finally:
         _near_jump_lock.release()
-
-
-_formfav_sync_lock = threading.Lock()
-
-
-def _run_formfav_sync():
-    """FormFav persistent enrichment sync — skipped if already running."""
-    acquired = _formfav_sync_lock.acquire(blocking=False)
-    if not acquired:
-        log.debug("FormFav sync still running — skipping this cycle")
-        return {"ok": False, "reason": "cycle_already_running"}
-
-    try:
-        log.debug("Running FormFav sync...")
-        result = formfav_sync()
-        ok = result.get("ok", False)
-        skipped = result.get("skipped", False)
-        if ok and not skipped and result.get("races_enriched", 0) > 0:
-            log.info(f"FormFav sync: {result}")
-
-        _set_status(
-            last_formfav_sync_at=_utc_now(),
-            last_formfav_sync_result=result,
-        )
-        return result
-    except Exception as e:
-        log.warning(f"FormFav sync failed (non-fatal): {e}")
-        return {"ok": False, "error": str(e)}
-    finally:
-        _formfav_sync_lock.release()
 
 
 def _run_result_check():
@@ -401,7 +367,6 @@ def run_scheduler():
     last_result_check = now
     last_race_state = now
     last_health_snapshot = now
-    last_formfav_sync = now
 
     if FULL_SWEEP_ON_START:
         try:
@@ -413,7 +378,6 @@ def run_scheduler():
             last_result_check = now
             last_race_state = now
             last_health_snapshot = now
-            last_formfav_sync = now
         except Exception as e:
             log.error(f"Initial full sweep failed: {e}")
             _set_status(
@@ -451,10 +415,6 @@ def run_scheduler():
             if now - last_health_snapshot >= HEALTH_SNAPSHOT_INTERVAL:
                 _run_health_snapshot()
                 last_health_snapshot = now
-
-            if now - last_formfav_sync >= FORMFAV_SYNC_INTERVAL:
-                _run_formfav_sync()
-                last_formfav_sync = now
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")
