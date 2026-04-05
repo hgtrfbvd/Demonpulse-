@@ -20,6 +20,97 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# MEETING UPSERT / QUERY
+# ---------------------------------------------------------------------------
+
+def upsert_meeting(meeting: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Insert or update a meeting record in meetings.
+    Conflict key: (date, track, code) — canonical per 001_canonical_schema.sql.
+    Only OddsPro-sourced records should be written here as authoritative truth.
+    """
+    track = meeting.get("track") or ""
+    code = meeting.get("code") or "GREYHOUND"
+    if not track:
+        log.warning("database.upsert_meeting: skipping row missing track")
+        return None
+
+    payload = {
+        "date":        meeting.get("date") or date.today().isoformat(),
+        "track":       track,
+        "code":        code,
+        "state":       meeting.get("state") or "",
+        "country":     meeting.get("country") or "AUS",
+        "weather":     meeting.get("weather") or "",
+        "rail":        meeting.get("rail") or "",
+        "track_cond":  meeting.get("track_cond") or "",
+        "race_count":  int(meeting.get("race_count") or 0),
+        "source":      meeting.get("source") or "oddspro",
+        "updated_at":  datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = safe_query(
+        lambda: get_db()
+        .table(T("meetings"))
+        .upsert(payload, on_conflict="date,track,code")
+        .execute()
+        .data
+    )
+    if result:
+        log.debug(f"database: upserted meeting {track}/{code}")
+        return result[0] if isinstance(result, list) else result
+    return None
+
+
+def get_meeting(meeting_date: str, track: str, code: str) -> dict[str, Any] | None:
+    """Fetch a meeting record by (date, track, code)."""
+    result = safe_query(
+        lambda: get_db()
+        .table(T("meetings"))
+        .select("*")
+        .eq("date", meeting_date)
+        .eq("track", track)
+        .eq("code", code)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return (result or [None])[0]
+
+
+# ---------------------------------------------------------------------------
+# SOURCE LOG
+# ---------------------------------------------------------------------------
+
+def write_source_log(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Write a data-source call record to source_log.
+    Called by ingestion paths (data_engine, connectors) to log every
+    outbound HTTP request made to OddsPro or other data sources.
+    """
+    payload = {
+        "date":          entry.get("date") or date.today().isoformat(),
+        "call_num":      entry.get("call_num"),
+        "url":           entry.get("url") or "",
+        "method":        entry.get("method") or "GET",
+        "status":        entry.get("status") or "",
+        "grv_detected":  bool(entry.get("grv_detected")),
+        "rows_returned": entry.get("rows_returned"),
+        "created_at":    datetime.now(timezone.utc).isoformat(),
+    }
+    result = safe_query(
+        lambda: get_db()
+        .table(T("source_log"))
+        .insert(payload)
+        .execute()
+        .data
+    )
+    if result:
+        return result[0] if isinstance(result, list) else result
+    return None
+
+
+# ---------------------------------------------------------------------------
 # RACE UPSERT / QUERY
 # ---------------------------------------------------------------------------
 
@@ -179,6 +270,20 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
         .data
     )
     return len(result) if result else 0
+
+
+def get_runners_for_race(race_uid: str) -> list[dict[str, Any]]:
+    """Fetch all runners for a race by race_uid."""
+    return safe_query(
+        lambda: get_db()
+        .table(T("today_runners"))
+        .select("*")
+        .eq("race_uid", race_uid)
+        .order("box_num")
+        .execute()
+        .data,
+        [],
+    ) or []
 
 
 # ---------------------------------------------------------------------------
