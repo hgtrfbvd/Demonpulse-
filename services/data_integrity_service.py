@@ -182,7 +182,7 @@ class DataIntegrityService:
         results = safe_execute(
             lambda: get_client()
                 .table(resolve_table("results_log"))
-                .select("race_uid,box_num")
+                .select("race_uid")
                 .execute()
                 .data,
             default=[],
@@ -332,10 +332,11 @@ class DataIntegrityService:
 
     @staticmethod
     def validate_result_payload(result: dict) -> list[str]:
-        """Validate a result dict before write."""
+        """Validate a result dict before write to results_log.
+        results_log is a race-level summary requiring: date, track, race_num, code.
+        """
         errors: list[str] = []
-        if not result.get("race_uid"):
-            errors.append("Missing required field: race_uid")
-        if result.get("box_num") is None:
-            errors.append("Missing required field: box_num")
+        for field in ("date", "track", "race_num", "code"):
+            if not result.get(field) and result.get(field) != 0:
+                errors.append(f"Missing required field: {field}")
         return errors
