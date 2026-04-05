@@ -54,7 +54,7 @@ class LogsRepo:
                 "event_type": event_type,
                 "resource":   resource,
                 "data":       data or {},
-                "ip":         ip,
+                "ip_address": ip,
                 "severity":   severity,
                 "created_at": _now(),
             }).execute()
