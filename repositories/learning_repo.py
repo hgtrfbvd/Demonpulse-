@@ -51,7 +51,7 @@ class LearningRepo:
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(_TABLE))
-                .insert(payload)
+                .upsert(payload, on_conflict="prediction_snapshot_id")
                 .execute()
                 .data,
             default=None,
@@ -141,20 +141,23 @@ class LearningRepo:
     @staticmethod
     def _build_payload(row: dict[str, Any]) -> dict:
         return {
-            "prediction_snapshot_id": str(row["prediction_snapshot_id"]),
-            "race_uid":               str(row["race_uid"]),
-            "model_version":          row.get("model_version", "baseline_v1"),
-            "date":                   row.get("date"),
-            "track":                  row.get("track", ""),
-            "race_code":              row.get("race_code", "GREYHOUND"),
-            "predicted_winner":       row.get("predicted_winner", ""),
-            "actual_winner":          row.get("actual_winner", ""),
-            "winner_hit":             bool(row.get("winner_hit", False)),
-            "top2_hit":               bool(row.get("top2_hit", False)),
-            "top3_hit":               bool(row.get("top3_hit", False)),
-            "score_at_prediction":    _to_numeric(row.get("score_at_prediction")),
-            "win_price":              _to_numeric(row.get("win_price")),
-            "pl_outcome":             _to_numeric(row.get("pl_outcome")),
+            "prediction_snapshot_id":   str(row["prediction_snapshot_id"]),
+            "race_uid":                 str(row["race_uid"]),
+            "oddspro_race_id":          row.get("oddspro_race_id", ""),
+            "model_version":            row.get("model_version", "baseline_v1"),
+            "predicted_winner":         row.get("predicted_winner", ""),
+            "actual_winner":            row.get("actual_winner", ""),
+            "winner_hit":               bool(row.get("winner_hit", False)),
+            "top2_hit":                 bool(row.get("top2_hit", False)),
+            "top3_hit":                 bool(row.get("top3_hit", False)),
+            "predicted_rank_of_winner": row.get("predicted_rank_of_winner"),
+            "winner_odds":              _to_numeric(row.get("winner_odds") or row.get("win_price")),
+            "used_enrichment":          bool(row.get("used_enrichment", False)),
+            "disagreement_score":       _to_numeric(row.get("disagreement_score")),
+            "formfav_rank":             row.get("formfav_rank"),
+            "your_rank":                row.get("your_rank"),
+            "evaluation_source":        row.get("evaluation_source", "oddspro"),
+            "evaluated_at":             row.get("evaluated_at") or _now(),
         }
 
 

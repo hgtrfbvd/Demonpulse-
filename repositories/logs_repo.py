@@ -54,7 +54,7 @@ class LogsRepo:
                 "event_type": event_type,
                 "resource":   resource,
                 "data":       data or {},
-                "ip_address": ip,
+                "ip":         ip,
                 "severity":   severity,
                 "created_at": _now(),
             }).execute()
@@ -97,15 +97,11 @@ class LogsRepo:
             lambda: get_client()
                 .table(resolve_table(TABLE_SOURCE_LOG))
                 .insert({
-                    "source":           source,
-                    "endpoint":         endpoint,
-                    "method":           method,
-                    "status_code":      status_code,
-                    "response_ms":      response_ms,
-                    "success":          success,
-                    "error_msg":        error_msg or None,
-                    "records_fetched":  records_fetched,
-                    "created_at":       _now(),
+                    "url":           endpoint,
+                    "method":        method,
+                    "status":        str(status_code),
+                    "rows_returned": records_fetched,
+                    "created_at":    _now(),
                 })
                 .execute(),
             context="LogsRepo.log_source_call",
@@ -125,10 +121,11 @@ class LogsRepo:
             lambda: get_client()
                 .table(resolve_table(TABLE_ACTIVITY_LOG))
                 .insert({
-                    "event":      event_type,
-                    "resource":   description,
-                    "detail":     data or {},
-                    "created_at": _now(),
+                    "event_type":  event_type,
+                    "description": description,
+                    "session_id":  session_id,
+                    "data":        data or {},
+                    "created_at":  _now(),
                 })
                 .execute(),
             context="LogsRepo.log_activity",
