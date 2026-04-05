@@ -409,11 +409,6 @@ CREATE TABLE IF NOT EXISTS users (
                                 CHECK (role IN ('admin','operator','viewer')),
     active          BOOLEAN                 DEFAULT TRUE,
     last_login      TIMESTAMPTZ,
-    login_count     INTEGER                 DEFAULT 0,
-    last_ip         TEXT,
-    display_name    TEXT,
-    email           TEXT,
-    created_by      TEXT,
     created_at      TIMESTAMPTZ             DEFAULT NOW(),
     updated_at      TIMESTAMPTZ             DEFAULT NOW()
 );
@@ -422,13 +417,8 @@ CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role     ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_active   ON users(active);
 
--- Backfill extended user columns (added in migration 004)
-ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS email        TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by   TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count  INTEGER DEFAULT 0;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ip      TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at   TIMESTAMPTZ DEFAULT NOW();
+-- Ensure updated_at exists on databases created from older migrations
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ----------------------------------------------------------------
 -- user_accounts
@@ -455,29 +445,30 @@ CREATE INDEX IF NOT EXISTS idx_user_accounts_user_id ON user_accounts(user_id);
 
 -- ----------------------------------------------------------------
 -- user_permissions
--- Per-user permission overrides on top of role defaults.
+-- Per-user page/feature access control (row-per-page model).
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_permissions (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID        NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    granted     TEXT[]                  DEFAULT '{}',
-    revoked     TEXT[]                  DEFAULT '{}',
-    effective   TEXT[]                  DEFAULT '{}',
-    updated_at  TIMESTAMPTZ             DEFAULT NOW(),
-    updated_by  TEXT
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    page        TEXT        NOT NULL,
+    can_view    BOOLEAN                 DEFAULT TRUE,
+    can_edit    BOOLEAN                 DEFAULT FALSE,
+    granted_by  UUID,
+    granted_at  TIMESTAMPTZ             DEFAULT NOW(),
+    UNIQUE (user_id, page)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions(user_id);
 
 -- ----------------------------------------------------------------
 -- user_sessions
--- Active JWT token tracking (enables force-logout).
--- token_jti maps 1:1 to a JWT "jti" claim.
+-- Active token tracking (enables force-logout).
+-- token stores the session identity (jti or hash) for revocation checks.
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_sessions (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_jti   TEXT        NOT NULL UNIQUE,
+    token       TEXT        NOT NULL UNIQUE,
     ip_address  TEXT,
     user_agent  TEXT,
     created_at  TIMESTAMPTZ             DEFAULT NOW(),
@@ -487,9 +478,9 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     revoked_by  TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id   ON user_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_token_jti ON user_sessions(token_jti);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_revoked   ON user_sessions(revoked, expires_at);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_token   ON user_sessions(token);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_revoked ON user_sessions(revoked, expires_at);
 
 -- ----------------------------------------------------------------
 -- user_activity
@@ -1436,17 +1427,13 @@ CREATE INDEX IF NOT EXISTS idx_test_source_log_date     ON test_source_log(date)
 -- ================================================================
 
 -- ----------------------------------------------------------------
--- Function: auto-create user_accounts + user_permissions on user INSERT
+-- Function: auto-create user_accounts on user INSERT
 -- ----------------------------------------------------------------
 CREATE OR REPLACE FUNCTION create_user_account()
 RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO user_accounts (user_id)
     VALUES (NEW.id)
-    ON CONFLICT (user_id) DO NOTHING;
-
-    INSERT INTO user_permissions (user_id, effective)
-    VALUES (NEW.id, '{}')
     ON CONFLICT (user_id) DO NOTHING;
 
     RETURN NEW;
@@ -1461,32 +1448,13 @@ CREATE TRIGGER trg_create_user_account
     AFTER INSERT ON users
     FOR EACH ROW EXECUTE FUNCTION create_user_account();
 
--- ----------------------------------------------------------------
--- Function: atomic login counter increment (avoids read-modify-write race)
--- ----------------------------------------------------------------
-CREATE OR REPLACE FUNCTION increment_login_count(p_user_id UUID)
-RETURNS void AS $$
-BEGIN
-    UPDATE users
-    SET login_count = COALESCE(login_count, 0) + 1
-    WHERE id = p_user_id;
-END;
-$$ LANGUAGE plpgsql;
-
-
 -- ================================================================
--- SECTION 14: BACKFILL — existing users missing account/permission rows
+-- SECTION 14: BACKFILL — existing users missing account rows
 -- ================================================================
 
 INSERT INTO user_accounts (user_id)
 SELECT u.id FROM users u
 WHERE NOT EXISTS (SELECT 1 FROM user_accounts a WHERE a.user_id = u.id)
-ON CONFLICT DO NOTHING;
-
-INSERT INTO user_permissions (user_id, effective)
-SELECT u.id, '{}'
-FROM users u
-WHERE NOT EXISTS (SELECT 1 FROM user_permissions p WHERE p.user_id = u.id)
 ON CONFLICT DO NOTHING;
 
 
@@ -1510,8 +1478,9 @@ ON CONFLICT DO NOTHING;
 --   prediction_snapshots — added has_enrichment, source_type (Phase 4.6)
 --   learning_evaluations — added used_enrichment, disagreement_score,
 --                          formfav_rank, your_rank (Phase 4.6)
---   users            — added display_name, email, created_by, login_count,
---                      last_ip, updated_at
+--   users            — updated_at only (display_name, email, created_by,
+--                      login_count, last_ip removed: only referenced by
+--                      stray users.py functions with no live callers)
 --   bet_log          — added user_id, race_uid, placed_by, signal, exotic_type;
 --                      backfills moved before their indexes
 --   source_log       — added call_num
