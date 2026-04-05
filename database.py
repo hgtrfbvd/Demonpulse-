@@ -136,13 +136,21 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
 
     rows = []
     for r in runners:
+        race_uid = r.get("race_uid") or ""
+        box_num = r.get("box_num")
+        if not race_uid or box_num is None:
+            log.warning(
+                f"database.upsert_runners: skipping runner missing race_uid/box_num "
+                f"(name={r.get('name')!r})"
+            )
+            continue
         rows.append({
             "race_id": race_id_uuid,
-            "race_uid": r.get("race_uid") or "",
+            "race_uid": race_uid,
             "date": r.get("date") or date.today().isoformat(),
             "track": r.get("track") or "",
             "race_num": r.get("race_num"),
-            "box_num": r.get("box_num"),
+            "box_num": box_num,
             "name": r.get("name") or "",
             "number": r.get("number"),
             "barrier": r.get("barrier"),

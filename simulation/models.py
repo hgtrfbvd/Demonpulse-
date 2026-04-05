@@ -46,11 +46,15 @@ def normalize_race_code(raw: str) -> "RaceCode":
     Raises ValueError for unknown values so callers cannot silently
     use a wrong code.
     """
-    code = RACE_CODE_ALIASES.get(raw) or RACE_CODE_ALIASES.get((raw or "").upper())
+    if raw is None:
+        raise ValueError("Race code must not be None")
+    code = RACE_CODE_ALIASES.get(raw)
+    if code is None:
+        code = RACE_CODE_ALIASES.get(raw.upper())
     if code is None:
         raise ValueError(
             f"Unknown race code '{raw}'. "
-            f"Valid values: {list(RACE_CODE_ALIASES.keys())}"
+            f"Valid values: GREYHOUND, GALLOPS (thoroughbred), HARNESS"
         )
     return code
 
