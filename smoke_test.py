@@ -874,7 +874,6 @@ def test_source_logging(mock: _MockClient) -> _Result:
         "url":           "https://oddspro.test/api/external/meetings",
         "method":        "GET",
         "status":        "200",
-        "grv_detected":  True,
         "rows_returned": 12,
     }
 
@@ -897,13 +896,12 @@ def test_source_logging(mock: _MockClient) -> _Result:
     if rows:
         row = rows[0]
         for field in ["date", "call_num", "url", "method", "status",
-                      "grv_detected", "rows_returned", "created_at"]:
+                      "rows_returned", "created_at"]:
             if field not in row:
                 r.fail(f"Silent field drop: '{field}' missing from source_log row")
         r.check(row.get("url") == "https://oddspro.test/api/external/meetings",
                 "url mismatch")
         r.check(row.get("rows_returned") == 12, "rows_returned mismatch")
-        r.check(row.get("grv_detected") is True, "grv_detected mismatch")
 
     r.detail = f"rows written to test_source_log: {len(mock.rows('test_source_log'))}"
     return r

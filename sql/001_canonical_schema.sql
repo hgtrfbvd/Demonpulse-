@@ -1103,7 +1103,6 @@ CREATE TABLE IF NOT EXISTS source_log (
     url             TEXT,
     method          TEXT,
     status          TEXT,
-    grv_detected    BOOLEAN                 DEFAULT FALSE,
     rows_returned   INTEGER,
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
