@@ -30,7 +30,7 @@ def get_all_users() -> list[dict]:
     from db import get_db, safe_query, T
     rows = safe_query(
         lambda: get_db().table(T("users"))
-                .select("id,username,display_name,email,role,active,last_login,login_count,created_at,created_by,last_ip")
+                .select("id,username,role,active,last_login,created_at")
                 .order("created_at").execute().data, []
     ) or []
     # Attach bankroll summary
@@ -76,8 +76,6 @@ def create_user_full(
     username: str,
     password: str,
     role: str = "operator",
-    display_name: str = "",
-    email: str = "",
     active: bool = True,
     starting_bankroll: float = 1000.0,
     creator_username: str = "admin",
@@ -98,32 +96,18 @@ def create_user_full(
     new_user = create_user(username, password, role)
     uid = new_user["id"]
 
-    # Set extended fields
-    safe_query(lambda: get_db().table(T("users")).update({
-        "display_name": display_name or username,
-        "email": email,
-        "active": active,
-        "created_by": creator_username,
-        "updated_at": datetime.utcnow().isoformat(),
-    }).eq("id", uid).execute())
+    # Set active flag if different from default
+    if not active:
+        safe_query(lambda: get_db().table(T("users")).update({
+            "active":     active,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", uid).execute())
 
     # Upsert user_accounts — safe whether trigger has fired or not
-    # on_conflict="user_id" handles both INSERT (trigger didn't fire yet) and UPDATE
     safe_query(lambda: get_db().table(T("user_accounts")).upsert({
         "user_id": uid,
         "bankroll": starting_bankroll,
         "peak_bank": starting_bankroll,
-    }, on_conflict="user_id").execute())
-
-    # Compute effective permissions
-    effective = list(ROLE_DEFAULTS.get(role, set()))
-    safe_query(lambda: get_db().table(T("user_permissions")).upsert({
-        "user_id": uid,
-        "granted": [],
-        "revoked": [],
-        "effective": effective,
-        "updated_at": datetime.utcnow().isoformat(),
-        "updated_by": creator_username,
     }, on_conflict="user_id").execute())
 
     log_event(None, creator_username, "USER_CREATE", f"users/{uid}", data={
@@ -133,7 +117,7 @@ def create_user_full(
     # Seed activity
     _record_activity(uid, "ACCOUNT_CREATED", {"created_by": creator_username, "role": role})
 
-    return {**new_user, "display_name": display_name or username, "active": active}
+    return {**new_user, "active": active}
 
 
 def update_user_profile(
@@ -145,7 +129,7 @@ def update_user_profile(
     from db import get_db, safe_query, T
     from audit import log_event
 
-    allowed = {"username", "display_name", "email", "role", "active"}
+    allowed = {"username", "role", "active"}
     changes = {k: v for k, v in kwargs.items() if k in allowed}
     if not changes:
         return {}
@@ -233,7 +217,7 @@ def register_session(user_id: str, jti: str, ip: str | None, user_agent: str | N
     expires_at = (datetime.utcnow() + timedelta(seconds=ttl_seconds)).isoformat()
     safe_query(lambda: get_db().table(T("user_sessions")).insert({
         "user_id":    user_id,
-        "token_jti":  jti,
+        "token":      jti,
         "ip_address": ip,
         "user_agent": user_agent,
         "expires_at": expires_at,
@@ -246,7 +230,7 @@ def is_session_revoked(jti: str) -> bool:
     from db import get_db, safe_query, T
     row = safe_query(
         lambda: get_db().table(T("user_sessions")).select("revoked")
-                .eq("token_jti", jti).single().execute().data
+                .eq("token", jti).single().execute().data
     )
     if not row:
         return False  # Unknown token — allow (backwards compat)
@@ -282,76 +266,59 @@ def get_active_sessions(user_id: str) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────
 def get_user_permissions(user_id: str) -> dict:
     from db import get_db, safe_query, T
-    row = safe_query(
-        lambda: get_db().table(T("user_permissions")).select("*")
-                .eq("user_id", user_id).single().execute().data
-    ) or {}
-    return row
+    rows = safe_query(
+        lambda: get_db().table(T("user_permissions")).select("page,can_view,can_edit")
+                .eq("user_id", user_id).execute().data
+    ) or []
+    return {"permissions": rows}
 
 
-def update_user_permissions(user_id: str, granted: list, revoked: list, actor_username: str) -> dict:
+def update_user_permissions(user_id: str, pages: dict, actor_username: str) -> dict:
     """
-    Update per-user permission overrides.
-    effective = (role_defaults ∪ granted) ∖ revoked
+    Update per-user page permissions.
+    pages = {page_name: bool}  — True grants view+edit, False revokes.
     """
     from db import get_db, safe_query, T
     from audit import log_event
 
-    # Get current role
-    user = safe_query(
-        lambda: get_db().table(T("users")).select("role").eq("id", user_id).single().execute().data
-    ) or {}
-    role = user.get("role", "viewer")
-    base = set(ROLE_DEFAULTS.get(role, set()))
-    effective = sorted((base | set(granted)) - set(revoked))
-
-    safe_query(lambda: get_db().table(T("user_permissions")).upsert({
-        "user_id":    user_id,
-        "granted":    list(set(granted)),
-        "revoked":    list(set(revoked)),
-        "effective":  effective,
-        "updated_at": datetime.utcnow().isoformat(),
-        "updated_by": actor_username,
-    }, on_conflict="user_id").execute())
+    # Build row list before looping to avoid lambda closure over loop variables
+    perm_rows = [
+        {"user_id": user_id, "page": page, "can_view": allowed, "can_edit": allowed}
+        for page, allowed in pages.items()
+    ]
+    for row in perm_rows:
+        safe_query(
+            lambda r=row: get_db().table(T("user_permissions"))
+                .upsert(r, on_conflict="user_id,page").execute()
+        )
 
     log_event(None, actor_username, "PERMISSIONS_CHANGED", f"users/{user_id}",
-              data={"granted": granted, "revoked": revoked, "effective": effective}, severity="WARN")
+              data={"pages": pages}, severity="WARN")
     _record_activity(user_id, "PERMISSIONS_CHANGED",
-                     {"granted": granted, "revoked": revoked, "changed_by": actor_username})
-    return {"granted": granted, "revoked": revoked, "effective": effective}
+                     {"pages": pages, "changed_by": actor_username})
+    return {"pages": pages}
 
 
 def _recompute_permissions(user_id: str, new_role: str, actor_username: str):
-    """After role change, recompute effective permissions preserving overrides."""
+    """After role change, replace all per-user permission rows with new role defaults."""
     from db import get_db, safe_query, T
-    row = safe_query(
-        lambda: get_db().table(T("user_permissions")).select("granted,revoked")
-                .eq("user_id", user_id).single().execute().data
-    ) or {}
-    granted = row.get("granted") or []
-    revoked = row.get("revoked") or []
-    base = set(ROLE_DEFAULTS.get(new_role, set()))
-    effective = sorted((base | set(granted)) - set(revoked))
-    safe_query(lambda: get_db().table(T("user_permissions")).upsert({
-        "user_id": user_id, "granted": granted, "revoked": revoked,
-        "effective": effective,
-        "updated_at": datetime.utcnow().isoformat(),
-        "updated_by": actor_username,
-    }, on_conflict="user_id").execute())
+    # Delete existing overrides; role defaults now apply via resolve_permissions
+    safe_query(lambda: get_db().table(T("user_permissions"))
+               .delete().eq("user_id", user_id).execute())
 
 
 def resolve_permissions(user_id: str, role: str) -> set:
     """
     Resolve effective permissions for a user.
-    Priority: user_permissions.effective (if exists) → role defaults.
+    Priority: user_permissions rows (if any) → role defaults.
     """
     from db import get_db, safe_query, T
-    row = safe_query(
-        lambda: get_db().table(T("user_permissions")).select("effective")
-                .eq("user_id", user_id).single().execute().data
+    rows = safe_query(
+        lambda: get_db().table(T("user_permissions")).select("page,can_view")
+                .eq("user_id", user_id).execute().data
     )
-    if row and row.get("effective"):
-        return set(row["effective"])
+    if rows:
+        return {r["page"] for r in rows if r.get("can_view")}
     return set(ROLE_DEFAULTS.get(role, set()))
 
 
