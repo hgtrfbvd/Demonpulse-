@@ -797,6 +797,66 @@ CREATE TABLE IF NOT EXISTS exotic_suggestions (
 CREATE INDEX IF NOT EXISTS idx_exotic_sugg_race ON exotic_suggestions(race_uid);
 
 -- ================================================================
+-- SECTION 8B: ADD MISSING COLUMNS TO EXISTING TABLES
+-- ================================================================
+-- These ALTER TABLE statements are idempotent guards.  If the table
+-- was created by an earlier schema version that lacked a column, this
+-- block adds it safely.  When the column already exists the statement
+-- is a no-op (IF NOT EXISTS).
+-- ----------------------------------------------------------------
+
+-- today_races — columns added in V8 rebuild
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS race_uid             TEXT        NOT NULL DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS oddspro_race_id      TEXT        NOT NULL DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS block_code           TEXT        NOT NULL DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS source               TEXT        NOT NULL DEFAULT 'oddspro';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS source_url           TEXT                 DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS time_status          TEXT        NOT NULL DEFAULT 'PARTIAL';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS condition            TEXT                 DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS race_name            TEXT                 DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS updated_at           TIMESTAMPTZ          DEFAULT NOW();
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS completed_at         TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS completeness_score   INTEGER              DEFAULT 0;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS completeness_quality TEXT                 DEFAULT 'LOW';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS race_hash            TEXT                 DEFAULT '';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS lifecycle_state      TEXT                 DEFAULT 'fetched';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS normalized_at        TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS scored_at            TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS packet_built_at      TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS ai_reviewed_at       TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS bet_logged_at        TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS result_captured_at   TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS learned_at           TIMESTAMPTZ;
+
+-- today_runners — columns added in V8 rebuild
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS race_uid          TEXT        NOT NULL DEFAULT '';
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS oddspro_race_id   TEXT                 DEFAULT '';
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS number            INTEGER;
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS barrier           INTEGER;
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS jockey            TEXT                 DEFAULT '';
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS driver            TEXT                 DEFAULT '';
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS price             NUMERIC;
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS rating            NUMERIC;
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS source_confidence TEXT                 DEFAULT '';
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS scratch_reason    TEXT                 DEFAULT '';
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ          DEFAULT NOW();
+
+-- results_log — race_uid added in V8
+ALTER TABLE results_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
+-- system_state — tuning columns added in V8
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS confidence_threshold NUMERIC(4,2) DEFAULT 0.65;
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS ev_threshold         NUMERIC(4,2) DEFAULT 0.08;
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS staking_mode         TEXT         DEFAULT 'KELLY';
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS tempo_weight         NUMERIC(4,2) DEFAULT 1.0;
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS traffic_penalty      NUMERIC(4,2) DEFAULT 0.8;
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS closer_boost         NUMERIC(4,2) DEFAULT 1.1;
+
+-- Indexes for oddspro_race_id (no-op if already present)
+CREATE INDEX IF NOT EXISTS idx_today_races_oddspro_id   ON today_races(oddspro_race_id);
+CREATE INDEX IF NOT EXISTS idx_today_runners_oddspro_id ON today_runners(oddspro_race_id);
+
+-- ================================================================
 -- SECTION 9: ADDITIONAL INDEXES & CONFLICT CONSTRAINTS
 -- ================================================================
 
