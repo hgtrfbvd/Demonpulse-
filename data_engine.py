@@ -2,17 +2,16 @@
 data_engine.py - DemonPulse Data Engine
 =========================================
 OddsPro is the PRIMARY and AUTHORITATIVE source of record.
-FormFav is a PERSISTENT SECONDARY ENRICHMENT source — stored in the database
-in formfav_race_enrichment and formfav_runner_enrichment tables.
+FormFav is a PROVISIONAL OVERLAY only — never used for daily bootstrap
+or official board state.
 
 Core functions:
   full_sweep()          - OddsPro daily bootstrap via /api/external/meetings
                           (with /api/meetings discovery fallback for meeting ID resolution)
   rolling_refresh()     - OddsPro meeting/race refresh via /api/external/meeting/:id
-  near_jump_refresh()   - OddsPro near-jump refresh + FormFav enrichment sync
+  near_jump_refresh()   - OddsPro near-jump refresh + FormFav provisional overlay
   check_results()       - OddsPro result sweep via /api/external/results
-  formfav_sync()        - FormFav enrichment sync for all active races (persistent DB write)
-  formfav_overlay()     - FormFav provisional enrichment (backward compat, near-jump only)
+  formfav_overlay()     - FormFav provisional enrichment (near-jump only)
   get_provisional_overlays() - Return current provisional overlay store
 
 Architecture rules enforced here:
@@ -20,8 +19,7 @@ Architecture rules enforced here:
   - OddsPro builds official board state (rolling_refresh, near_jump_refresh)
   - OddsPro-confirmed data is official truth
   - FormFav never calls for bootstrap, never overwrites official fields
-  - FormFav enrichment is stored in dedicated secondary tables (formfav_*)
-  - FormFav overlays also stored in-memory for low-latency board enrichment
+  - FormFav overlays stored in-memory separately from official tables
   - NTJ calculated from stored jump_time (race_status.compute_ntj)
   - Blocked races tracked explicitly in database
 """
@@ -119,9 +117,9 @@ def _get_formfav() -> "FormFavConnector":  # noqa: F821
         from connectors.formfav_connector import FormFavConnector
         _formfav_connector = FormFavConnector()
         if not _formfav_connector.is_enabled():
-            log.info("FormFav connector not enabled (missing API key) — enrichment inactive")
+            log.info("FormFav connector not enabled (missing API key) — overlay inactive")
         else:
-            log.info("FormFav connector loaded (persistent secondary enrichment source)")
+            log.info("FormFav connector loaded (provisional overlay only)")
     return _formfav_connector
 
 
@@ -481,26 +479,16 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
         log.error(f"rolling_refresh: outer error: {e}")
         return {"ok": False, "error": "Data engine error", "date": today}
 
-    # After OddsPro broad refresh, sync FormFav enrichment for all active races.
-    # This is non-blocking: a failure here does not affect the OddsPro result.
-    formfav_result: dict[str, Any] = {}
-    try:
-        formfav_result = formfav_sync(today)
-    except Exception as ff_err:
-        log.warning(f"rolling_refresh: formfav_sync failed (non-fatal): {ff_err}")
-
     log.info(
         f"rolling_refresh: {races_refreshed} races refreshed, "
-        f"{overlay_count} FormFav overlays applied, "
-        f"formfav_enriched={formfav_result.get('races_enriched', 0)}"
+        f"{overlay_count} FormFav overlays applied"
     )
     return {
         "ok": True,
         "date": today,
         "races_refreshed": races_refreshed,
         "formfav_overlays": overlay_count,
-        "formfav_enriched": formfav_result.get("races_enriched", 0),
-        "source": "oddspro+formfav",
+        "source": "oddspro",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -512,14 +500,13 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
 def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
     """
     Near-jump engine: refresh races with NTJ < 10 min using OddsPro,
-    then sync FormFav enrichment for near-jump races.
+    then apply FormFav provisional overlay for eligible races.
 
     Called more frequently than rolling_refresh (every ~60s).
     Only processes races identified as near-jump from stored jump_time.
 
-    FormFav enrichment is persisted to the database (formfav_race_enrichment /
-    formfav_runner_enrichment) AND stored in the in-memory overlay store for
-    low-latency board access.
+    FormFav overlay is applied ONLY here, never for non-near-jump races.
+    Overlay data is stored in the provisional store, NOT in official tables.
     """
     today = target_date or date.today().isoformat()
     conn = _get_oddspro()
@@ -533,15 +520,10 @@ def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
     near_jump_count = 0
 
     try:
-        from database import (
-            get_active_races,
-            upsert_formfav_race_enrichment,
-            upsert_formfav_runner_enrichment,
-        )
+        from database import get_active_races
         from race_status import compute_ntj, should_trigger_formfav_overlay
 
         active_races = get_active_races(today)
-        ff = _get_formfav()
 
         for stored_race in active_races:
             # Near-jump gate: only process races with NTJ < 10 min
@@ -553,8 +535,6 @@ def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
             oddspro_race_id = stored_race.get("oddspro_race_id") or ""
             if not oddspro_race_id:
                 continue
-
-            race_uid = stored_race.get("race_uid") or ""
 
             try:
                 # OddsPro authoritative refresh for near-jump race
@@ -569,7 +549,7 @@ def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
                     if integrity_ok:
                         clear_provisional_overlay_for_race(fresh_dict.get("race_uid", ""))
 
-                    # FormFav provisional overlay — backward compat
+                    # FormFav provisional overlay — near-jump eligible only
                     if should_trigger_formfav_overlay(fresh_dict):
                         enriched = formfav_overlay(
                             fresh_dict.get("race_uid", ""), fresh_dict
@@ -584,51 +564,6 @@ def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
                 log.error(
                     f"near_jump_refresh: failed for race {oddspro_race_id}: {e}"
                 )
-
-            # FormFav persistent enrichment for this near-jump race
-            if ff.is_enabled() and race_uid:
-                try:
-                    enrichment = ff.fetch_full_race_enrichment(
-                        target_date=today,
-                        track=stored_race.get("track") or "",
-                        race_num=int(stored_race.get("race_num") or 0),
-                        code=stored_race.get("code") or "GALLOPS",
-                    )
-                    if not enrichment.get("race_uid"):
-                        enrichment["race_uid"] = race_uid
-
-                    form_payload = enrichment.get("race_form") or {}
-                    upsert_formfav_race_enrichment({
-                        "race_uid":   enrichment.get("race_uid") or race_uid,
-                        "date":       today,
-                        "track":      enrichment.get("track") or stored_race.get("track"),
-                        "race_num":   enrichment.get("race_num") or stored_race.get("race_num"),
-                        "code":       enrichment.get("code") or stored_race.get("code"),
-                        "race_class": form_payload.get("raceClass") or "",
-                        "condition":  form_payload.get("condition") or "",
-                        "distance":   str(form_payload.get("distance") or ""),
-                        "speed_map":  form_payload.get("speedMap") or {},
-                        "track_bias": enrichment.get("track_bias") or {},
-                        "raw_form":   form_payload,
-                    })
-
-                    for r_name, r_data in (enrichment.get("runner_enrichment") or {}).items():
-                        upsert_formfav_runner_enrichment({
-                            "race_uid":     enrichment.get("race_uid") or race_uid,
-                            "runner_name":  r_name,
-                            "barrier":      r_data.get("barrier"),
-                            "number":       r_data.get("number"),
-                            "form_trend":   r_data.get("form_trend") or {},
-                            "runner_stats": r_data.get("stats") or {},
-                            "run_style":    r_data.get("run_style") or "",
-                            "class_fit":    r_data.get("class_fit") or {},
-                            "decorator":    r_data.get("decorator") or {},
-                            "win_prob":     r_data.get("win_prob"),
-                            "place_prob":   r_data.get("place_prob"),
-                        })
-
-                except Exception as ff_e:
-                    log.debug(f"near_jump_refresh: FormFav enrichment failed for {race_uid}: {ff_e}")
 
     except Exception as e:
         log.error(f"near_jump_refresh: outer error: {e}")
@@ -645,7 +580,7 @@ def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
         "near_jump_races": near_jump_count,
         "races_refreshed": races_refreshed,
         "formfav_overlays": overlay_count,
-        "source": "oddspro+formfav",
+        "source": "oddspro+formfav_overlay",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -709,157 +644,7 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------
-# FORMFAV PERSISTENT SECONDARY SOURCE SYNC
-# ------------------------------------------------------------
-
-def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
-    """
-    Fetch FormFav enrichment for all active races for the given date and
-    write it persistently to formfav_race_enrichment and
-    formfav_runner_enrichment tables.
-
-    This is the main FormFav ingestion function. It is NOT limited to
-    near-jump races — it runs across all active races for the day.
-
-    FormFav data is stored in dedicated secondary tables and is NEVER
-    written to today_races or today_runners (OddsPro authoritative tables).
-
-    The enrichment is later surfaced via:
-      - board_builder: loaded from DB and merged into board items
-      - /api/formfav/* API routes: direct query access
-      - AI feature builder: enrichment_guard.apply_enrichment()
-
-    Returns diagnostics:
-      races_attempted, races_enriched, races_failed, runners_enriched
-    """
-    today = target_date or date.today().isoformat()
-    ff = _get_formfav()
-
-    if not ff.is_enabled():
-        log.debug("formfav_sync: FormFav not configured — skipping")
-        return {
-            "ok": True,
-            "skipped": True,
-            "reason": "formfav_not_configured",
-            "date": today,
-        }
-
-    try:
-        from database import (
-            get_active_races,
-            upsert_formfav_race_enrichment,
-            upsert_formfav_runner_enrichment,
-        )
-    except ImportError as e:
-        log.error(f"formfav_sync: database import failed: {e}")
-        return {"ok": False, "error": str(e), "date": today}
-
-    races_attempted = 0
-    races_enriched = 0
-    races_failed = 0
-    runners_enriched = 0
-
-    try:
-        active_races = get_active_races(today)
-    except Exception as e:
-        log.error(f"formfav_sync: get_active_races failed: {e}")
-        return {"ok": False, "error": "get_active_races_failed", "date": today}
-
-    for stored_race in active_races:
-        race_uid = stored_race.get("race_uid") or ""
-        track = stored_race.get("track") or ""
-        race_num = stored_race.get("race_num")
-        code = stored_race.get("code") or "GALLOPS"
-
-        if not track or not race_num:
-            continue
-
-        races_attempted += 1
-
-        try:
-            enrichment = ff.fetch_full_race_enrichment(
-                target_date=today,
-                track=track,
-                race_num=int(race_num),
-                code=code,
-            )
-
-            # Merge in canonical race_uid from the DB record
-            if race_uid and not enrichment.get("race_uid"):
-                enrichment["race_uid"] = race_uid
-
-            # Extract race-level fields from form payload
-            form_payload = enrichment.get("race_form") or {}
-            enrichment_row = {
-                "race_uid":   enrichment.get("race_uid") or race_uid,
-                "date":       today,
-                "track":      enrichment.get("track") or track,
-                "race_num":   enrichment.get("race_num") or race_num,
-                "code":       enrichment.get("code") or code,
-                "race_class": form_payload.get("raceClass") or form_payload.get("grade") or "",
-                "condition":  form_payload.get("condition") or "",
-                "distance":   str(form_payload.get("distance") or ""),
-                "speed_map":  form_payload.get("speedMap") or form_payload.get("speed_map") or {},
-                "track_bias": enrichment.get("track_bias") or {},
-                "raw_form":   form_payload,
-            }
-            upsert_formfav_race_enrichment(enrichment_row)
-            races_enriched += 1
-
-            # Store per-runner enrichment
-            for runner_name, runner_data in (enrichment.get("runner_enrichment") or {}).items():
-                runner_row = {
-                    "race_uid":     enrichment_row["race_uid"],
-                    "runner_name":  runner_name,
-                    "barrier":      runner_data.get("barrier"),
-                    "number":       runner_data.get("number"),
-                    "form_trend":   runner_data.get("form_trend") or {},
-                    "runner_stats": runner_data.get("stats") or {},
-                    "run_style":    runner_data.get("run_style") or "",
-                    "class_fit":    runner_data.get("class_fit") or {},
-                    "decorator":    runner_data.get("decorator") or {},
-                    "win_prob":     runner_data.get("win_prob"),
-                    "place_prob":   runner_data.get("place_prob"),
-                }
-                upsert_formfav_runner_enrichment(runner_row)
-                runners_enriched += 1
-
-            # Also update in-memory provisional overlay for low-latency board access
-            if enrichment.get("runner_enrichment") or enrichment.get("track_bias"):
-                _store_provisional_overlay(
-                    enrichment_row["race_uid"],
-                    {
-                        "_source": "formfav",
-                        "has_provisional_overlay": True,
-                        "formfav_condition": enrichment_row.get("condition"),
-                        "formfav_race_class": enrichment_row.get("race_class"),
-                        "formfav_track_bias": enrichment.get("track_bias"),
-                        "formfav_runner_count": len(enrichment.get("runner_enrichment") or {}),
-                    },
-                )
-
-        except Exception as e:
-            races_failed += 1
-            log.debug(f"formfav_sync: failed for race {race_uid} ({track} R{race_num}): {e}")
-
-    log.info(
-        f"formfav_sync: {races_attempted} attempted, {races_enriched} enriched, "
-        f"{races_failed} failed, {runners_enriched} runners enriched for {today}"
-    )
-    return {
-        "ok": True,
-        "date": today,
-        "races_attempted": races_attempted,
-        "races_enriched": races_enriched,
-        "races_failed": races_failed,
-        "runners_enriched": runners_enriched,
-        "source": "formfav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-# ------------------------------------------------------------
-# FORMFAV PROVISIONAL OVERLAY (backward compat, near-jump only)
+# FORMFAV PROVISIONAL OVERLAY (near-jump only)
 # ------------------------------------------------------------
 
 def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
