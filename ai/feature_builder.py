@@ -342,9 +342,10 @@ def _build_runner_row(
         # speedMap stored as full object {runningStyle, earlySpeedIndex, settlingPosition}
         speed_map = enrichment.get("speedMap") or {}
         row["enrichment_speed_map"]          = speed_map if isinstance(speed_map, dict) else {}
-        row["enrichment_running_style"]      = str(speed_map.get("runningStyle") or enrichment.get("running_style") or "")
-        row["enrichment_early_speed_index"]  = _safe_float(speed_map.get("earlySpeedIndex") or enrichment.get("earlySpeedIndex"), 0.0)
-        row["enrichment_settling_position"]  = _safe_float(speed_map.get("settlingPosition") or enrichment.get("settlingPosition"), 0.0)
+        # speedMap is the canonical source for speed-related scalars
+        row["enrichment_running_style"]      = str(speed_map.get("runningStyle") or "")
+        row["enrichment_early_speed_index"]  = _safe_float(speed_map.get("earlySpeedIndex"), 0.0)
+        row["enrichment_settling_position"]  = _safe_float(speed_map.get("settlingPosition"), 0.0)
         # paceScenario is race-level; read from race_meta (set by formfav_overlay)
         row["enrichment_pace_scenario"]      = race_meta.get("formfav_pace_scenario") or ""
         # class_profile and race_class_fit stored separately

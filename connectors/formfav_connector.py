@@ -194,7 +194,9 @@ class FormFavConnector:
             speed_map = runner.get("speedMap") or stats.get("speedMap") or {}
             decorators = runner.get("decorators") or stats.get("decorators") or []
             class_profile = runner.get("classProfile") or stats.get("classProfile") or ""
-            race_class_fit_raw = runner.get("raceClassFit") if runner.get("raceClassFit") is not None else stats.get("raceClassFit")
+            race_class_fit_raw = runner.get("raceClassFit")
+            if race_class_fit_raw is None:
+                race_class_fit_raw = stats.get("raceClassFit")
             try:
                 race_class_fit = float(race_class_fit_raw) if race_class_fit_raw is not None else None
             except (TypeError, ValueError):
