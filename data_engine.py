@@ -361,6 +361,9 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             races_found += len(races)
             runners_found += len(runners)
 
+            # Write meeting header to meetings table (official truth for the day)
+            _store_meeting(meeting, race_count=len(races), target_date=today)
+
             # Build a mapping race_uid → runners for storage after race upsert
             runners_by_race: dict[str, list[Any]] = {}
             for runner in runners:
@@ -397,6 +400,16 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         f"{races_stored} races stored ({races_blocked} blocked), "
         f"{runners_stored} runners stored for {today}"
     )
+
+    # Log the bootstrap call to source_log for observability
+    _write_source_log(
+        url=f"{getattr(_get_oddspro(), 'base_url', '')}/api/external/meetings",
+        method="GET",
+        status="ok" if meetings_found else "no_meetings",
+        rows_returned=meetings_found,
+        date=today,
+    )
+
     return {
         "ok": True,
         "date": today,
@@ -633,6 +646,16 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
         f"check_results: {written} results confirmed and written, "
         f"{skipped} skipped (no confirmation) for {today}"
     )
+
+    # Log the result sweep call to source_log for observability
+    _write_source_log(
+        url=f"{getattr(_get_oddspro(), 'base_url', '')}/api/external/results",
+        method="GET",
+        status="ok" if (written + skipped) > 0 else "no_results",
+        rows_returned=written + skipped,
+        date=today,
+    )
+
     return {
         "ok": True,
         "date": today,
@@ -685,6 +708,35 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
 # ------------------------------------------------------------
 # INTERNAL WRITE HELPERS
 # ------------------------------------------------------------
+
+def _store_meeting(meeting: Any, *, race_count: int = 0, target_date: str = "") -> None:
+    """
+    Write a MeetingRecord to the meetings table as official truth.
+    Called once per meeting during full_sweep after races are resolved.
+    """
+    try:
+        from database import upsert_meeting
+        raw = meeting.extra.get("raw", {}) if hasattr(meeting, "extra") else {}
+        meeting_dict = {
+            "date":       getattr(meeting, "meeting_date", None) or target_date or "",
+            "track":      getattr(meeting, "track", "") or "",
+            "code":       getattr(meeting, "code", "GREYHOUND") or "GREYHOUND",
+            "state":      getattr(meeting, "state", "") or "",
+            "country":    (getattr(meeting, "country", "AUS") or "AUS").upper(),
+            "weather":    raw.get("weather") or raw.get("trackWeather") or "",
+            "rail":       raw.get("rail") or raw.get("railPosition") or "",
+            "track_cond": raw.get("trackCondition") or raw.get("condition") or "",
+            "race_count": race_count,
+            "source":     getattr(meeting, "source", "oddspro") or "oddspro",
+        }
+        upsert_meeting(meeting_dict)
+        log.debug(
+            f"data_engine: upserted meeting {meeting_dict['track']}/{meeting_dict['code']} "
+            f"for {meeting_dict['date']}"
+        )
+    except Exception as e:
+        log.error(f"data_engine: _store_meeting failed: {e}")
+
 
 def _write_race(race: Any) -> None:
     """Write an OddsPro RaceRecord to the database as official truth."""
@@ -809,6 +861,32 @@ def _race_to_dict(race: Any) -> dict[str, Any]:
     if hasattr(race, "__dict__"):
         return race.__dict__
     return race if isinstance(race, dict) else {}
+
+
+def _write_source_log(
+    *,
+    url: str,
+    method: str = "GET",
+    status: str = "ok",
+    rows_returned: int | None = None,
+    date: str | None = None,
+) -> None:
+    """
+    Write a source call record to source_log for observability.
+    Non-critical — failures are silently ignored so they never block ingestion.
+    """
+    try:
+        from datetime import date as _date
+        from database import write_source_log
+        write_source_log({
+            "date":          date or _date.today().isoformat(),
+            "url":           url or "",
+            "method":        method,
+            "status":        status,
+            "rows_returned": rows_returned,
+        })
+    except Exception as e:
+        log.debug(f"data_engine: _write_source_log failed (non-critical): {e}")
 
 
 # ------------------------------------------------------------

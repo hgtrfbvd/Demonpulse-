@@ -75,10 +75,13 @@ class RunnerRecord:
 
 class FormFavConnector:
     source_name = "formfav"
-    supported_codes = ("HORSE", "HARNESS", "GREYHOUND")
+    # GALLOPS is the canonical code for thoroughbred (OddsPro normalises T → GALLOPS).
+    # Keep HORSE in the list for backward compatibility with any legacy callers.
+    supported_codes = ("GALLOPS", "HORSE", "HARNESS", "GREYHOUND")
 
     RACE_CODE_MAP = {
-        "HORSE": "gallops",
+        "GALLOPS": "gallops",   # canonical OddsPro code for thoroughbred
+        "HORSE": "gallops",     # legacy alias — treated identically to GALLOPS
         "HARNESS": "harness",
         "GREYHOUND": "greyhounds",
     }
@@ -104,7 +107,10 @@ class FormFavConnector:
 
     def _make_race_uid(self, race_date: str, code: str, track: str, race_num: int) -> str:
         clean_track = (track or "").strip().lower().replace(" ", "-")
-        clean_code = (code or "HORSE").upper()
+        # Canonicalise: HORSE → GALLOPS so UIDs match OddsPro-sourced race UIDs.
+        clean_code = (code or "GALLOPS").upper()
+        if clean_code == "HORSE":
+            clean_code = "GALLOPS"
         return f"{race_date}_{clean_code}_{clean_track}_{race_num}"
 
     def _request_form(
@@ -142,7 +148,7 @@ class FormFavConnector:
         target_date: str,
         track: str,
         race_num: int,
-        code: str = "HORSE",
+        code: str = "GALLOPS",
     ) -> tuple[RaceRecord, list[RunnerRecord]]:
         payload = self._request_form(
             target_date=target_date,
@@ -154,6 +160,9 @@ class FormFavConnector:
             raise RuntimeError("No FormFav payload returned")
 
         normalized_code = code.upper()
+        # Canonicalise legacy HORSE → GALLOPS so UIDs match OddsPro-sourced race UIDs.
+        if normalized_code == "HORSE":
+            normalized_code = "GALLOPS"
         track_name = (payload.get("track") or track).strip().lower().replace(" ", "-")
         race_number = int(payload.get("raceNumber") or race_num)
         race_uid = self._make_race_uid(target_date, normalized_code, track_name, race_number)
@@ -184,7 +193,9 @@ class FormFavConnector:
             runners.append(
                 RunnerRecord(
                     race_uid=race_uid,
-                    box_num=None if normalized_code != "GREYHOUND" else number,
+                    # For greyhounds use box number; for gallops/harness use runner number
+                    # so the (race_uid, box_num) upsert key is never NULL.
+                    box_num=number if normalized_code == "GREYHOUND" else number,
                     name=runner.get("name") or "",
                     number=number,
                     barrier=barrier,

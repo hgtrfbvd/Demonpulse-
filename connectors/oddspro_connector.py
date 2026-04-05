@@ -702,7 +702,7 @@ class OddsProConnector:
                         meeting_id=mid,
                         code=self._normalise_code(
                             item.get("type") or item.get("code") or item.get("raceType")
-                            or item.get("racingCode") or "HORSE"
+                            or item.get("racingCode") or "GALLOPS"
                         ),
                         source=self.source_name,
                         track=self._clean_track(
@@ -753,7 +753,7 @@ class OddsProConnector:
                         meeting_id=mid,
                         code=self._normalise_code(
                             item.get("type") or item.get("code") or item.get("raceType")
-                            or item.get("racingCode") or "HORSE"
+                            or item.get("racingCode") or "GALLOPS"
                         ),
                         source=self.source_name,
                         track=self._clean_track(
@@ -843,7 +843,7 @@ class OddsProConnector:
             item = item[0] if item else {}
         return MeetingRecord(
             meeting_id=meeting_id,
-            code=self._normalise_code(item.get("type") or item.get("code") or "HORSE"),
+            code=self._normalise_code(item.get("type") or item.get("code") or "GALLOPS"),
             source=self.source_name,
             track=self._clean_track(item.get("track") or item.get("venue") or ""),
             meeting_date=str(item.get("date") or ""),
@@ -1443,7 +1443,10 @@ class OddsProConnector:
 
     def _make_race_uid(self, race_date: str, code: str, track: str, race_num: int) -> str:
         clean_track = (track or "").strip().lower().replace(" ", "-")
-        clean_code = (code or "HORSE").upper()
+        # Canonicalise: HORSE → GALLOPS so UIDs are consistent with schema code values.
+        clean_code = (code or "GALLOPS").upper()
+        if clean_code == "HORSE":
+            clean_code = "GALLOPS"
         return f"{race_date}_{clean_code}_{clean_track}_{race_num}"
 
     def _clean_track(self, track: str) -> str:
@@ -1451,10 +1454,10 @@ class OddsProConnector:
 
     def _normalise_code(self, raw: str) -> str:
         mapping = {
-            "gallops": "HORSE",
-            "thoroughbred": "HORSE",
-            "horse": "HORSE",
-            "t": "HORSE",       # racingCode: "T" (Thoroughbred)
+            "gallops": "GALLOPS",
+            "thoroughbred": "GALLOPS",
+            "horse": "GALLOPS",
+            "t": "GALLOPS",       # racingCode: "T" (Thoroughbred)
             "harness": "HARNESS",
             "trot": "HARNESS",
             "h": "HARNESS",     # racingCode: "H" (Harness)
@@ -1463,7 +1466,12 @@ class OddsProConnector:
             "g": "GREYHOUND",   # racingCode: "G" (Greyhound)
         }
         key = (raw or "").strip().lower()
-        return mapping.get(key, (raw or "HORSE").upper())
+        # Canonicalise: HORSE is the legacy label for thoroughbred — map to GALLOPS.
+        # The schema (meetings, today_races) only accepts GALLOPS/HARNESS/GREYHOUND.
+        normalised = mapping.get(key, (raw or "GALLOPS").upper())
+        if normalised == "HORSE":
+            normalised = "GALLOPS"
+        return normalised
 
     def _parse_race(self, item: dict, meeting: MeetingRecord | None) -> RaceRecord | None:
         race_id = str(item.get("id") or item.get("raceId") or "")
@@ -1480,7 +1488,7 @@ class OddsProConnector:
         )
         code = self._normalise_code(
             item.get("type") or item.get("code") or item.get("raceType")
-            or (meeting.code if meeting else "HORSE")
+            or (meeting.code if meeting else "GALLOPS")
         )
 
         race_uid = self._make_race_uid(race_date, code, track, race_num)
@@ -1560,7 +1568,11 @@ class OddsProConnector:
                 RunnerRecord(
                     race_uid=race.race_uid,
                     oddspro_race_id=race.oddspro_race_id,
-                    box_num=box_num if race.code == "GREYHOUND" else None,
+                    # box_num is the canonical per-runner identity key.
+                    # Greyhounds: use boxNumber/box (the physical starting box).
+                    # Gallops/harness: use runner number (barrier/saddle cloth) as box_num
+                    # so the (race_uid, box_num) upsert key is never NULL.
+                    box_num=box_num if race.code == "GREYHOUND" else number,
                     # Documented aliases: runnerName | name | horseName | dogName
                     name=str(
                         r.get("runnerName") or r.get("name")
@@ -1599,7 +1611,7 @@ class OddsProConnector:
 
         race_date = str(item.get("date") or "")
         track = self._clean_track(item.get("track") or item.get("venue") or "")
-        code = self._normalise_code(item.get("type") or item.get("code") or "HORSE")
+        code = self._normalise_code(item.get("type") or item.get("code") or "GALLOPS")
         race_uid = self._make_race_uid(race_date, code, track, race_num)
 
         win_price_raw = item.get("winPrice") or item.get("win_price")

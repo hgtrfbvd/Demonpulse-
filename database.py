@@ -225,9 +225,13 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
         return 0
 
     rows = []
-    for r in runners:
+    for idx, r in enumerate(runners, start=1):
         race_uid = r.get("race_uid") or ""
         box_num = r.get("box_num")
+        # Fallback: use runner number if box_num is still None.
+        # This can happen for non-greyhound runners from older connector versions.
+        if box_num is None:
+            box_num = r.get("number")
         if not race_uid or box_num is None:
             log.warning(
                 f"database.upsert_runners: skipping runner missing race_uid/box_num "
