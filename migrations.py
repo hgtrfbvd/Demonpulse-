@@ -374,6 +374,7 @@ _SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     # International races (e.g. Bath, Hanshin) must be excluded from FormFav;
     # relying only on the empty-state heuristic was incorrect.
     ("today_races",      "country", "TEXT", "DEFAULT 'au'"),
+    ("test_today_races", "country", "TEXT", "DEFAULT 'au'"),
 
     # ── today_runners ────────────────────────────────────────────────────────
     # Code writes race_id (FK), date, track, race_num, is_fav, raw_hash.
