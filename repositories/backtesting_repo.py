@@ -172,19 +172,15 @@ class BacktestingRepo:
         return {
             "run_id":               str(item["run_id"]),
             "race_uid":             str(item["race_uid"]),
-            "race_date":            item.get("race_date"),
+            "date":                 item["date"] if "date" in item else item.get("race_date"),
             "track":                item.get("track", ""),
-            "code":                 item.get("code", "GREYHOUND"),
-            "runner_count":         int(item.get("runner_count") or 0),
+            "race_code":            item["race_code"] if "race_code" in item else item.get("code", "GREYHOUND"),
             "predicted_winner":     item.get("predicted_winner", ""),
             "actual_winner":        item.get("actual_winner", ""),
             "winner_hit":           bool(item.get("winner_hit", False)),
-            "top2_hit":             bool(item.get("top2_hit", False)),
-            "top3_hit":             bool(item.get("top3_hit", False)),
             "score":                _to_numeric(item.get("score")),
-            "winner_odds":          _to_numeric(item.get("winner_odds")),
-            "model_version":        item.get("model_version", "baseline_v1"),
-            "used_stored_snapshot": bool(item.get("used_stored_snapshot", False)),
+            "win_price":            _to_numeric(item.get("win_price")),
+            "pl":                   _to_numeric(item.get("pl")),
             "created_at":           item.get("created_at", _now()),
         }
 

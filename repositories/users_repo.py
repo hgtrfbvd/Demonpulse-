@@ -55,7 +55,7 @@ class UsersRepo:
         rows = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USERS))
-                .select("id,username,display_name,email,role,active,last_login,login_count,created_at")
+                .select("id,username,role,active,last_login,created_at")
                 .eq("id", user_id)
                 .limit(1)
                 .execute()
@@ -71,7 +71,7 @@ class UsersRepo:
         return safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USERS))
-                .select("id,username,display_name,email,role,active,last_login,login_count,created_at,created_by")
+                .select("id,username,role,active,last_login,created_at")
                 .order("created_at")
                 .execute()
                 .data,
@@ -130,11 +130,7 @@ class UsersRepo:
                     "username":      username,
                     "password_hash": password_hash,
                     "role":          role,
-                    "display_name":  display_name,
-                    "email":         email,
                     "active":        True,
-                    "created_by":    created_by,
-                    "login_count":   0,
                     "created_at":    _now(),
                     "updated_at":    _now(),
                 })
@@ -180,13 +176,12 @@ class UsersRepo:
 
     @staticmethod
     def record_login(user_id: str, ip: str = "") -> bool:
-        """Update last_login and increment login_count."""
+        """Update last_login timestamp."""
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USERS))
                 .update({
                     "last_login":  _now(),
-                    "last_ip":     ip,
                     "updated_at":  _now(),
                 })
                 .eq("id", user_id)
@@ -195,31 +190,6 @@ class UsersRepo:
             default=None,
             context="UsersRepo.record_login",
         )
-        # Increment login_count separately (Supabase doesn't support atomic increment
-        # via the Python client; fetch-then-update is acceptable here)
-        try:
-            row = safe_execute(
-                lambda: get_client()
-                    .table(resolve_table(TABLE_USERS))
-                    .select("login_count")
-                    .eq("id", user_id)
-                    .single()
-                    .execute()
-                    .data,
-                default={},
-                context="UsersRepo.record_login.count",
-            ) or {}
-            count = int(row.get("login_count") or 0) + 1
-            safe_execute(
-                lambda: get_client()
-                    .table(resolve_table(TABLE_USERS))
-                    .update({"login_count": count})
-                    .eq("id", user_id)
-                    .execute(),
-                context="UsersRepo.record_login.increment",
-            )
-        except Exception as exc:
-            log.warning(f"UsersRepo.record_login: count increment failed: {exc}")
         return bool(result)
 
     # ── USER ACCOUNTS ─────────────────────────────────────────────
@@ -275,7 +245,7 @@ class UsersRepo:
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_PERMS))
                 .upsert(
-                    {"user_id": user_id, "page": page, "allowed": allowed, "updated_at": _now()},
+                    {"user_id": user_id, "page": page, "can_view": allowed, "can_edit": allowed},
                     on_conflict="user_id,page",
                 )
                 .execute()
@@ -296,9 +266,8 @@ class UsersRepo:
                 .table(resolve_table(TABLE_USER_SESSIONS))
                 .insert({
                     "user_id":    user_id,
-                    "token_hash": token_hash,
-                    "ip":         ip,
-                    "active":     True,
+                    "token":      token_hash,
+                    "ip_address": ip,
                     "expires_at": expires.isoformat(),
                     "created_at": _now(),
                 })
@@ -314,14 +283,14 @@ class UsersRepo:
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_SESSIONS))
-                .update({"active": False})
+                .delete()
                 .eq("user_id", user_id)
                 .execute()
                 .data,
             default=None,
             context="UsersRepo.invalidate_sessions",
         )
-        return bool(result)
+        return result is not None
 
     # ── USER ACTIVITY ─────────────────────────────────────────────
 
@@ -333,8 +302,8 @@ class UsersRepo:
                 .insert({
                     "user_id":    user_id,
                     "action":     action,
-                    "page":       page,
-                    "data":       data or {},
+                    "resource":   page,
+                    "detail":     data or {},
                     "created_at": _now(),
                 })
                 .execute(),

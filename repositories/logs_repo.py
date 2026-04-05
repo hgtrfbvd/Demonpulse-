@@ -83,25 +83,29 @@ class LogsRepo:
 
     @staticmethod
     def log_source_call(
-        url: str,
+        source: str,
+        endpoint: str = "",
         method: str = "GET",
-        status: str = "OK",
-        rows_returned: int = 0,
-        grv_detected: bool = False,
-        call_num: Optional[int] = None,
+        status_code: int = 200,
+        response_ms: int = 0,
+        success: bool = True,
+        error_msg: str = "",
+        records_fetched: int = 0,
     ) -> None:
         """Record an external data source HTTP call."""
         safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_SOURCE_LOG))
                 .insert({
-                    "url":           url,
-                    "method":        method,
-                    "status":        status,
-                    "rows_returned": rows_returned,
-                    "grv_detected":  grv_detected,
-                    "call_num":      call_num,
-                    "created_at":    _now(),
+                    "source":           source,
+                    "endpoint":         endpoint,
+                    "method":           method,
+                    "status_code":      status_code,
+                    "response_ms":      response_ms,
+                    "success":          success,
+                    "error_msg":        error_msg or None,
+                    "records_fetched":  records_fetched,
+                    "created_at":       _now(),
                 })
                 .execute(),
             context="LogsRepo.log_source_call",
@@ -121,11 +125,10 @@ class LogsRepo:
             lambda: get_client()
                 .table(resolve_table(TABLE_ACTIVITY_LOG))
                 .insert({
-                    "event_type":  event_type,
-                    "description": description,
-                    "session_id":  session_id,
-                    "data":        data or {},
-                    "created_at":  _now(),
+                    "event":      event_type,
+                    "resource":   description,
+                    "detail":     data or {},
+                    "created_at": _now(),
                 })
                 .execute(),
             context="LogsRepo.log_activity",
