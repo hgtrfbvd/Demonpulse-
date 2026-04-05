@@ -43,7 +43,6 @@ class RaceRecord:
     expert_form_url: str = ""
     time_status: str = "PARTIAL"
     condition: str = ""
-    paceScenario: str = ""
 
 
 @dataclass
@@ -69,18 +68,10 @@ class RunnerRecord:
     raw_hash: str = ""
     source_confidence: str = "official"
     stats_json: dict[str, Any] | None = None
-    speedMap: dict[str, Any] | None = None
-    decorators: list[Any] | None = None
-    classProfile: str = ""
-    raceClassFit: float | None = None
 
     def __post_init__(self):
         if self.stats_json is None:
             self.stats_json = {}
-        if self.speedMap is None:
-            self.speedMap = {}
-        if self.decorators is None:
-            self.decorators = []
 
 
 class FormFavConnector:
@@ -191,7 +182,6 @@ class FormFavConnector:
             distance=payload.get("distance") or "",
             grade=payload.get("raceClass") or "",
             condition=payload.get("condition") or "",
-            paceScenario=payload.get("paceScenario") or "",
             source_url=f"{BASE_URL}/v1/form",
             expert_form_url=f"{BASE_URL}/v1/form",
             time_status="PARTIAL",
@@ -203,17 +193,6 @@ class FormFavConnector:
             barrier = runner.get("barrier")
             stats = runner.get("stats") or {}
             overall = stats.get("overall") or {}
-
-            speed_map = runner.get("speedMap") or stats.get("speedMap") or {}
-            decorators = runner.get("decorators") or stats.get("decorators") or []
-            class_profile = runner.get("classProfile") or stats.get("classProfile") or ""
-            race_class_fit_raw = runner.get("raceClassFit")
-            if race_class_fit_raw is None:
-                race_class_fit_raw = stats.get("raceClassFit")
-            try:
-                race_class_fit = float(race_class_fit_raw) if race_class_fit_raw is not None else None
-            except (TypeError, ValueError):
-                race_class_fit = None
 
             runners.append(
                 RunnerRecord(
@@ -228,10 +207,6 @@ class FormFavConnector:
                     weight=runner.get("weight"),
                     career=str(overall) if overall else None,
                     stats_json=stats,
-                    speedMap=speed_map,
-                    decorators=decorators,
-                    classProfile=class_profile,
-                    raceClassFit=race_class_fit,
                     source_confidence="api",
                 )
             )
