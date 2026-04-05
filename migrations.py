@@ -2,9 +2,10 @@
 migrations.py - DemonPulse Database Migrations
 ================================================
 Ensures the Supabase schema has all columns and tables required by the
-V8 architecture and Phase 3 intelligence layer.
+V8 architecture and Phase 3/4/4.6 intelligence layers.
 
 Run once after deploying new code that adds columns or tables.
+Safe to re-run — uses ADD COLUMN IF NOT EXISTS throughout.
 
 Existing column migrations (today_races / today_runners):
   today_races:
@@ -30,7 +31,7 @@ Existing column migrations (today_races / today_runners):
     - source_confidence TEXT
 
   results_log:
-    (no new columns — existing schema is sufficient)
+    - recorded_at  TIMESTAMPTZ  (canonical name; old schema used created_at)
 
 Phase 3 — Intelligence Layer new tables:
   feature_snapshots       — serialized feature arrays per race with lineage
@@ -39,6 +40,11 @@ Phase 3 — Intelligence Layer new tables:
   learning_evaluations    — post-result evaluation records
   backtest_runs           — backtest run summaries
   backtest_run_items      — per-race results within a backtest run
+
+Phase 4.6 — Schema Alignment:
+  Brings existing databases seeded from the legacy supabase_schema.sql
+  into alignment with 001_canonical_schema.sql. Every column written by
+  the application code is guaranteed to exist after this phase runs.
 """
 from __future__ import annotations
 
@@ -342,6 +348,273 @@ _PHASE4_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("backtest_run_items", "used_stored_snapshot", "BOOLEAN",  "DEFAULT false"),
 ]
 
+# ---------------------------------------------------------------------------
+# PHASE 4.6 — SCHEMA ALIGNMENT
+# Brings databases seeded from the *previous* version of supabase_schema.sql
+# (before it was aligned with 001_canonical_schema.sql) into full canonical
+# alignment.  Every column that the application code writes is guaranteed to
+# exist after this phase runs.
+# All entries use ADD COLUMN IF NOT EXISTS — safe to re-run.
+# ---------------------------------------------------------------------------
+_SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
+
+    # ── results_log ─────────────────────────────────────────────────────────
+    # Code writes "recorded_at"; legacy schema had "created_at" only.
+    ("results_log",      "recorded_at",    "TIMESTAMPTZ",  "DEFAULT NOW()"),
+    ("test_results_log", "recorded_at",    "TIMESTAMPTZ",  "DEFAULT NOW()"),
+
+    # ── audit_log ───────────────────────────────────────────────────────────
+    # Code writes "ip"; legacy schema named this column "ip_address".
+    # audit_log is always-live (no test_ mirror).
+    ("audit_log", "ip", "TEXT", ""),
+
+    # ── today_runners ────────────────────────────────────────────────────────
+    # Code writes race_id (FK), date, track, race_num, is_fav, raw_hash.
+    # Legacy schema lacked all six; canonical schema defines them all.
+    ("today_runners",      "race_id",  "UUID",     ""),
+    ("today_runners",      "date",     "DATE",     "DEFAULT CURRENT_DATE"),
+    ("today_runners",      "track",    "TEXT",     "DEFAULT ''"),
+    ("today_runners",      "race_num", "INTEGER",  ""),
+    ("today_runners",      "is_fav",   "BOOLEAN",  "DEFAULT FALSE"),
+    ("today_runners",      "raw_hash", "TEXT",     "DEFAULT ''"),
+    ("test_today_runners", "race_id",  "UUID",     ""),
+    ("test_today_runners", "date",     "DATE",     "DEFAULT CURRENT_DATE"),
+    ("test_today_runners", "track",    "TEXT",     "DEFAULT ''"),
+    ("test_today_runners", "race_num", "INTEGER",  ""),
+    ("test_today_runners", "is_fav",   "BOOLEAN",  "DEFAULT FALSE"),
+    ("test_today_runners", "raw_hash", "TEXT",     "DEFAULT ''"),
+
+    # ── signals ─────────────────────────────────────────────────────────────
+    # Legacy schema used different field names (signal_type, decision, score …).
+    # Code writes the canonical fields; all are added here so upserts succeed.
+    ("signals",      "signal",       "TEXT",          ""),
+    ("signals",      "ev",           "NUMERIC(6,3)",  ""),
+    ("signals",      "alert_level",  "TEXT",          "DEFAULT 'NONE'"),
+    ("signals",      "hot_bet",      "BOOLEAN",       "DEFAULT FALSE"),
+    ("signals",      "risk_flags",   "JSONB",         "DEFAULT '[]'::jsonb"),
+    ("signals",      "top_runner",   "TEXT",          ""),
+    ("signals",      "top_box",      "INTEGER",       ""),
+    ("signals",      "top_odds",     "NUMERIC(6,2)",  ""),
+    ("signals",      "generated_at", "TIMESTAMPTZ",   "DEFAULT NOW()"),
+    ("test_signals", "signal",       "TEXT",          ""),
+    ("test_signals", "ev",           "NUMERIC(6,3)",  ""),
+    ("test_signals", "alert_level",  "TEXT",          "DEFAULT 'NONE'"),
+    ("test_signals", "hot_bet",      "BOOLEAN",       "DEFAULT FALSE"),
+    ("test_signals", "risk_flags",   "JSONB",         "DEFAULT '[]'::jsonb"),
+    ("test_signals", "top_runner",   "TEXT",          ""),
+    ("test_signals", "top_box",      "INTEGER",       ""),
+    ("test_signals", "top_odds",     "NUMERIC(6,2)",  ""),
+    ("test_signals", "generated_at", "TIMESTAMPTZ",   "DEFAULT NOW()"),
+
+    # ── prediction_snapshots ─────────────────────────────────────────────────
+    # Phase 4.6 adds has_enrichment, source_type, feature_snapshot_id.
+    ("prediction_snapshots",      "has_enrichment",       "INTEGER",  "DEFAULT 0"),
+    ("prediction_snapshots",      "source_type",          "TEXT",     "DEFAULT 'pre_race'"),
+    ("prediction_snapshots",      "feature_snapshot_id",  "TEXT",     "DEFAULT ''"),
+    ("test_prediction_snapshots", "has_enrichment",       "INTEGER",  "DEFAULT 0"),
+    ("test_prediction_snapshots", "source_type",          "TEXT",     "DEFAULT 'pre_race'"),
+    ("test_prediction_snapshots", "feature_snapshot_id",  "TEXT",     "DEFAULT ''"),
+
+    # ── learning_evaluations ─────────────────────────────────────────────────
+    # Phase 4.6 adds enrichment tracking and disagreement metrics.
+    ("learning_evaluations",      "oddspro_race_id",      "TEXT",         "DEFAULT ''"),
+    ("learning_evaluations",      "used_enrichment",      "BOOLEAN",      "DEFAULT FALSE"),
+    ("learning_evaluations",      "disagreement_score",   "NUMERIC(8,4)", ""),
+    ("learning_evaluations",      "formfav_rank",         "INTEGER",      ""),
+    ("learning_evaluations",      "your_rank",            "INTEGER",      ""),
+    ("test_learning_evaluations", "oddspro_race_id",      "TEXT",         "DEFAULT ''"),
+    ("test_learning_evaluations", "used_enrichment",      "BOOLEAN",      "DEFAULT FALSE"),
+    ("test_learning_evaluations", "disagreement_score",   "NUMERIC(8,4)", ""),
+    ("test_learning_evaluations", "formfav_rank",         "INTEGER",      ""),
+    ("test_learning_evaluations", "your_rank",            "INTEGER",      ""),
+
+    # ── pass_log ─────────────────────────────────────────────────────────────
+    # Code writes pass_reason, local_decision, confidence, date.
+    # Legacy schema used reason, block_code, score.
+    ("pass_log",      "pass_reason",    "TEXT",  ""),
+    ("pass_log",      "local_decision", "TEXT",  ""),
+    ("pass_log",      "confidence",     "TEXT",  ""),
+    ("pass_log",      "date",           "DATE",  "DEFAULT CURRENT_DATE"),
+    ("test_pass_log", "pass_reason",    "TEXT",  ""),
+    ("test_pass_log", "local_decision", "TEXT",  ""),
+    ("test_pass_log", "confidence",     "TEXT",  ""),
+    ("test_pass_log", "date",           "DATE",  "DEFAULT CURRENT_DATE"),
+
+    # ── etg_tags ─────────────────────────────────────────────────────────────
+    # Code writes bet_id, error_tag, notes, manual_override, date.
+    # Legacy schema used "tag" not "error_tag".
+    ("etg_tags",      "bet_id",          "UUID",     ""),
+    ("etg_tags",      "error_tag",       "TEXT",     ""),
+    ("etg_tags",      "notes",           "TEXT",     ""),
+    ("etg_tags",      "date",            "DATE",     "DEFAULT CURRENT_DATE"),
+    ("etg_tags",      "track",           "TEXT",     ""),
+    ("etg_tags",      "race_num",        "INTEGER",  ""),
+    ("test_etg_tags", "bet_id",          "UUID",     ""),
+    ("test_etg_tags", "error_tag",       "TEXT",     ""),
+    ("test_etg_tags", "notes",           "TEXT",     ""),
+    ("test_etg_tags", "date",            "DATE",     "DEFAULT CURRENT_DATE"),
+    ("test_etg_tags", "track",           "TEXT",     ""),
+    ("test_etg_tags", "race_num",        "INTEGER",  ""),
+
+    # ── epr_data ─────────────────────────────────────────────────────────────
+    # Code writes code, track, confidence_tier, ev_at_analysis,
+    # execution_mode, date. Legacy schema lacked these.
+    ("epr_data",      "code",            "TEXT",         "DEFAULT 'GREYHOUND'"),
+    ("epr_data",      "track",           "TEXT",         ""),
+    ("epr_data",      "confidence_tier", "TEXT",         ""),
+    ("epr_data",      "ev_at_analysis",  "NUMERIC(6,3)", ""),
+    ("epr_data",      "execution_mode",  "TEXT",         ""),
+    ("epr_data",      "date",            "DATE",         "DEFAULT CURRENT_DATE"),
+    ("test_epr_data", "code",            "TEXT",         "DEFAULT 'GREYHOUND'"),
+    ("test_epr_data", "track",           "TEXT",         ""),
+    ("test_epr_data", "confidence_tier", "TEXT",         ""),
+    ("test_epr_data", "ev_at_analysis",  "NUMERIC(6,3)", ""),
+    ("test_epr_data", "execution_mode",  "TEXT",         ""),
+    ("test_epr_data", "date",            "DATE",         "DEFAULT CURRENT_DATE"),
+
+    # ── aeee_adjustments ─────────────────────────────────────────────────────
+    # Code writes direction, amount, roi_trigger, bets_sample, applied,
+    # promoted. Legacy schema used "adjustment" instead of "amount".
+    ("aeee_adjustments",      "direction",   "TEXT",         ""),
+    ("aeee_adjustments",      "amount",      "NUMERIC(5,3)", ""),
+    ("aeee_adjustments",      "roi_trigger", "NUMERIC(6,2)", ""),
+    ("aeee_adjustments",      "bets_sample", "INTEGER",      ""),
+    ("aeee_adjustments",      "applied",     "BOOLEAN",      "DEFAULT FALSE"),
+    ("aeee_adjustments",      "promoted",    "BOOLEAN",      "DEFAULT FALSE"),
+    ("test_aeee_adjustments", "direction",   "TEXT",         ""),
+    ("test_aeee_adjustments", "amount",      "NUMERIC(5,3)", ""),
+    ("test_aeee_adjustments", "roi_trigger", "NUMERIC(6,2)", ""),
+    ("test_aeee_adjustments", "bets_sample", "INTEGER",      ""),
+    ("test_aeee_adjustments", "applied",     "BOOLEAN",      "DEFAULT FALSE"),
+    ("test_aeee_adjustments", "promoted",    "BOOLEAN",      "DEFAULT FALSE"),
+
+    # ── system_state ─────────────────────────────────────────────────────────
+    # Canonical adds tuning/simulation columns absent from legacy schema.
+    ("system_state",      "confidence_threshold", "NUMERIC(4,2)", "DEFAULT 0.65"),
+    ("system_state",      "ev_threshold",         "NUMERIC(4,2)", "DEFAULT 0.08"),
+    ("system_state",      "staking_mode",         "TEXT",         "DEFAULT 'KELLY'"),
+    ("system_state",      "tempo_weight",         "NUMERIC(4,2)", "DEFAULT 1.0"),
+    ("system_state",      "traffic_penalty",      "NUMERIC(4,2)", "DEFAULT 0.8"),
+    ("system_state",      "closer_boost",         "NUMERIC(4,2)", "DEFAULT 1.1"),
+    ("system_state",      "fade_penalty",         "NUMERIC(4,2)", "DEFAULT 0.9"),
+    ("system_state",      "simulation_depth",     "INTEGER",      "DEFAULT 1000"),
+    ("test_system_state", "confidence_threshold", "NUMERIC(4,2)", "DEFAULT 0.65"),
+    ("test_system_state", "ev_threshold",         "NUMERIC(4,2)", "DEFAULT 0.08"),
+    ("test_system_state", "staking_mode",         "TEXT",         "DEFAULT 'KELLY'"),
+    ("test_system_state", "tempo_weight",         "NUMERIC(4,2)", "DEFAULT 1.0"),
+    ("test_system_state", "traffic_penalty",      "NUMERIC(4,2)", "DEFAULT 0.8"),
+    ("test_system_state", "closer_boost",         "NUMERIC(4,2)", "DEFAULT 1.1"),
+    ("test_system_state", "fade_penalty",         "NUMERIC(4,2)", "DEFAULT 0.9"),
+    ("test_system_state", "simulation_depth",     "INTEGER",      "DEFAULT 1000"),
+
+    # ── source_log ───────────────────────────────────────────────────────────
+    # Code writes date, call_num, url, status, rows_returned.
+    # Legacy schema used source (NOT NULL), endpoint, status_code, response_ms,
+    # success, error_msg, records_fetched. The canonical fields are all new.
+    ("source_log",      "date",          "DATE",    "DEFAULT CURRENT_DATE"),
+    ("source_log",      "call_num",      "INTEGER", ""),
+    ("source_log",      "url",           "TEXT",    ""),
+    ("source_log",      "status",        "TEXT",    ""),
+    ("source_log",      "rows_returned", "INTEGER", ""),
+    ("test_source_log", "date",          "DATE",    "DEFAULT CURRENT_DATE"),
+    ("test_source_log", "call_num",      "INTEGER", ""),
+    ("test_source_log", "url",           "TEXT",    ""),
+    ("test_source_log", "status",        "TEXT",    ""),
+    ("test_source_log", "rows_returned", "INTEGER", ""),
+]
+
+
+def run_schema_alignment(db_client: Any = None) -> dict[str, Any]:
+    """
+    Phase 4.6: bring any database that was seeded from the *previous* version
+    of supabase_schema.sql (before it was aligned with 001_canonical_schema.sql)
+    into full alignment with the current canonical schema.
+
+    Adds every column that the application code writes but that was absent
+    from the pre-alignment schema.  Uses ADD COLUMN IF NOT EXISTS — safe to
+    re-run against a database that already has the canonical structure.
+
+    Also removes blocking NOT NULL constraints on columns that existed only
+    in the old schema and are no longer written by the application
+    (source_log.source, etg_tags.tag).
+
+    Returns dict with keys: applied, skipped, errors.
+    """
+    if db_client is None:
+        from db import get_db
+        db_client = get_db()
+
+    results: dict[str, Any] = {"applied": [], "skipped": [], "errors": []}
+
+    # ── ADD COLUMN IF NOT EXISTS ──────────────────────────────────────────────
+    for table, column, sql_type, default_clause in _SCHEMA_ALIGN_MIGRATIONS:
+        sql = (
+            f"ALTER TABLE {table} "
+            f"ADD COLUMN IF NOT EXISTS {column} {sql_type} {default_clause};"
+        ).strip()
+
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+            results["applied"].append(f"{table}.{column}")
+            log.info(f"migrations: schema_align applied {table}.{column}")
+        except Exception as e:
+            err_str = str(e)
+            if "already exists" in err_str.lower() or "duplicate" in err_str.lower():
+                results["skipped"].append(f"{table}.{column}")
+            else:
+                log.warning(
+                    f"migrations: schema_align could not apply {table}.{column}: {e}"
+                )
+                results["errors"].append(
+                    {"migration": f"{table}.{column}", "error": err_str}
+                )
+
+    # ── REMOVE BLOCKING NOT NULL CONSTRAINTS ─────────────────────────────────
+    # The legacy schema had NOT NULL on columns that the canonical code never
+    # writes.  These must be relaxed so inserts do not fail.
+    #
+    # source_log.source  — legacy had TEXT NOT NULL; canonical has no "source"
+    #                       column at all.  Code inserts without "source".
+    # etg_tags.tag       — legacy had TEXT NOT NULL; canonical uses "error_tag".
+    #                       Code inserts "error_tag", not "tag".
+    # test_source_log / test_etg_tags: same problem on the test mirrors.
+    _null_relaxations = [
+        "ALTER TABLE source_log      ALTER COLUMN source DROP NOT NULL;",
+        "ALTER TABLE source_log      ALTER COLUMN source SET DEFAULT '';",
+        "ALTER TABLE test_source_log ALTER COLUMN source DROP NOT NULL;",
+        "ALTER TABLE test_source_log ALTER COLUMN source SET DEFAULT '';",
+        "ALTER TABLE etg_tags        ALTER COLUMN tag    DROP NOT NULL;",
+        "ALTER TABLE etg_tags        ALTER COLUMN tag    SET DEFAULT '';",
+        "ALTER TABLE test_etg_tags   ALTER COLUMN tag    DROP NOT NULL;",
+        "ALTER TABLE test_etg_tags   ALTER COLUMN tag    SET DEFAULT '';",
+    ]
+    for sql in _null_relaxations:
+        label = sql.split(";")[0].strip()
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+            results["applied"].append(label)
+            log.info(f"migrations: schema_align applied '{label}'")
+        except Exception as e:
+            err_str = str(e)
+            # "column does not exist" means the column is already gone (canonical
+            # schema deployment — no action needed).
+            # "already" / "no such constraint" indicate idempotent re-run.
+            if any(phrase in err_str.lower() for phrase in (
+                "does not exist", "already", "no constraint"
+            )):
+                results["skipped"].append(label)
+            else:
+                log.debug(f"migrations: schema_align null relax skipped: {label}: {e}")
+                results["skipped"].append(label)
+
+    log.info(
+        f"migrations: schema_align done — "
+        f"applied={len(results['applied'])} "
+        f"skipped={len(results['skipped'])} "
+        f"errors={len(results['errors'])}"
+    )
+    return results
+
 
 def run_phase3_migrations(db_client: Any = None) -> dict[str, Any]:
     """
@@ -448,7 +721,12 @@ def run_phase4_migrations(db_client: Any = None) -> dict[str, Any]:
 
 def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
     """
-    Run all migration phases in order: column migrations → Phase 3 → Phase 4.
+    Run all migration phases in order:
+      1. Column migrations (Phase 1/2 ADD COLUMN)
+      2. Phase 3 intelligence-layer table creation
+      3. Phase 4 feature-engine / sectionals table creation + column additions
+      4. Phase 4.6 schema alignment (brings legacy supabase_schema.sql DBs to canonical)
+
     Safe to re-run.
     """
     if db_client is None:
@@ -459,11 +737,13 @@ def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
         "column_migrations": {},
         "phase3": {},
         "phase4": {},
+        "schema_alignment": {},
     }
 
     combined["column_migrations"] = run_migrations(db_client)
     combined["phase3"] = run_phase3_migrations(db_client)
     combined["phase4"] = run_phase4_migrations(db_client)
+    combined["schema_alignment"] = run_schema_alignment(db_client)
 
     log.info("migrations: run_all_migrations complete")
     return combined
