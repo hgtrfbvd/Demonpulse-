@@ -144,6 +144,7 @@ class FormFavConnector:
         track: str,
         race_num: int,
         code: str,
+        country: str | None = None,
     ) -> dict[str, Any] | None:
         if not self.api_key:
             return None
@@ -154,7 +155,7 @@ class FormFavConnector:
             "track": track,
             "race": race_num,
             "race_code": race_code,
-            "country": self.country,
+            "country": (country or self.country).lower(),
         }
 
         response = requests.get(
@@ -173,6 +174,7 @@ class FormFavConnector:
         track: str,
         race_num: int,
         code: str,
+        country: str | None = None,
     ) -> dict[str, Any] | None:
         """Fetch win/place probabilities and model metadata from /v1/predictions (Pro tier)."""
         if not self.api_key:
@@ -184,7 +186,7 @@ class FormFavConnector:
             "track": track,
             "race": race_num,
             "race_code": race_code,
-            "country": self.country,
+            "country": (country or self.country).lower(),
         }
 
         try:
@@ -235,12 +237,14 @@ class FormFavConnector:
         track: str,
         race_num: int,
         code: str = "HORSE",
+        country: str | None = None,
     ) -> tuple[RaceRecord, list[RunnerRecord]]:
         payload = self._request_form(
             target_date=target_date,
             track=track,
             race_num=race_num,
             code=code,
+            country=country,
         )
         if not payload:
             raise RuntimeError("No FormFav payload returned")
@@ -321,6 +325,7 @@ class FormFavConnector:
         track: str,
         race_num: int,
         code: str = "HORSE",
+        country: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Fetch prediction data (winProb, placeProb, modelRank, confidence, modelVersion)
@@ -331,6 +336,7 @@ class FormFavConnector:
             track=track,
             race_num=race_num,
             code=code,
+            country=country,
         )
 
     def fetch_race_form_with_predictions(
@@ -340,6 +346,7 @@ class FormFavConnector:
         track: str,
         race_num: int,
         code: str = "HORSE",
+        country: str | None = None,
     ) -> tuple[RaceRecord, list[RunnerRecord]]:
         """
         Fetch race form AND predictions in one call, merging prediction fields
@@ -351,6 +358,7 @@ class FormFavConnector:
             track=track,
             race_num=race_num,
             code=code,
+            country=country,
         )
 
         preds_payload = self.fetch_race_predictions(
@@ -358,6 +366,7 @@ class FormFavConnector:
             track=track,
             race_num=race_num,
             code=code,
+            country=country,
         )
 
         if preds_payload and preds_payload.get("runners"):
@@ -434,12 +443,14 @@ class FormFavConnector:
         self,
         race: RaceRecord,
         scratchings: dict[str, list[int]] | None = None,
+        country: str | None = None,
     ) -> tuple[RaceRecord, list[RunnerRecord]]:
         fresh_race, runners = self.fetch_race_form_with_predictions(
             target_date=race.date,
             track=race.track,
             race_num=race.race_num,
             code=race.code,
+            country=country,
         )
 
         scratched = set((scratchings or {}).get(fresh_race.race_uid, []))
