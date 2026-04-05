@@ -683,6 +683,148 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------
+# FORMFAV PERSISTENT ENRICHMENT SYNC
+# ------------------------------------------------------------
+
+def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
+    """
+    Persistent FormFav enrichment sync — fetches full FormFav data for all
+    today's races and stores it in formfav_race_enrichment /
+    formfav_runner_enrichment tables.
+
+    This is a SECONDARY enrichment source only. OddsPro remains the primary
+    source of record. FormFav data is stored separately and never overwrites
+    official race/runner records.
+
+    Called by the scheduler every 300s when FormFav API key is configured.
+    Returns a summary dict for health tracking.
+    """
+    ff = _get_formfav()
+    if not ff.is_enabled():
+        return {"ok": False, "reason": "formfav_not_enabled", "races_enriched": 0, "runners_enriched": 0}
+
+    td = target_date or date.today().isoformat()
+
+    try:
+        from database import (
+            get_active_races,
+            upsert_formfav_race_enrichment,
+            upsert_formfav_runner_enrichment,
+        )
+    except ImportError as e:
+        log.error(f"data_engine.formfav_sync: import error: {e}")
+        return {"ok": False, "reason": f"import_error: {e}", "races_enriched": 0, "runners_enriched": 0}
+
+    races = get_active_races(td)
+    if not races:
+        log.debug(f"data_engine.formfav_sync: no active races for {td}")
+        return {"ok": True, "races_enriched": 0, "runners_enriched": 0, "date": td}
+
+    races_enriched = 0
+    runners_enriched = 0
+    errors = 0
+    fetched_at = datetime.now(timezone.utc).isoformat()
+
+    for race in races:
+        race_uid = race.get("race_uid") or ""
+        if not race_uid:
+            continue
+
+        # Map OddsPro canonical code to FormFav code
+        # OddsPro uses GALLOPS; FormFav connector accepts HORSE/HARNESS/GREYHOUND
+        raw_code = (race.get("code") or "HORSE").upper()
+        ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
+
+        try:
+            ff_race, ff_runners = ff.fetch_race_form_with_predictions(
+                target_date=race.get("date") or td,
+                track=race.get("track") or "",
+                race_num=int(race.get("race_num") or 0),
+                code=ff_code,
+            )
+
+            # Build race enrichment payload using canonical race_uid from OddsPro
+            race_payload = {
+                "race_uid":          race_uid,
+                "date":              ff_race.date,
+                "track":             ff_race.track,
+                "race_num":          ff_race.race_num,
+                "race_code":         raw_code,
+                "race_name":         ff_race.race_name,
+                "distance":          ff_race.distance,
+                "grade":             ff_race.grade,
+                "condition":         ff_race.condition,
+                "weather":           ff_race.weather,
+                "start_time":        ff_race.start_time,
+                "start_time_utc":    ff_race.start_time_utc,
+                "timezone":          ff_race.timezone,
+                "abandoned":         ff_race.abandoned,
+                "number_of_runners": ff_race.number_of_runners,
+                "pace_scenario":     ff_race.pace_scenario,
+                "raw_response":      ff_race.raw_response,
+                "fetched_at":        fetched_at,
+            }
+            upsert_formfav_race_enrichment(race_payload)
+            races_enriched += 1
+
+            # Store each runner's enrichment
+            for runner in ff_runners:
+                stats = runner.stats_json or {}
+                runner_payload = {
+                    "race_uid":           race_uid,
+                    "runner_name":        runner.name,
+                    "number":             runner.number if runner.number is not None else runner.box_num,
+                    "barrier":            runner.barrier,
+                    "age":                runner.age,
+                    "claim":              runner.claim,
+                    "scratched":          runner.scratched,
+                    "form_string":        runner.form_string,
+                    "trainer":            runner.trainer,
+                    "jockey":             runner.jockey,
+                    "driver":             runner.driver,
+                    "weight":             runner.weight,
+                    "decorators":         runner.decorators or [],
+                    "speed_map":          runner.speed_map,
+                    "class_profile":      runner.class_profile,
+                    "race_class_fit":     runner.race_class_fit,
+                    "stats_overall":      stats.get("overall"),
+                    "stats_track":        runner.stats_track,
+                    "stats_distance":     runner.stats_distance,
+                    "stats_condition":    runner.stats_condition,
+                    "stats_track_distance": runner.stats_track_distance,
+                    "stats_full":         stats,
+                    "win_prob":           runner.win_prob,
+                    "place_prob":         runner.place_prob,
+                    "model_rank":         runner.model_rank,
+                    "confidence":         runner.confidence,
+                    "model_version":      runner.model_version,
+                    "fetched_at":         fetched_at,
+                }
+                # Only store runners with a valid number
+                if runner_payload["number"] is not None:
+                    upsert_formfav_runner_enrichment(runner_payload)
+                    runners_enriched += 1
+
+        except Exception as e:
+            log.debug(f"data_engine.formfav_sync: failed for {race_uid}: {e}")
+            errors += 1
+            continue
+
+    log.info(
+        f"data_engine.formfav_sync: date={td} "
+        f"races_enriched={races_enriched} runners_enriched={runners_enriched} errors={errors}"
+    )
+    return {
+        "ok": True,
+        "date": td,
+        "races_enriched": races_enriched,
+        "runners_enriched": runners_enriched,
+        "errors": errors,
+        "source": "formfav",
+    }
+
+
+# ------------------------------------------------------------
 # INTERNAL WRITE HELPERS
 # ------------------------------------------------------------
 

@@ -149,6 +149,8 @@ def _board_item(race: dict[str, Any], ntj: dict[str, Any], confidence: float) ->
         "seconds_to_jump": ntj.get("seconds_to_jump"),
         "ntj_label": ntj.get("ntj_label"),
         "is_near_jump": ntj.get("is_near_jump"),
+        # FormFav persistent enrichment (attached separately; None if not yet synced)
+        "formfav": race.get("formfav"),
     }
 
 
@@ -175,6 +177,9 @@ def get_board_for_today(
 
     If formfav_overlays is not provided, provisional overlays are loaded
     automatically from the in-memory store in data_engine.
+
+    Stored FormFav enrichment (formfav_race_enrichment table) is attached
+    to each board item under the "formfav" key.
     """
     try:
         from database import get_active_races, get_races_for_date, get_blocked_races
@@ -190,6 +195,27 @@ def get_board_for_today(
                 formfav_overlays = get_provisional_overlays()
             except Exception:
                 formfav_overlays = {}
+
+        # Load stored FormFav enrichment and index by race_uid
+        ff_enrichment: dict[str, dict[str, Any]] = {}
+        try:
+            from database import get_formfav_enrichments_for_date
+            for ff_row in get_formfav_enrichments_for_date(today):
+                uid = ff_row.get("race_uid") or ""
+                if uid:
+                    ff_enrichment[uid] = ff_row
+        except Exception:
+            pass
+
+        # Attach stored FormFav enrichment to each race before board build
+        if ff_enrichment:
+            enriched_races = []
+            for race in races:
+                uid = race.get("race_uid") or ""
+                if uid in ff_enrichment:
+                    race = {**race, "formfav": ff_enrichment[uid]}
+                enriched_races.append(race)
+            races = enriched_races
 
         board = build_board(
             races,
@@ -211,6 +237,7 @@ def get_board_for_today(
             "active_race_count": active_count,
             "blocked_race_count": blocked_pre_stored,
             "rejected_count": rejected_count,
+            "formfav_enriched_count": len(ff_enrichment),
         }
 
         if not board:

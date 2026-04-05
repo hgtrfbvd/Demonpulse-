@@ -402,3 +402,170 @@ def _build_race_payload(race: dict[str, Any]) -> dict[str, Any] | None:
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# FORMFAV ENRICHMENT — PERSISTENT SECONDARY SOURCE
+# ---------------------------------------------------------------------------
+
+def upsert_formfav_race_enrichment(data: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Insert or update a FormFav race enrichment record.
+    Conflict key: race_uid (one enrichment row per race).
+    Never overwrites primary OddsPro records.
+    """
+    import json
+
+    race_uid = data.get("race_uid") or ""
+    if not race_uid:
+        log.warning("database.upsert_formfav_race_enrichment: skipping row missing race_uid")
+        return None
+
+    def _as_json(val: Any) -> Any:
+        """Ensure dict/list values are JSON-serialisable strings for JSONB columns."""
+        if val is None:
+            return None
+        if isinstance(val, (dict, list)):
+            return json.dumps(val)
+        return val
+
+    payload = {
+        "race_uid":          race_uid,
+        "date":              data.get("date") or date.today().isoformat(),
+        "track":             data.get("track") or "",
+        "race_num":          int(data.get("race_num") or 0),
+        "race_code":         data.get("race_code") or data.get("code") or "",
+        "race_name":         data.get("race_name") or "",
+        "distance":          data.get("distance") or "",
+        "grade":             data.get("grade") or "",
+        "condition":         data.get("condition") or "",
+        "weather":           data.get("weather") or "",
+        "start_time":        data.get("start_time") or "",
+        "start_time_utc":    data.get("start_time_utc") or "",
+        "timezone":          data.get("timezone") or "",
+        "abandoned":         bool(data.get("abandoned", False)),
+        "number_of_runners": int(data.get("number_of_runners") or 0),
+        "pace_scenario":     data.get("pace_scenario") or "",
+        "raw_response":      _as_json(data.get("raw_response")),
+        "fetched_at":        data.get("fetched_at") or datetime.now(timezone.utc).isoformat(),
+        "updated_at":        datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = safe_query(
+        lambda: get_db()
+        .table(T("formfav_race_enrichment"))
+        .upsert(payload, on_conflict="race_uid")
+        .execute()
+        .data
+    )
+    if result:
+        log.debug(f"database: upserted formfav_race_enrichment {race_uid}")
+        return result[0] if isinstance(result, list) else result
+    return None
+
+
+def upsert_formfav_runner_enrichment(data: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Insert or update a FormFav runner enrichment record.
+    Conflict key: (race_uid, number).
+    """
+    import json
+
+    race_uid = data.get("race_uid") or ""
+    number = data.get("number")
+    if not race_uid or number is None:
+        log.warning("database.upsert_formfav_runner_enrichment: skipping row missing race_uid or number")
+        return None
+
+    def _as_json(val: Any) -> Any:
+        if val is None:
+            return None
+        if isinstance(val, (dict, list)):
+            return json.dumps(val)
+        return val
+
+    payload = {
+        "race_uid":           race_uid,
+        "runner_name":        data.get("runner_name") or data.get("name") or "",
+        "number":             int(number),
+        "barrier":            int(data["barrier"]) if data.get("barrier") is not None else None,
+        "age":                data.get("age") or "",
+        "claim":              data.get("claim") or "",
+        "scratched":          bool(data.get("scratched", False)),
+        "form_string":        data.get("form_string") or "",
+        "trainer":            data.get("trainer") or "",
+        "jockey":             data.get("jockey") or "",
+        "driver":             data.get("driver") or "",
+        "weight":             data.get("weight"),
+        "decorators":         _as_json(data.get("decorators") or []),
+        "speed_map":          _as_json(data.get("speed_map")),
+        "class_profile":      _as_json(data.get("class_profile")),
+        "race_class_fit":     _as_json(data.get("race_class_fit")),
+        "stats_overall":      _as_json(data.get("stats_overall")),
+        "stats_track":        _as_json(data.get("stats_track")),
+        "stats_distance":     _as_json(data.get("stats_distance")),
+        "stats_condition":    _as_json(data.get("stats_condition")),
+        "stats_track_distance": _as_json(data.get("stats_track_distance")),
+        "stats_full":         _as_json(data.get("stats_full") or data.get("stats_json")),
+        "win_prob":           data.get("win_prob"),
+        "place_prob":         data.get("place_prob"),
+        "model_rank":         int(data["model_rank"]) if data.get("model_rank") is not None else None,
+        "confidence":         data.get("confidence") or "",
+        "model_version":      data.get("model_version") or "",
+        "fetched_at":         data.get("fetched_at") or datetime.now(timezone.utc).isoformat(),
+        "updated_at":         datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = safe_query(
+        lambda: get_db()
+        .table(T("formfav_runner_enrichment"))
+        .upsert(payload, on_conflict="race_uid,number")
+        .execute()
+        .data
+    )
+    if result:
+        log.debug(f"database: upserted formfav_runner_enrichment {race_uid}/{number}")
+        return result[0] if isinstance(result, list) else result
+    return None
+
+
+def get_formfav_race_enrichment(race_uid: str) -> dict[str, Any] | None:
+    """Fetch stored FormFav race enrichment for a given race_uid."""
+    result = safe_query(
+        lambda: get_db()
+        .table(T("formfav_race_enrichment"))
+        .select("*")
+        .eq("race_uid", race_uid)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return (result or [None])[0]
+
+
+def get_formfav_runner_enrichments(race_uid: str) -> list[dict[str, Any]]:
+    """Fetch all stored FormFav runner enrichments for a given race_uid."""
+    return safe_query(
+        lambda: get_db()
+        .table(T("formfav_runner_enrichment"))
+        .select("*")
+        .eq("race_uid", race_uid)
+        .order("number")
+        .execute()
+        .data,
+        [],
+    ) or []
+
+
+def get_formfav_enrichments_for_date(target_date: str) -> list[dict[str, Any]]:
+    """Fetch all FormFav race enrichment rows for a given date."""
+    return safe_query(
+        lambda: get_db()
+        .table(T("formfav_race_enrichment"))
+        .select("*")
+        .eq("date", target_date)
+        .order("race_num")
+        .execute()
+        .data,
+        [],
+    ) or []

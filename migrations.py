@@ -719,6 +719,120 @@ def run_phase4_migrations(db_client: Any = None) -> dict[str, Any]:
     return results
 
 
+# ---------------------------------------------------------------------------
+# PHASE 5 — FORMFAV FULL-COVERAGE ENRICHMENT TABLES
+# Stores complete FormFav API responses for race and runner enrichment.
+# Separate from primary OddsPro tables. Keyed by race_uid + runner number.
+# ---------------------------------------------------------------------------
+
+_PHASE5_TABLES: list[tuple[str, str]] = [
+    (
+        "formfav_race_enrichment",
+        """
+        CREATE TABLE IF NOT EXISTS formfav_race_enrichment (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            race_uid TEXT NOT NULL DEFAULT '',
+            date DATE,
+            track TEXT DEFAULT '',
+            race_num INTEGER,
+            race_code TEXT DEFAULT '',
+            race_name TEXT DEFAULT '',
+            distance TEXT DEFAULT '',
+            grade TEXT DEFAULT '',
+            condition TEXT DEFAULT '',
+            weather TEXT DEFAULT '',
+            start_time TEXT DEFAULT '',
+            start_time_utc TEXT DEFAULT '',
+            timezone TEXT DEFAULT '',
+            abandoned BOOLEAN DEFAULT false,
+            number_of_runners INTEGER DEFAULT 0,
+            pace_scenario TEXT DEFAULT '',
+            raw_response JSONB,
+            fetched_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            UNIQUE (race_uid)
+        )
+        """,
+    ),
+    (
+        "formfav_runner_enrichment",
+        """
+        CREATE TABLE IF NOT EXISTS formfav_runner_enrichment (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            race_uid TEXT NOT NULL DEFAULT '',
+            runner_name TEXT DEFAULT '',
+            number INTEGER,
+            barrier INTEGER,
+            age TEXT DEFAULT '',
+            claim TEXT DEFAULT '',
+            scratched BOOLEAN DEFAULT false,
+            form_string TEXT DEFAULT '',
+            trainer TEXT DEFAULT '',
+            jockey TEXT DEFAULT '',
+            driver TEXT DEFAULT '',
+            weight NUMERIC,
+            decorators JSONB DEFAULT '[]'::jsonb,
+            speed_map JSONB,
+            class_profile JSONB,
+            race_class_fit JSONB,
+            stats_overall JSONB,
+            stats_track JSONB,
+            stats_distance JSONB,
+            stats_condition JSONB,
+            stats_track_distance JSONB,
+            stats_full JSONB,
+            win_prob NUMERIC,
+            place_prob NUMERIC,
+            model_rank INTEGER,
+            confidence TEXT DEFAULT '',
+            model_version TEXT DEFAULT '',
+            fetched_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            UNIQUE (race_uid, number)
+        )
+        """,
+    ),
+]
+
+
+def run_phase5_formfav_migrations(db_client: Any = None) -> dict[str, Any]:
+    """
+    Phase 5 — Create FormFav full-coverage enrichment tables.
+    Safe to re-run (uses CREATE TABLE IF NOT EXISTS).
+    """
+    if db_client is None:
+        from db import get_db
+        db_client = get_db()
+
+    results: dict[str, Any] = {"created": [], "skipped": [], "errors": []}
+
+    for table_name, create_sql in _PHASE5_TABLES:
+        try:
+            db_client.rpc(
+                "run_migration_sql",
+                {"sql_statement": create_sql.strip()},
+            ).execute()
+            results["created"].append(table_name)
+            log.info(f"migrations: phase5 table ensured: {table_name}")
+        except Exception as e:
+            err_str = str(e)
+            if "already exists" in err_str.lower() or "duplicate" in err_str.lower():
+                results["skipped"].append(table_name)
+            else:
+                log.warning(f"migrations: could not create {table_name}: {e}")
+                results["errors"].append({"table": table_name, "error": err_str})
+
+    _ensure_phase5_indexes(db_client, results)
+
+    log.info(
+        f"migrations: phase5 done — "
+        f"created={len(results['created'])} "
+        f"skipped={len(results['skipped'])} "
+        f"errors={len(results['errors'])}"
+    )
+    return results
+
+
 def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
     """
     Run all migration phases in order:
@@ -726,6 +840,7 @@ def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
       2. Phase 3 intelligence-layer table creation
       3. Phase 4 feature-engine / sectionals table creation + column additions
       4. Phase 4.6 schema alignment (brings legacy supabase_schema.sql DBs to canonical)
+      5. Phase 5 FormFav full-coverage enrichment tables
 
     Safe to re-run.
     """
@@ -738,12 +853,14 @@ def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
         "phase3": {},
         "phase4": {},
         "schema_alignment": {},
+        "phase5_formfav": {},
     }
 
     combined["column_migrations"] = run_migrations(db_client)
     combined["phase3"] = run_phase3_migrations(db_client)
     combined["phase4"] = run_phase4_migrations(db_client)
     combined["schema_alignment"] = run_schema_alignment(db_client)
+    combined["phase5_formfav"] = run_phase5_formfav_migrations(db_client)
 
     log.info("migrations: run_all_migrations complete")
     return combined
@@ -797,3 +914,18 @@ def ensure_race_uid_index(db_client: Any = None) -> bool:
     except Exception as e:
         log.warning(f"migrations: could not create race_uid index: {e}")
         return False
+
+
+def _ensure_phase5_indexes(db_client: Any, results: dict[str, Any]) -> None:
+    """Create Phase 5 indexes for FormFav enrichment tables."""
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_formfav_race_enrichment_race_uid ON formfav_race_enrichment(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_formfav_race_enrichment_date ON formfav_race_enrichment(date);",
+        "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_uid ON formfav_runner_enrichment(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_num ON formfav_runner_enrichment(race_uid, number);",
+    ]
+    for sql in indexes:
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+        except Exception as e:
+            log.debug(f"migrations: phase5 index skipped/failed: {e}")
