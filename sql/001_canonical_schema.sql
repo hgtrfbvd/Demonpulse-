@@ -740,6 +740,7 @@ CREATE TABLE IF NOT EXISTS learning_evaluations (
     race_uid                    TEXT        NOT NULL    DEFAULT '',
     oddspro_race_id             TEXT                    DEFAULT '',
     model_version               TEXT                    DEFAULT 'baseline_v1',
+    race_code                   TEXT                    DEFAULT 'GREYHOUND',
     predicted_winner            TEXT                    DEFAULT '',
     actual_winner               TEXT                    DEFAULT '',
     winner_hit                  BOOLEAN                 DEFAULT FALSE,
@@ -764,6 +765,9 @@ ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS used_enrichment    BOO
 ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS disagreement_score NUMERIC(8,4);
 ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS formfav_rank       INTEGER;
 ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS your_rank          INTEGER;
+-- race_code allows per-code accuracy analysis (used by v_prediction_accuracy view).
+-- Defaults to 'GREYHOUND' for existing rows; new evaluations should populate this.
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS race_code          TEXT DEFAULT 'GREYHOUND';
 
 -- ----------------------------------------------------------------
 -- backtest_runs

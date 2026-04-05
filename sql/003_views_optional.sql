@@ -101,18 +101,18 @@ ORDER BY date DESC;
 -- ----------------------------------------------------------------
 -- v_backtest_summary
 -- Aggregated backtest run performance.
+-- Column aliases preserve backward compatibility with any existing queries
+-- that reference winner_hits and winner_pct.
 -- ----------------------------------------------------------------
 CREATE OR REPLACE VIEW v_backtest_summary AS
 SELECT
     run_id,
     model_version,
-    race_code,
     date_from,
     date_to,
     total_races,
-    winner_hits,
-    ROUND(winner_accuracy * 100, 2)  AS winner_pct,
-    status,
+    winner_hit_count                    AS winner_hits,
+    ROUND(hit_rate * 100, 2)            AS winner_pct,
     created_at
 FROM backtest_runs
 ORDER BY created_at DESC;
