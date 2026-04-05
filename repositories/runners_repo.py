@@ -148,7 +148,9 @@ class RunnersRepo:
             "best_time":         runner.get("best_time", ""),
             "career":            runner.get("career", ""),
             "scratched":         bool(runner.get("scratched", False)),
-            "scratch_reason":    runner.get("scratch_reason", ""),
+            # CF-06: normalise scratch field — connectors may provide scratch_timing
+            # (OddsPro/FormFav) or scratch_reason (canonical column name)
+            "scratch_reason":    runner.get("scratch_reason") or runner.get("scratch_timing") or "",
             "source_confidence": runner.get("source_confidence", ""),
             "updated_at":        _now(),
         }

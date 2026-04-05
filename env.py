@@ -82,6 +82,10 @@ _TESTABLE_TABLES = {
     # Phase 4 — Feature engine / sectionals / race shape
     "sectional_snapshots",
     "race_shape_snapshots",
+    # CF-04: results_log must be testable so TEST mode cannot contaminate production
+    "results_log",
+    # meetings — race meeting header rows; testable so TEST never touches live meetings
+    "meetings",
 }
 
 

@@ -1,15 +1,19 @@
 -- ================================================================
--- DEMONPULSE V8 — SUPABASE SCHEMA
--- supabase_schema.sql
+-- DEMONPULSE V8 — SUPABASE SCHEMA  (supabase_schema.sql)
 -- ================================================================
--- Brand-new clean schema for the DemonPulse Supabase database.
--- Single file — paste the entire contents into the Supabase SQL Editor
--- and click Run. Safe to run on an empty database or as an upgrade.
+-- ⚠️  LEGACY / SECONDARY COPY — DO NOT USE AS CANONICAL AUTHORITY
+-- ================================================================
+-- CF-02 / CF-03: Two conflicting schema files were identified.
+-- CANONICAL AUTHORITY is now: sql/001_canonical_schema.sql
 --
--- SOURCE OF TRUTH: supabase_config.py, repositories/, services/
--- Python layer:    supabase_client.py → repositories/*_repo.py
+-- This file is retained as a human-readable quick-reference copy.
+-- It is NOT the file that drives migrations or schema bootstrapping.
+-- Any divergences between this file and sql/001_canonical_schema.sql
+-- must be treated as errors in THIS file; sql/001 is always authoritative.
 --
--- IDEMPOTENT — safe to re-run:
+-- To apply the schema, run sql/001_canonical_schema.sql followed by
+-- sql/002_indexes_constraints.sql and sql/003_views_optional.sql.
+-- ================================================================
 --   • CREATE TABLE IF NOT EXISTS       — never destroys existing data
 --   • ALTER TABLE ADD COLUMN IF NOT EXISTS — never drops columns
 --   • CREATE INDEX IF NOT EXISTS       — no-op if already present
