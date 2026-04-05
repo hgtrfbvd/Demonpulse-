@@ -362,6 +362,10 @@ CREATE TABLE IF NOT EXISTS bet_log (
     settled_at      TIMESTAMPTZ
 );
 
+-- Backfill race_uid on bet_log BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE bet_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_bet_log_date         ON bet_log(date);
 CREATE INDEX IF NOT EXISTS idx_bet_log_user         ON bet_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_bet_log_race_uid     ON bet_log(race_uid);
@@ -393,6 +397,10 @@ CREATE TABLE IF NOT EXISTS signals (
     created_at      TIMESTAMPTZ             DEFAULT NOW(),
     updated_at      TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on signals BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE signals ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_signals_date     ON signals(date);
 CREATE INDEX IF NOT EXISTS idx_signals_race_uid ON signals(race_uid);
@@ -535,6 +543,10 @@ CREATE TABLE IF NOT EXISTS simulation_log (
     created_at       TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill race_uid on simulation_log BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE simulation_log ADD COLUMN IF NOT EXISTS race_uid TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_simulation_log_race_uid ON simulation_log(race_uid);
 CREATE INDEX IF NOT EXISTS idx_simulation_log_time     ON simulation_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_simulation_log_user     ON simulation_log(user_id);
@@ -560,6 +572,10 @@ CREATE TABLE IF NOT EXISTS feature_snapshots (
     source               TEXT                    DEFAULT 'oddspro',
     created_at           TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on feature_snapshots BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE feature_snapshots ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_feature_snaps_race_uid ON feature_snapshots(race_uid);
 CREATE INDEX IF NOT EXISTS idx_feature_snaps_date     ON feature_snapshots(date);
@@ -589,6 +605,10 @@ CREATE TABLE IF NOT EXISTS prediction_snapshots (
     created_at              TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill race_uid on prediction_snapshots BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_pred_snaps_race_uid    ON prediction_snapshots(race_uid);
 CREATE INDEX IF NOT EXISTS idx_pred_snaps_date        ON prediction_snapshots(date);
 CREATE INDEX IF NOT EXISTS idx_pred_snaps_model_date  ON prediction_snapshots(model_version, created_at DESC);
@@ -611,6 +631,10 @@ CREATE TABLE IF NOT EXISTS prediction_runner_outputs (
     model_version           TEXT                    DEFAULT '',
     created_at              TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on prediction_runner_outputs BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE prediction_runner_outputs ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_pred_outputs_snap_id  ON prediction_runner_outputs(prediction_snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_pred_outputs_race_uid ON prediction_runner_outputs(race_uid);
@@ -638,6 +662,10 @@ CREATE TABLE IF NOT EXISTS learning_evaluations (
     evaluated_at            TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill race_uid on learning_evaluations BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_learning_evals_race_uid  ON learning_evaluations(race_uid);
 CREATE INDEX IF NOT EXISTS idx_learning_evals_date      ON learning_evaluations(date);
 CREATE INDEX IF NOT EXISTS idx_learning_evals_model     ON learning_evaluations(model_version);
@@ -658,6 +686,10 @@ CREATE TABLE IF NOT EXISTS sectional_snapshots (
     source_type     TEXT                    DEFAULT 'pre_race',
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on sectional_snapshots BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE sectional_snapshots ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_sectionals_race_uid ON sectional_snapshots(race_uid);
 
@@ -680,6 +712,10 @@ CREATE TABLE IF NOT EXISTS race_shape_snapshots (
     model_version   TEXT,
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on race_shape_snapshots BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE race_shape_snapshots ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_race_shape_race_uid ON race_shape_snapshots(race_uid);
 CREATE INDEX IF NOT EXISTS idx_race_shape_date     ON race_shape_snapshots(date);
@@ -735,6 +771,10 @@ CREATE TABLE IF NOT EXISTS backtest_run_items (
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill race_uid on backtest_run_items BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_backtest_items_run_id   ON backtest_run_items(run_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_items_race_uid ON backtest_run_items(race_uid);
 
@@ -755,6 +795,10 @@ CREATE TABLE IF NOT EXISTS etg_tags (
     created_at  TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill race_uid on etg_tags BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE etg_tags ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_etg_tags_race_uid ON etg_tags(race_uid);
 
 -- ----------------------------------------------------------------
@@ -771,6 +815,10 @@ CREATE TABLE IF NOT EXISTS epr_data (
     session_id  TEXT,
     created_at  TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on epr_data BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE epr_data ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_epr_data_race_uid ON epr_data(race_uid);
 
@@ -802,6 +850,10 @@ CREATE TABLE IF NOT EXISTS pass_log (
     score       NUMERIC,
     created_at  TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on pass_log BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE pass_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_pass_log_race_uid ON pass_log(race_uid);
 
@@ -855,6 +907,10 @@ CREATE TABLE IF NOT EXISTS exotic_suggestions (
     estimated_cost  NUMERIC,
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on exotic_suggestions BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE exotic_suggestions ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_exotic_sugg_race ON exotic_suggestions(race_uid);
 
