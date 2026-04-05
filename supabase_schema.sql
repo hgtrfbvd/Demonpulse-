@@ -141,9 +141,9 @@ CREATE TABLE IF NOT EXISTS today_runners (
     UNIQUE (race_uid, box_num)
 );
 
-CREATE INDEX IF NOT EXISTS idx_today_runners_is_fav ON today_runners(is_fav) WHERE is_fav = TRUE;
--- NOTE: idx_today_runners_race_uid and idx_today_runners_race_uid_box are deferred to
---       Section 8B — race_uid is only guaranteed to exist after the ALTER TABLE guard runs.
+-- NOTE: idx_today_runners_is_fav, idx_today_runners_race_uid and idx_today_runners_race_uid_box
+--       are deferred to Section 8B — those columns are only guaranteed to exist after the
+--       ALTER TABLE … ADD COLUMN IF NOT EXISTS guards run (upgrade-safe ordering).
 
 -- ----------------------------------------------------------------
 -- results_log
@@ -841,6 +841,7 @@ ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS price             NUMERIC;
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS rating            NUMERIC;
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS source_confidence TEXT                 DEFAULT '';
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS scratch_reason    TEXT                 DEFAULT '';
+ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS is_fav            BOOLEAN              DEFAULT FALSE;
 ALTER TABLE today_runners ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ          DEFAULT NOW();
 
 -- results_log — race_uid added in V8
@@ -874,6 +875,7 @@ CREATE INDEX IF NOT EXISTS idx_today_races_lifecycle_date ON today_races(lifecyc
 CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid     ON today_runners(race_uid);
 CREATE INDEX IF NOT EXISTS idx_today_runners_race_uid_box ON today_runners(race_uid, box_num);
 CREATE INDEX IF NOT EXISTS idx_today_runners_oddspro_id   ON today_runners(oddspro_race_id);
+CREATE INDEX IF NOT EXISTS idx_today_runners_is_fav       ON today_runners(is_fav) WHERE is_fav = TRUE;
 
 -- results_log — race_uid guarded above
 CREATE INDEX IF NOT EXISTS idx_results_log_race_uid ON results_log(race_uid);
