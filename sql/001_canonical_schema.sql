@@ -1498,7 +1498,7 @@ ON CONFLICT DO NOTHING;
 -- ================================================================
 
 -- audit_log: logs_repo.py inserts 'ip_address'; canonical schema (001) defines 'ip'.
--- Both columns coexist for compatibility — 'ip_address' added here for Python callers.
+-- Add ip_address so Python callers work on databases upgraded from the canonical schema.
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip_address TEXT;
 
 -- user_activity: users_repo.py log_activity() inserts 'resource'
@@ -1548,8 +1548,8 @@ ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS notes            TEXT;
 ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS updated_at       TIMESTAMPTZ DEFAULT NOW();
 
 -- backtest_run_items: backtesting_repo.py _build_item_payload writes 'date' and
--- 'race_code'; canonical schema uses 'race_date' and 'code'. Adding compatibility
--- columns so both Python callers and the canonical column names work side by side.
+-- 'race_code'; canonical schema uses 'race_date' and 'code'. Add alias columns so
+-- Python callers work on databases upgraded from the canonical schema.
 ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS date        DATE;
 ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS race_code   TEXT        DEFAULT 'GREYHOUND';
 ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS win_price   NUMERIC;
@@ -1567,8 +1567,8 @@ ALTER TABLE source_log ADD COLUMN IF NOT EXISTS error_msg       TEXT;
 ALTER TABLE source_log ADD COLUMN IF NOT EXISTS records_fetched INTEGER;
 
 -- activity_log: logs_repo.py log_activity() inserts 'event', 'resource', 'detail'.
--- Canonical schema uses 'event_type', 'description', 'data'. Adding compatibility
--- columns so Python callers work on both schema versions.
+-- Canonical schema uses 'event_type', 'description', 'data'. Add alias columns so
+-- Python callers work on databases upgraded from the canonical schema.
 ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS event    TEXT;
 ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS resource TEXT;
 ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS detail   JSONB;

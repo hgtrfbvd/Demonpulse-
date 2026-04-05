@@ -259,18 +259,18 @@ class UsersRepo:
         ) or []
         row = rows[0] if rows else {}
         granted      = list(row.get("granted") or [])
-        revoked_list = list(row.get("revoked") or [])
+        revoked = list(row.get("revoked") or [])
         if allowed:
             if page not in granted:
                 granted.append(page)
-            if page in revoked_list:
-                revoked_list.remove(page)
+            if page in revoked:
+                revoked.remove(page)
         else:
             if page in granted:
                 granted.remove(page)
-            if page not in revoked_list:
-                revoked_list.append(page)
-        effective = sorted(set(granted) - set(revoked_list))
+            if page not in revoked:
+                revoked.append(page)
+        effective = sorted(set(granted) - set(revoked))
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_PERMS))
@@ -278,7 +278,7 @@ class UsersRepo:
                     {
                         "user_id":   user_id,
                         "granted":   granted,
-                        "revoked":   revoked_list,
+                        "revoked":   revoked,
                         "effective": effective,
                     },
                     on_conflict="user_id",
