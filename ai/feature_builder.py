@@ -318,12 +318,14 @@ def _build_runner_row(
         "enrichment_track_win_pct": 0.0,
         "enrichment_distance_win_pct": 0.0,
         "enrichment_recent_form": "",
+        "enrichment_speed_map": {},
         "enrichment_running_style": "",
         "enrichment_early_speed_index": 0.0,
         "enrichment_settling_position": 0.0,
         "enrichment_pace_scenario": "",
         "enrichment_class_profile": "",
         "enrichment_race_class_fit": 0.0,
+        "enrichment_decorators": [],
         "enrichment_form_badges": "",
         "enrichment_jockey_stats": "",
         "has_enrichment": 0,
@@ -335,12 +337,19 @@ def _build_runner_row(
         row["enrichment_track_win_pct"]      = _safe_float(enrichment.get("track_win_pct"), 0.0)
         row["enrichment_distance_win_pct"]   = _safe_float(enrichment.get("distance_win_pct"), 0.0)
         row["enrichment_recent_form"]        = str(enrichment.get("form_string") or "")
-        row["enrichment_running_style"]      = str(enrichment.get("running_style") or enrichment.get("run_style") or "")
-        row["enrichment_early_speed_index"]  = _safe_float(enrichment.get("earlySpeedIndex") or enrichment.get("early_speed_index"), 0.0)
-        row["enrichment_settling_position"]  = _safe_float(enrichment.get("settlingPosition") or enrichment.get("settling_position"), 0.0)
+        # speedMap stored as full object {runningStyle, earlySpeedIndex, settlingPosition}
+        speed_map = enrichment.get("speedMap") or enrichment.get("speed_map") or {}
+        row["enrichment_speed_map"]          = speed_map if isinstance(speed_map, dict) else {}
+        row["enrichment_running_style"]      = str(speed_map.get("runningStyle") or enrichment.get("running_style") or enrichment.get("run_style") or "")
+        row["enrichment_early_speed_index"]  = _safe_float(speed_map.get("earlySpeedIndex") or enrichment.get("earlySpeedIndex") or enrichment.get("early_speed_index"), 0.0)
+        row["enrichment_settling_position"]  = _safe_float(speed_map.get("settlingPosition") or enrichment.get("settlingPosition") or enrichment.get("settling_position"), 0.0)
         row["enrichment_pace_scenario"]      = str(enrichment.get("paceScenario") or enrichment.get("pace_scenario") or "")
+        # class_profile and race_class_fit stored separately
         row["enrichment_class_profile"]      = str(enrichment.get("classProfile") or enrichment.get("class_profile") or "")
         row["enrichment_race_class_fit"]     = _safe_float(enrichment.get("raceClassFit") or enrichment.get("race_class_fit"), 0.0)
+        # decorators stored as full array
+        decorators = enrichment.get("decorators") or []
+        row["enrichment_decorators"]         = decorators if isinstance(decorators, list) else []
         row["enrichment_form_badges"]        = str(enrichment.get("form_badges") or enrichment.get("badges") or "")
         row["enrichment_jockey_stats"]       = str(enrichment.get("jockey_stats") or "")
         row["has_enrichment"] = 1
