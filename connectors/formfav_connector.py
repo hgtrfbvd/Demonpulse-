@@ -193,9 +193,10 @@ class FormFavConnector:
             runners.append(
                 RunnerRecord(
                     race_uid=race_uid,
-                    # For greyhounds use box number; for gallops/harness use runner number
-                    # so the (race_uid, box_num) upsert key is never NULL.
-                    box_num=number if normalized_code == "GREYHOUND" else number,
+                    # FormFav returns runner numbers only (no separate box_num field).
+                    # Use number as box_num for all race codes so the
+                    # (race_uid, box_num) upsert key is never NULL.
+                    box_num=number,
                     name=runner.get("name") or "",
                     number=number,
                     barrier=barrier,
