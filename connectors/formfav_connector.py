@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import requests
@@ -42,6 +42,18 @@ class RaceRecord:
     expert_form_url: str = ""
     time_status: str = "PARTIAL"
     condition: str = ""
+    # Extended race-level metadata from FormFav
+    weather: str = ""
+    start_time: str = ""
+    start_time_utc: str = ""
+    timezone: str = ""
+    abandoned: bool = False
+    number_of_runners: int = 0
+    pace_scenario: str = ""
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        pass
 
 
 @dataclass
@@ -67,6 +79,24 @@ class RunnerRecord:
     raw_hash: str = ""
     source_confidence: str = "official"
     stats_json: dict[str, Any] | None = None
+    # Extended runner-level fields from FormFav
+    age: str = ""
+    claim: str = ""
+    form_string: str = ""
+    decorators: list[dict[str, Any]] = field(default_factory=list)
+    speed_map: dict[str, Any] | None = None
+    class_profile: dict[str, Any] | None = None
+    race_class_fit: dict[str, Any] | None = None
+    stats_track: dict[str, Any] | None = None
+    stats_distance: dict[str, Any] | None = None
+    stats_condition: dict[str, Any] | None = None
+    stats_track_distance: dict[str, Any] | None = None
+    # Prediction fields (populated by fetch_race_predictions)
+    win_prob: float | None = None
+    place_prob: float | None = None
+    model_rank: int | None = None
+    confidence: str = ""
+    model_version: str = ""
 
     def __post_init__(self):
         if self.stats_json is None:
@@ -136,6 +166,68 @@ class FormFavConnector:
         response.raise_for_status()
         return response.json()
 
+    def _request_predictions(
+        self,
+        *,
+        target_date: str,
+        track: str,
+        race_num: int,
+        code: str,
+    ) -> dict[str, Any] | None:
+        """Fetch win/place probabilities and model metadata from /v1/predictions (Pro tier)."""
+        if not self.api_key:
+            return None
+
+        race_code = self.RACE_CODE_MAP.get(code.upper(), "gallops")
+        params = {
+            "date": target_date,
+            "track": track,
+            "race": race_num,
+            "race_code": race_code,
+            "country": self.country,
+        }
+
+        try:
+            response = requests.get(
+                f"{BASE_URL}/v1/predictions",
+                params=params,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception:
+            # Predictions endpoint is Pro-tier; gracefully ignore if unavailable
+            return None
+
+    def _request_meetings(self, target_date: str, code: str) -> list[dict[str, Any]]:
+        """Fetch list of meetings for a date from /v1/form/meetings."""
+        if not self.api_key:
+            return []
+
+        race_code = self.RACE_CODE_MAP.get(code.upper(), "gallops")
+        params = {
+            "date": target_date,
+            "race_code": race_code,
+            "country": self.country,
+        }
+
+        try:
+            response = requests.get(
+                f"{BASE_URL}/v1/form/meetings",
+                params=params,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+            # API returns {"meetings": [...]} or a list directly
+            if isinstance(data, list):
+                return data
+            return data.get("meetings") or data.get("data") or []
+        except Exception:
+            return []
+
     def fetch_race_form(
         self,
         *,
@@ -172,6 +264,15 @@ class FormFavConnector:
             source_url=f"{BASE_URL}/v1/form",
             expert_form_url=f"{BASE_URL}/v1/form",
             time_status="PARTIAL",
+            # Extended metadata
+            weather=payload.get("weather") or "",
+            start_time=payload.get("startTime") or "",
+            start_time_utc=payload.get("startTimeUtc") or "",
+            timezone=payload.get("timezone") or "",
+            abandoned=bool(payload.get("abandoned", False)),
+            number_of_runners=int(payload.get("numberOfRunners") or len(payload.get("runners", []))),
+            pace_scenario=payload.get("paceScenario") or "",
+            raw_response=payload,
         )
 
         runners: list[RunnerRecord] = []
@@ -195,19 +296,121 @@ class FormFavConnector:
                     career=str(overall) if overall else None,
                     stats_json=stats,
                     source_confidence="api",
+                    # Extended runner fields
+                    age=str(runner.get("age") or ""),
+                    claim=str(runner.get("claim") or ""),
+                    scratched=bool(runner.get("scratched", False)),
+                    form_string=runner.get("form") or "",
+                    decorators=runner.get("decorators") or [],
+                    speed_map=runner.get("speedMap") or None,
+                    class_profile=runner.get("classProfile") or None,
+                    race_class_fit=runner.get("raceClassFit") or None,
+                    stats_track=stats.get("track") or None,
+                    stats_distance=stats.get("distance") or None,
+                    stats_condition=stats.get("condition") or None,
+                    stats_track_distance=stats.get("trackDistance") or None,
                 )
             )
 
         return race, runners
 
+    def fetch_race_predictions(
+        self,
+        *,
+        target_date: str,
+        track: str,
+        race_num: int,
+        code: str = "HORSE",
+    ) -> dict[str, Any] | None:
+        """
+        Fetch prediction data (winProb, placeProb, modelRank, confidence, modelVersion)
+        from /v1/predictions for each runner. Returns raw payload or None if unavailable.
+        """
+        return self._request_predictions(
+            target_date=target_date,
+            track=track,
+            race_num=race_num,
+            code=code,
+        )
+
+    def fetch_race_form_with_predictions(
+        self,
+        *,
+        target_date: str,
+        track: str,
+        race_num: int,
+        code: str = "HORSE",
+    ) -> tuple[RaceRecord, list[RunnerRecord]]:
+        """
+        Fetch race form AND predictions in one call, merging prediction fields
+        (winProb, placeProb, modelRank, confidence, modelVersion) onto runners.
+        Returns (race, runners) with full enrichment.
+        """
+        race, runners = self.fetch_race_form(
+            target_date=target_date,
+            track=track,
+            race_num=race_num,
+            code=code,
+        )
+
+        preds_payload = self.fetch_race_predictions(
+            target_date=target_date,
+            track=track,
+            race_num=race_num,
+            code=code,
+        )
+
+        if preds_payload and preds_payload.get("runners"):
+            model_version = preds_payload.get("modelVersion") or ""
+            pred_by_num: dict[int, dict[str, Any]] = {}
+            for pr in preds_payload["runners"]:
+                n = pr.get("number")
+                if n is not None:
+                    pred_by_num[int(n)] = pr
+
+            for runner in runners:
+                runner_num = runner.number if runner.number is not None else runner.box_num
+                if runner_num is not None:
+                    pr = pred_by_num.get(int(runner_num))
+                    if pr:
+                        runner.win_prob = pr.get("winProb")
+                        runner.place_prob = pr.get("placeProb")
+                        runner.model_rank = pr.get("modelRank")
+                        runner.confidence = str(pr.get("confidence") or "")
+                        runner.model_version = model_version
+
+        return race, runners
+
     def fetch_meetings(self, target_date: str | None = None) -> list[MeetingRecord]:
         """
-        FormFav docs provided here confirm /v1/form race-form requests, but not a public
-        meeting-list endpoint. So this connector does not invent one.
-        Use fetch_race_form directly, or pass known race_numbers into MeetingRecord.extra
-        before calling fetch_meeting_races.
+        Fetch available meetings for a date from /v1/form/meetings.
+        Returns MeetingRecord list with race_numbers in extra.
         """
-        return []
+        if not self.api_key:
+            return []
+
+        from datetime import date as _date
+        td = target_date or _date.today().isoformat()
+
+        meetings: list[MeetingRecord] = []
+        for code in self.supported_codes:
+            raw_meetings = self._request_meetings(td, code)
+            for m in raw_meetings:
+                track = (m.get("track") or m.get("venue") or "").strip().lower().replace(" ", "-")
+                if not track:
+                    continue
+                race_numbers = m.get("raceNumbers") or m.get("race_numbers") or []
+                meetings.append(
+                    MeetingRecord(
+                        code=code,
+                        source=self.source_name,
+                        track=track,
+                        meeting_date=td,
+                        state=m.get("state") or "",
+                        extra={"race_numbers": race_numbers, "raw": m},
+                    )
+                )
+        return meetings
 
     def fetch_meeting_races(self, meeting: MeetingRecord) -> list[RaceRecord]:
         race_numbers = (meeting.extra or {}).get("race_numbers") or []
@@ -232,7 +435,7 @@ class FormFavConnector:
         race: RaceRecord,
         scratchings: dict[str, list[int]] | None = None,
     ) -> tuple[RaceRecord, list[RunnerRecord]]:
-        fresh_race, runners = self.fetch_race_form(
+        fresh_race, runners = self.fetch_race_form_with_predictions(
             target_date=race.date,
             track=race.track,
             race_num=race.race_num,

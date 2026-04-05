@@ -11,6 +11,7 @@ Cycles:
   result_check           - OddsPro day-level result sweep (default: 300s)
   race_state_update      - drive race state machine from stored data (default: 90s)
   health_snapshot        - aggregate health metrics snapshot (default: 120s)
+  formfav_sync           - FormFav persistent enrichment sync (default: 300s)
 
 Safety rules:
   - per-cycle threading.Lock prevents overlapping destructive cycles
@@ -40,6 +41,7 @@ NEAR_JUMP_INTERVAL = 60         # 1 min — near-jump OddsPro + FormFav
 RESULT_CHECK_INTERVAL = 300     # 5 min — OddsPro result sweep
 RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
+FORMFAV_SYNC_INTERVAL = 300     # 5 min — FormFav persistent enrichment sync
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -72,12 +74,15 @@ _scheduler_status = {
     "last_result_check_result": None,
     "last_race_state_update_at": None,
     "last_health_snapshot_at": None,
+    "last_formfav_sync_at": None,
+    "last_formfav_sync_result": None,
     "last_error": None,
     "refresh_interval": REFRESH_INTERVAL,
     "near_jump_interval": NEAR_JUMP_INTERVAL,
     "result_check_interval": RESULT_CHECK_INTERVAL,
     "race_state_interval": RACE_STATE_INTERVAL,
     "health_snapshot_interval": HEALTH_SNAPSHOT_INTERVAL,
+    "formfav_sync_interval": FORMFAV_SYNC_INTERVAL,
 }
 
 
@@ -319,6 +324,32 @@ def _run_health_snapshot():
         log.error(f"Health snapshot failed: {e}")
 
 
+def _run_formfav_sync():
+    """
+    FormFav persistent enrichment sync — stores full FormFav data for all
+    today's active races in the formfav_race_enrichment / formfav_runner_enrichment
+    tables. Skipped silently when FormFav is not enabled.
+    """
+    try:
+        from data_engine import formfav_sync
+        result = formfav_sync()
+        ok = result.get("ok", False)
+        races = result.get("races_enriched", 0)
+        runners = result.get("runners_enriched", 0)
+
+        _set_status(
+            last_formfav_sync_at=_utc_now(),
+            last_formfav_sync_result=result,
+        )
+
+        if races > 0:
+            log.info(f"scheduler: formfav_sync: races={races} runners={runners}")
+        else:
+            log.debug(f"scheduler: formfav_sync: {result.get('reason', 'no races enriched')}")
+    except Exception as e:
+        log.error(f"FormFav sync failed: {e}")
+
+
 # --------------------------------------------------------
 # BOARD REBUILD HELPERS
 # --------------------------------------------------------
@@ -367,6 +398,7 @@ def run_scheduler():
     last_result_check = now
     last_race_state = now
     last_health_snapshot = now
+    last_formfav_sync = now - FORMFAV_SYNC_INTERVAL  # run shortly after startup
 
     if FULL_SWEEP_ON_START:
         try:
@@ -415,6 +447,10 @@ def run_scheduler():
             if now - last_health_snapshot >= HEALTH_SNAPSHOT_INTERVAL:
                 _run_health_snapshot()
                 last_health_snapshot = now
+
+            if now - last_formfav_sync >= FORMFAV_SYNC_INTERVAL:
+                _run_formfav_sync()
+                last_formfav_sync = now
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")
