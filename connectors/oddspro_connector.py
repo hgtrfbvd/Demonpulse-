@@ -1541,6 +1541,13 @@ class OddsProConnector:
             except (TypeError, ValueError):
                 box_num = None
 
+            # barrier / barrierDraw for gallops/harness
+            barrier_raw = r.get("barrier") or r.get("barrierDraw")
+            try:
+                barrier_int = int(barrier_raw) if barrier_raw is not None else None
+            except (TypeError, ValueError):
+                barrier_int = None
+
             weight_raw = r.get("weight")
             try:
                 weight = float(weight_raw) if weight_raw is not None else None
@@ -1556,19 +1563,26 @@ class OddsProConnector:
             scratched_raw = r.get("scratched") or r.get("isScratched") or False
             scratched = bool(scratched_raw)
 
+            # For greyhounds: box_num is the box draw.
+            # For gallops/harness: map barrier → box_num, then number → box_num (fallback).
+            if race.code == "GREYHOUND":
+                effective_box_num = box_num
+            else:
+                effective_box_num = barrier_int if barrier_int is not None else number
+
             runners.append(
                 RunnerRecord(
                     race_uid=race.race_uid,
                     oddspro_race_id=race.oddspro_race_id,
-                    box_num=box_num if race.code == "GREYHOUND" else None,
+                    box_num=effective_box_num,
                     # Documented aliases: runnerName | name | horseName | dogName
                     name=str(
                         r.get("runnerName") or r.get("name")
                         or r.get("horseName") or r.get("dogName") or ""
                     ),
                     number=number,
-                    # barrier / barrierDraw for gallops/harness; box/boxNumber used above for greyhounds
-                    barrier=r.get("barrier") or r.get("barrierDraw"),
+                    # barrier / barrierDraw for gallops/harness
+                    barrier=barrier_int,
                     trainer=str(r.get("trainer") or ""),
                     jockey=str(r.get("jockey") or ""),
                     driver=str(r.get("driver") or ""),
