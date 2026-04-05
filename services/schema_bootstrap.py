@@ -53,7 +53,6 @@ _OPTIONAL_TABLES = [
     "simulation_log",
     "source_log",
     "activity_log",
-    "audit_log",
     "etg_tags",
     "epr_data",
     "aeee_adjustments",
