@@ -2,7 +2,9 @@
 -- DEMONPULSE V8 — CANONICAL SCHEMA  (sql/001_canonical_schema.sql)
 -- ================================================================
 -- ✅  SOLE SCHEMA AUTHORITY — this file drives all migrations.
--- supabase_schema.sql is a retired legacy copy; ignore any divergence.
+-- supabase_schema.sql is kept in sync with this file and is identical.
+-- Both files are the deployment schema; use either one in the Supabase
+-- SQL Editor.  Do not diverge them.
 -- ================================================================
 -- Single source of truth for the Supabase schema.
 -- Replaces all previous migration files in supabase/migrations/.

@@ -350,9 +350,10 @@ _PHASE4_MIGRATIONS: list[tuple[str, str, str, str]] = [
 
 # ---------------------------------------------------------------------------
 # PHASE 4.6 — SCHEMA ALIGNMENT
-# Brings databases seeded from the legacy supabase_schema.sql into full
-# alignment with 001_canonical_schema.sql.  Every column that the application
-# code writes is guaranteed to exist after this phase runs.
+# Brings databases seeded from the *previous* version of supabase_schema.sql
+# (before it was aligned with 001_canonical_schema.sql) into full canonical
+# alignment.  Every column that the application code writes is guaranteed to
+# exist after this phase runs.
 # All entries use ADD COLUMN IF NOT EXISTS — safe to re-run.
 # ---------------------------------------------------------------------------
 _SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
@@ -525,15 +526,17 @@ _SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
 
 def run_schema_alignment(db_client: Any = None) -> dict[str, Any]:
     """
-    Phase 4.6: bring any database seeded from the legacy supabase_schema.sql
-    into full alignment with sql/001_canonical_schema.sql.
+    Phase 4.6: bring any database that was seeded from the *previous* version
+    of supabase_schema.sql (before it was aligned with 001_canonical_schema.sql)
+    into full alignment with the current canonical schema.
 
     Adds every column that the application code writes but that was absent
-    from the legacy schema.  Uses ADD COLUMN IF NOT EXISTS — safe to re-run
-    against a database that already has the canonical structure.
+    from the pre-alignment schema.  Uses ADD COLUMN IF NOT EXISTS — safe to
+    re-run against a database that already has the canonical structure.
 
-    Also removes blocking NOT NULL constraints on legacy-only columns that
-    are no longer written by the application (source_log.source, etg_tags.tag).
+    Also removes blocking NOT NULL constraints on columns that existed only
+    in the old schema and are no longer written by the application
+    (source_log.source, etg_tags.tag).
 
     Returns dict with keys: applied, skipped, errors.
     """
