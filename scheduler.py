@@ -135,6 +135,12 @@ def _run_full_sweep():
     except Exception:
         pass
 
+    # Trigger FormFav second-stage enrichment immediately after ingestion so
+    # races stored by full_sweep are enriched without waiting for the timer.
+    if ok and result.get("races_stored", 0) > 0:
+        log.info("scheduler: triggering FormFav sync after full sweep (second-stage enrichment)")
+        _run_formfav_sync()
+
     return result
 
 
