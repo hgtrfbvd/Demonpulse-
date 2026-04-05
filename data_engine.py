@@ -670,11 +670,19 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
     try:
         from integrity_filter import guard_formfav_overwrite
 
+        # Map GALLOPS→HORSE for FormFav compatibility.
+        # FormFavConnector.RACE_CODE_MAP accepts HORSE/HARNESS/GREYHOUND;
+        # GALLOPS is a legacy OddsPro code. The connector's fallback default
+        # handles it, but explicit mapping here keeps the path consistent
+        # with formfav_sync which already applies the same remapping.
+        raw_code = (race.get("code") or "HORSE").upper()
+        ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
+
         ff_race, ff_runners = ff.fetch_race_form(
             target_date=race.get("date") or date.today().isoformat(),
             track=race.get("track") or "",
             race_num=int(race.get("race_num") or 0),
-            code=race.get("code") or "HORSE",
+            code=ff_code,
             country=_get_formfav_country(race),
         )
 

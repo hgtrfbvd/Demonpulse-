@@ -72,6 +72,9 @@ _TESTABLE_TABLES = {
     "user_sessions",
     "user_activity",
     "simulation_log",     # 005: persist simulation runs
+    # Phase 5 — FormFav persistent enrichment tables
+    "formfav_race_enrichment",
+    "formfav_runner_enrichment",
     # Phase 3 — Intelligence layer tables (prediction, learning, backtest)
     "feature_snapshots",
     "prediction_snapshots",

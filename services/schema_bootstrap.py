@@ -46,6 +46,8 @@ _OPTIONAL_TABLES = [
     "backtest_run_items",
     "sectional_snapshots",
     "race_shape_snapshots",
+    "formfav_race_enrichment",
+    "formfav_runner_enrichment",
     "user_accounts",
     "user_permissions",
     "user_sessions",
