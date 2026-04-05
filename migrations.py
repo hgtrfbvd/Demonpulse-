@@ -64,6 +64,7 @@ _MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("today_races", "time_status",     "TEXT",         "DEFAULT 'PARTIAL'"),
     ("today_races", "condition",       "TEXT",         "DEFAULT ''"),
     ("today_races", "race_name",       "TEXT",         "DEFAULT ''"),
+    ("today_races", "country",         "TEXT",         "DEFAULT 'au'"),
     ("today_races", "updated_at",      "TIMESTAMPTZ",  "DEFAULT now()"),
 
     # today_runners additions
@@ -367,6 +368,12 @@ _SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     # Code writes "ip"; legacy schema named this column "ip_address".
     # audit_log is always-live (no test_ mirror).
     ("audit_log", "ip", "TEXT", ""),
+
+    # ── today_races ──────────────────────────────────────────────────────────
+    # FormFav integration: country field added to allow reliable AU/NZ filtering.
+    # International races (e.g. Bath, Hanshin) must be excluded from FormFav;
+    # relying only on the empty-state heuristic was incorrect.
+    ("today_races",      "country", "TEXT", "DEFAULT 'au'"),
 
     # ── today_runners ────────────────────────────────────────────────────────
     # Code writes race_id (FK), date, track, race_num, is_fav, raw_hash.

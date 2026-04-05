@@ -426,6 +426,7 @@ def _build_race_payload(race: dict[str, Any]) -> dict[str, Any] | None:
         "date": race.get("date") or date.today().isoformat(),
         "track": race.get("track") or "",
         "state": race.get("state") or "",
+        "country": (race.get("country") or "au").strip().lower(),
         "race_num": int(race.get("race_num") or 0),
         "code": race.get("code") or "GREYHOUND",
         "distance": str(race.get("distance") or ""),
