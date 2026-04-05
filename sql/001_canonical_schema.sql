@@ -653,6 +653,10 @@ CREATE TABLE IF NOT EXISTS signals (
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill race_uid on signals BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE signals ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_signals_race_uid    ON signals(race_uid);
 CREATE INDEX IF NOT EXISTS idx_signals_signal      ON signals(signal);
 CREATE INDEX IF NOT EXISTS idx_signals_alert_level ON signals(alert_level);
@@ -672,6 +676,10 @@ CREATE TABLE IF NOT EXISTS exotic_suggestions (
     accepted    BOOLEAN                 DEFAULT FALSE,
     created_at  TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on exotic_suggestions BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE exotic_suggestions ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_exotic_suggestions_race_uid ON exotic_suggestions(race_uid);
 
@@ -699,6 +707,10 @@ CREATE TABLE IF NOT EXISTS feature_snapshots (
     collision_metrics   JSONB                   DEFAULT '[]',
     created_at          TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on feature_snapshots BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE feature_snapshots ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_feature_snapshots_race_uid ON feature_snapshots(race_uid);
 
@@ -732,6 +744,10 @@ CREATE TABLE IF NOT EXISTS prediction_snapshots (
     created_at              TIMESTAMPTZ             DEFAULT NOW()
 );
 
+-- Backfill race_uid on prediction_snapshots BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_race_uid  ON prediction_snapshots(race_uid);
 CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_snap_id   ON prediction_snapshots(prediction_snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_model     ON prediction_snapshots(model_version);
@@ -758,6 +774,10 @@ CREATE TABLE IF NOT EXISTS prediction_runner_outputs (
     model_version           TEXT                    DEFAULT 'baseline_v1',
     created_at              TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on prediction_runner_outputs BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE prediction_runner_outputs ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_prediction_runner_outputs_snap_id  ON prediction_runner_outputs(prediction_snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_prediction_runner_outputs_race_uid ON prediction_runner_outputs(race_uid);
@@ -788,6 +808,10 @@ CREATE TABLE IF NOT EXISTS learning_evaluations (
     evaluation_source           TEXT                    DEFAULT 'oddspro',
     evaluated_at                TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on learning_evaluations BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_learning_evaluations_race_uid ON learning_evaluations(race_uid);
 CREATE INDEX IF NOT EXISTS idx_learning_evaluations_model    ON learning_evaluations(model_version);
@@ -853,6 +877,7 @@ CREATE TABLE IF NOT EXISTS backtest_run_items (
 
 -- Backfill Phase 4 columns on backtest_run_items BEFORE creating indexes
 -- that reference them. On existing databases the CREATE TABLE above is skipped.
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS race_uid              TEXT    DEFAULT '';
 ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS model_version        TEXT    DEFAULT 'baseline_v1';
 ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS used_stored_snapshot BOOLEAN DEFAULT FALSE;
 
@@ -893,6 +918,7 @@ CREATE TABLE IF NOT EXISTS sectional_snapshots (
 
 -- Backfill Phase 4.5 source_type column BEFORE creating indexes that
 -- reference it. On existing databases the CREATE TABLE above is skipped.
+ALTER TABLE sectional_snapshots ADD COLUMN IF NOT EXISTS race_uid    TEXT DEFAULT '';
 ALTER TABLE sectional_snapshots ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'pre_race';
 
 CREATE INDEX IF NOT EXISTS idx_sectional_snapshots_race_uid ON sectional_snapshots(race_uid);
@@ -920,6 +946,10 @@ CREATE TABLE IF NOT EXISTS race_shape_snapshots (
     formfav_enrichment_used     BOOLEAN                 DEFAULT FALSE,
     created_at                  TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on race_shape_snapshots BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE race_shape_snapshots ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_race_shape_snapshots_race_uid ON race_shape_snapshots(race_uid);
 
@@ -1008,6 +1038,7 @@ CREATE TABLE IF NOT EXISTS etg_tags (
 -- Backfill missing columns on etg_tags BEFORE creating indexes that reference
 -- them. On existing databases the CREATE TABLE above is skipped and migration
 -- 001 created this table without session_id.
+ALTER TABLE etg_tags ADD COLUMN IF NOT EXISTS race_uid        TEXT;
 ALTER TABLE etg_tags ADD COLUMN IF NOT EXISTS session_id      UUID    REFERENCES sessions(id) ON DELETE SET NULL;
 ALTER TABLE etg_tags ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
 
@@ -1029,6 +1060,10 @@ CREATE TABLE IF NOT EXISTS pass_log (
     date            DATE                    DEFAULT CURRENT_DATE,
     created_at      TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on pass_log BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE pass_log ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_pass_log_race_uid ON pass_log(race_uid);
 CREATE INDEX IF NOT EXISTS idx_pass_log_date     ON pass_log(date);
@@ -1082,6 +1117,10 @@ CREATE TABLE IF NOT EXISTS simulation_log (
     simulation_summary  TEXT,
     created_at          TIMESTAMPTZ             DEFAULT NOW()
 );
+
+-- Backfill race_uid on simulation_log BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE simulation_log ADD COLUMN IF NOT EXISTS race_uid TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_simulation_log_race_uid   ON simulation_log(race_uid);
 CREATE INDEX IF NOT EXISTS idx_simulation_log_user_id    ON simulation_log(user_id);
@@ -1325,6 +1364,10 @@ CREATE TABLE IF NOT EXISTS scored_races (
     scored_at                   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Backfill race_uid on scored_races BEFORE creating the index that references it.
+-- On existing databases the CREATE TABLE above is a no-op.
+ALTER TABLE scored_races ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_scored_races_race_uid ON scored_races(race_uid);
 
 CREATE TABLE IF NOT EXISTS training_logs (
@@ -1397,6 +1440,7 @@ CREATE TABLE IF NOT EXISTS test_training_logs (   LIKE training_logs   INCLUDING
 
 -- Remove NOT NULL on race_uid in test_today_races to allow test-mode inserts
 -- without a pre-generated race_uid
+ALTER TABLE test_today_races ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 ALTER TABLE test_today_races ALTER COLUMN race_uid DROP NOT NULL;
 
 -- ----------------------------------------------------------------
@@ -1459,6 +1503,11 @@ ON CONFLICT DO NOTHING;
 
 -- Test-mode indexes
 CREATE INDEX IF NOT EXISTS idx_test_today_races_date    ON test_today_races(date);
+-- Guard race_uid on test_today_runners and test_signals BEFORE creating indexes
+-- that reference it. On existing databases these test_ tables may predate the
+-- race_uid column.
+ALTER TABLE test_today_runners ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
+ALTER TABLE test_signals       ADD COLUMN IF NOT EXISTS race_uid TEXT DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_test_today_runners_uid   ON test_today_runners(race_uid);
 CREATE INDEX IF NOT EXISTS idx_test_bet_log_date        ON test_bet_log(date);
 CREATE INDEX IF NOT EXISTS idx_test_signals_race_uid    ON test_signals(race_uid);
@@ -1553,8 +1602,10 @@ ON CONFLICT DO NOTHING;
 --                      resource, data, severity, ip; all backfills moved
 --                      before their indexes (fixes "column does not exist" on
 --                      existing databases)
---   backtest_run_items — model_version backfill moved before its index
---   sectional_snapshots — source_type backfill moved before its index
+--   backtest_run_items — model_version backfill moved before its index;
+--                        race_uid backfill added before its index
+--   sectional_snapshots — source_type backfill moved before its index;
+--                         race_uid backfill added before its index
 --   epr_data         — date backfill moved before its index
 --   aeee_adjustments — added session_id backfill (ALTER TABLE … ADD COLUMN
 --                      IF NOT EXISTS) before the session_id index; migration
@@ -1562,14 +1613,28 @@ ON CONFLICT DO NOTHING;
 --                      "column session_id does not exist" on index creation
 --   etg_tags         — added session_id backfill before session_id index;
 --                      moved manual_override backfill to before all indexes
---                      (same root cause as aeee_adjustments.session_id)
+--                      (same root cause as aeee_adjustments.session_id);
+--                      race_uid backfill added before its index
+--   signals          — race_uid backfill added before its index
+--   exotic_suggestions — race_uid backfill added before its index
+--   feature_snapshots  — race_uid backfill added before its index
+--   prediction_snapshots — race_uid backfill added before its index
+--   prediction_runner_outputs — race_uid backfill added before its index
+--   learning_evaluations — race_uid backfill added before its index
+--   race_shape_snapshots — race_uid backfill added before its index
+--   pass_log         — race_uid backfill added before its index
+--   simulation_log   — race_uid backfill added before its index
+--   scored_races     — race_uid backfill added before its index
 --   All Phase 3/4/4.5/4.6 intelligence tables fully defined
 --   All test_ mirror tables ensured for TEST mode isolation:
---     test_today_races     — backfilled oddspro_race_id, block_code, source,
+--     test_today_races     — backfilled race_uid (guard before ALTER COLUMN);
+--                            backfilled oddspro_race_id, block_code, source,
 --                            condition, race_name, updated_at, completed_at
---     test_today_runners   — backfilled oddspro_race_id, number, barrier,
+--     test_today_runners   — backfilled race_uid before its index;
+--                            backfilled oddspro_race_id, number, barrier,
 --                            jockey, driver, price, rating, source_confidence,
 --                            scratch_reason
+--     test_signals         — backfilled race_uid before its index
 --     test_bet_log         — backfilled user_id, placed_by, signal, exotic_type,
 --                            manual_tag_override
 --     test_etg_tags        — backfilled session_id, manual_override
