@@ -175,9 +175,18 @@ def get_board_for_today(
 
     If formfav_overlays is not provided, provisional overlays are loaded
     automatically from the in-memory store in data_engine.
+
+    FormFav DB-backed enrichment is loaded and merged into board items so that
+    all persistent FormFav data (form trends, stats, win/place probabilities,
+    track bias) is available on every board item via the formfav_enrichment key.
     """
     try:
-        from database import get_active_races, get_races_for_date, get_blocked_races
+        from database import (
+            get_active_races,
+            get_races_for_date,
+            get_blocked_races,
+            get_formfav_race_enrichments_for_date,
+        )
         today = date.today().isoformat()
         races = get_active_races(today)
         all_today = get_races_for_date(today)
@@ -191,11 +200,35 @@ def get_board_for_today(
             except Exception:
                 formfav_overlays = {}
 
+        # Load DB-backed FormFav enrichment (persistent, full-day scope)
+        formfav_db_enrichment: dict[str, dict[str, Any]] = {}
+        try:
+            ff_rows = get_formfav_race_enrichments_for_date(today)
+            for row in ff_rows:
+                uid = row.get("race_uid") or ""
+                if uid:
+                    formfav_db_enrichment[uid] = row
+        except Exception:
+            pass
+
         board = build_board(
             races,
             blocked_tracks=blocked_tracks,
             formfav_overlays=formfav_overlays,
         )
+
+        # Attach DB-backed FormFav enrichment to each board item
+        if formfav_db_enrichment:
+            for item in board:
+                uid = item.get("race_uid") or ""
+                if uid and uid in formfav_db_enrichment:
+                    item["formfav_enrichment"] = {
+                        k: v for k, v in formfav_db_enrichment[uid].items()
+                        if k not in ("id", "fetched_at", "updated_at")
+                    }
+                    item["has_formfav_enrichment"] = True
+                else:
+                    item.setdefault("has_formfav_enrichment", False)
 
         board_count = len(board)
         active_count = len(races)
@@ -211,6 +244,7 @@ def get_board_for_today(
             "active_race_count": active_count,
             "blocked_race_count": blocked_pre_stored,
             "rejected_count": rejected_count,
+            "formfav_enriched_count": len(formfav_db_enrichment),
         }
 
         if not board:

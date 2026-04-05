@@ -1516,6 +1516,83 @@ $$ LANGUAGE plpgsql;
 
 
 -- ================================================================
+-- SECTION 13B: FORMFAV SECONDARY SOURCE TABLES  (Phase 5)
+-- ================================================================
+-- FormFav is a persistent secondary enrichment source, separate from
+-- the OddsPro primary source. Data is stored here and joined to
+-- today_races / today_runners via race_uid + runner_name.
+-- OddsPro authoritative fields are NEVER overwritten by these tables.
+-- ----------------------------------------------------------------
+
+-- formfav_race_enrichment
+-- One row per race. Stores race-level enrichment from FormFav:
+-- form conditions, speed map, track bias, raw form payload.
+-- Conflict key: race_uid
+-- ----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS formfav_race_enrichment (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    race_uid        TEXT        NOT NULL    DEFAULT '',
+    date            DATE,
+    track           TEXT                    DEFAULT '',
+    race_num        INTEGER,
+    code            TEXT                    DEFAULT 'GALLOPS',
+    -- Race-level form fields from /v1/form
+    race_class      TEXT                    DEFAULT '',
+    condition       TEXT                    DEFAULT '',
+    distance        TEXT                    DEFAULT '',
+    speed_map       JSONB                   DEFAULT '{}',
+    -- Track bias from /v1/stats/track-bias/{track}
+    track_bias      JSONB                   DEFAULT '{}',
+    -- Raw form payload (all runners, metadata)
+    raw_form        JSONB                   DEFAULT '{}',
+    -- Meta
+    source          TEXT                    DEFAULT 'formfav',
+    fetched_at      TIMESTAMPTZ             DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ             DEFAULT NOW(),
+    UNIQUE (race_uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ff_race_enrichment_race_uid   ON formfav_race_enrichment(race_uid);
+CREATE INDEX IF NOT EXISTS idx_ff_race_enrichment_date       ON formfav_race_enrichment(date);
+CREATE INDEX IF NOT EXISTS idx_ff_race_enrichment_track_race ON formfav_race_enrichment(track, race_num);
+
+-- formfav_runner_enrichment
+-- One row per runner per race. Stores runner-level enrichment from FormFav:
+-- form trends, career stats, jockey/trainer stats, win/place probabilities.
+-- Conflict key: (race_uid, runner_name)
+-- ----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS formfav_runner_enrichment (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    race_uid        TEXT        NOT NULL    DEFAULT '',
+    runner_name     TEXT        NOT NULL    DEFAULT '',
+    barrier         INTEGER,
+    number          INTEGER,
+    -- Form trend (last N run descriptions) from /v1/form
+    form_trend      JSONB                   DEFAULT '{}',
+    -- Career/track/distance stats from /v1/form runner.stats
+    runner_stats    JSONB                   DEFAULT '{}',
+    -- Running style profile
+    run_style       TEXT                    DEFAULT '',
+    -- Class fit analysis
+    class_fit       JSONB                   DEFAULT '{}',
+    -- Decorator (hot/cold/improving flags)
+    decorator       JSONB                   DEFAULT '{}',
+    -- Probabilities from /v1/predictions
+    win_prob        NUMERIC(8, 6),
+    place_prob      NUMERIC(8, 6),
+    -- Meta
+    source          TEXT                    DEFAULT 'formfav',
+    fetched_at      TIMESTAMPTZ             DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ             DEFAULT NOW(),
+    UNIQUE (race_uid, runner_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ff_runner_enrichment_race_uid ON formfav_runner_enrichment(race_uid);
+CREATE INDEX IF NOT EXISTS idx_ff_runner_enrichment_name     ON formfav_runner_enrichment(runner_name);
+CREATE INDEX IF NOT EXISTS idx_ff_runner_enrichment_join     ON formfav_runner_enrichment(race_uid, runner_name);
+
+
+-- ================================================================
 -- SECTION 14: BACKFILL — existing users missing account/permission rows
 -- ================================================================
 
