@@ -857,6 +857,58 @@ ALTER TABLE system_state ADD COLUMN IF NOT EXISTS staking_mode         TEXT     
 ALTER TABLE system_state ADD COLUMN IF NOT EXISTS tempo_weight         NUMERIC(4,2) DEFAULT 1.0;
 ALTER TABLE system_state ADD COLUMN IF NOT EXISTS traffic_penalty      NUMERIC(4,2) DEFAULT 0.8;
 ALTER TABLE system_state ADD COLUMN IF NOT EXISTS closer_boost         NUMERIC(4,2) DEFAULT 1.1;
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS fade_penalty         NUMERIC(4,2) DEFAULT 0.9;
+ALTER TABLE system_state ADD COLUMN IF NOT EXISTS simulation_depth     INTEGER      DEFAULT 1000;
+
+-- users — extended columns used by users.py (create_user_full, get_all_users, etc.)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count   INTEGER     DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ip       TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by    TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at    TIMESTAMPTZ DEFAULT NOW();
+
+-- user_sessions — token_jti and revocation columns used by users.py
+-- (register_session, is_session_revoked, revoke_all_sessions, get_active_sessions)
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS token_jti   TEXT        UNIQUE;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked     BOOLEAN     DEFAULT FALSE;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked_at  TIMESTAMPTZ;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked_by  TEXT;
+
+-- user_permissions — array-based columns used by users.py
+-- (create_user_full, update_user_permissions, resolve_permissions)
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS granted    TEXT[]      DEFAULT '{}';
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS revoked    TEXT[]      DEFAULT '{}';
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS effective  TEXT[]      DEFAULT '{}';
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS updated_by TEXT;
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+-- Ensure UNIQUE(user_id) for array-based upsert used by users.py (on_conflict="user_id")
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid = 'user_permissions'::regclass
+          AND c.contype  = 'u'
+          AND array_length(c.conkey, 1) = 1
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'user_id')
+    ) THEN
+        ALTER TABLE user_permissions
+            ADD CONSTRAINT user_permissions_user_id_key UNIQUE (user_id);
+    END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- learning_evaluations — race_code needed by v_prediction_accuracy view;
+-- date, track, score_at_prediction, win_price, pl_outcome written by learning_repo.py
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS race_code           TEXT    DEFAULT 'GREYHOUND';
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS date                DATE;
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS track               TEXT    DEFAULT '';
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS score_at_prediction NUMERIC;
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS win_price           NUMERIC;
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS pl_outcome          NUMERIC;
+
+-- backtest_runs — updated_at written by BacktestingRepo.update_run()
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ----------------------------------------------------------------
 -- Indexes for guard-added columns

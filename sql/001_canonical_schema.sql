@@ -1491,6 +1491,89 @@ ON CONFLICT DO NOTHING;
 
 
 -- ================================================================
+-- SECTION 15: CROSS-SCHEMA CONSISTENCY GUARDS
+-- Ensure every column referenced by Python repositories exists
+-- regardless of which schema version was originally applied.
+-- All statements are idempotent (IF NOT EXISTS).
+-- ================================================================
+
+-- audit_log: logs_repo.py inserts 'ip_address'; canonical schema (001) defines 'ip'.
+-- Add ip_address so Python callers work on databases upgraded from the canonical schema.
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip_address TEXT;
+
+-- user_activity: users_repo.py log_activity() inserts 'resource'
+ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS resource TEXT;
+
+-- user_permissions: users_repo.py set_permission() now uses the array-based
+-- approach (on_conflict="user_id"), so no per-page columns needed here.
+-- Ensure UNIQUE(user_id) constraint exists for array upserts.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid = 'user_permissions'::regclass
+          AND c.contype  = 'u'
+          AND array_length(c.conkey, 1) = 1
+          AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey) AND attname = 'user_id')
+    ) THEN
+        ALTER TABLE user_permissions
+            ADD CONSTRAINT user_permissions_user_id_key UNIQUE (user_id);
+    END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- learning_evaluations: learning_repo.py writes date, track, race_code,
+-- score_at_prediction, win_price, pl_outcome.
+-- race_code is also required by v_prediction_accuracy view in 003_views_optional.sql.
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS date                DATE;
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS track               TEXT        DEFAULT '';
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS race_code           TEXT        DEFAULT 'GREYHOUND';
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS score_at_prediction NUMERIC;
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS win_price           NUMERIC;
+ALTER TABLE learning_evaluations ADD COLUMN IF NOT EXISTS pl_outcome          NUMERIC;
+
+-- backtest_runs: backtesting_repo.py writes race_code, winner_hits, top3_hits,
+-- winner_accuracy, total_pl, roi, status, notes.
+-- race_code, winner_hits, winner_accuracy, status are also required by
+-- v_backtest_summary view in 003_views_optional.sql.
+-- updated_at is written by BacktestingRepo.update_run().
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS race_code        TEXT        DEFAULT 'GREYHOUND';
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS winner_hits      INTEGER     DEFAULT 0;
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS top3_hits        INTEGER     DEFAULT 0;
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS winner_accuracy  NUMERIC;
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS total_pl         NUMERIC;
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS roi              NUMERIC;
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS status           TEXT        DEFAULT 'completed';
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS notes            TEXT;
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS updated_at       TIMESTAMPTZ DEFAULT NOW();
+
+-- backtest_run_items: backtesting_repo.py _build_item_payload writes 'date' and
+-- 'race_code'; canonical schema uses 'race_date' and 'code'. Add alias columns so
+-- Python callers work on databases upgraded from the canonical schema.
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS date        DATE;
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS race_code   TEXT        DEFAULT 'GREYHOUND';
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS win_price   NUMERIC;
+ALTER TABLE backtest_run_items ADD COLUMN IF NOT EXISTS pl          NUMERIC;
+
+-- source_log: logs_repo.py log_source_call() inserts source, endpoint, method,
+-- status_code, response_ms, success, error_msg, records_fetched.
+-- Canonical schema uses a different column set (date, call_num, url, status…).
+ALTER TABLE source_log ADD COLUMN IF NOT EXISTS source          TEXT;
+ALTER TABLE source_log ADD COLUMN IF NOT EXISTS endpoint        TEXT;
+ALTER TABLE source_log ADD COLUMN IF NOT EXISTS status_code     INTEGER;
+ALTER TABLE source_log ADD COLUMN IF NOT EXISTS response_ms     INTEGER;
+ALTER TABLE source_log ADD COLUMN IF NOT EXISTS success         BOOLEAN     DEFAULT TRUE;
+ALTER TABLE source_log ADD COLUMN IF NOT EXISTS error_msg       TEXT;
+ALTER TABLE source_log ADD COLUMN IF NOT EXISTS records_fetched INTEGER;
+
+-- activity_log: logs_repo.py log_activity() inserts 'event', 'resource', 'detail'.
+-- Canonical schema uses 'event_type', 'description', 'data'. Add alias columns so
+-- Python callers work on databases upgraded from the canonical schema.
+ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS event    TEXT;
+ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS resource TEXT;
+ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS detail   JSONB;
+
+-- ================================================================
 -- DONE — Migration 006 complete.
 --
 -- What was reconciled:
