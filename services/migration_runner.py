@@ -107,8 +107,8 @@ class MigrationRunner:
 
         # Strategy 1: exec_sql RPC
         try:
-            from supabase_client import get_client
-            db = get_client()
+            from db import get_db
+            db = get_db()
             db.rpc("exec_sql", {"sql": sql}).execute()
             return True
         except Exception as rpc_err:

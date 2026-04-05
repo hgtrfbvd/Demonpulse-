@@ -17,7 +17,7 @@ import logging
 import os
 from typing import Any
 
-from supabase_client import get_client, safe_execute, resolve_table
+from db import get_db, safe_query, T
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class SchemaBootstrap:
         }
 
         # ── 1. Connectivity check ──────────────────────────────
-        db = safe_execute(get_client, default=None, context="SchemaBootstrap.get_client")
+        db = safe_query(get_db)
         if db is None:
             msg = "SchemaBootstrap: cannot connect to Supabase — check SUPABASE_URL/KEY"
             log.error(msg)
@@ -177,9 +177,9 @@ def _list_existing_tables(db) -> set[str]:
 def _ensure_system_state(db) -> None:
     """Ensure the system_state singleton row (id=1) exists."""
     try:
-        rows = db.table(resolve_table("system_state")).select("id").eq("id", 1).execute().data
+        rows = db.table(T("system_state")).select("id").eq("id", 1).execute().data
         if not rows:
-            db.table(resolve_table("system_state")).insert({"id": 1}).execute()
+            db.table(T("system_state")).insert({"id": 1}).execute()
             log.info("SchemaBootstrap: created system_state singleton row")
     except Exception as exc:
         log.warning(f"SchemaBootstrap: could not ensure system_state row: {exc}")
