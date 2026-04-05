@@ -123,17 +123,24 @@ class UsersRepo:
     ) -> Optional[dict]:
         """Insert a new user record."""
         role = role if role in VALID_ROLES else ROLE_VIEWER
+        row: dict = {
+            "username":      username,
+            "password_hash": password_hash,
+            "role":          role,
+            "active":        True,
+            "created_at":    _now(),
+            "updated_at":    _now(),
+        }
+        if display_name:
+            row["display_name"] = display_name
+        if email:
+            row["email"] = email
+        if created_by:
+            row["created_by"] = created_by
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USERS))
-                .insert({
-                    "username":      username,
-                    "password_hash": password_hash,
-                    "role":          role,
-                    "active":        True,
-                    "created_at":    _now(),
-                    "updated_at":    _now(),
-                })
+                .insert(row)
                 .execute()
                 .data,
             default=None,
@@ -227,38 +234,78 @@ class UsersRepo:
     # ── USER PERMISSIONS ──────────────────────────────────────────
 
     @staticmethod
-    def get_permissions(user_id: str) -> list[dict]:
-        return safe_execute(
+    def get_permissions(user_id: str) -> Optional[dict]:
+        """
+        Return the single user_permissions row for the given user.
+
+        Schema (001 canonical): one row per user with granted/revoked/effective
+        JSONB arrays, not a row-per-page model.
+        Returns None if no permissions row exists yet.
+        """
+        rows = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_PERMS))
                 .select("*")
                 .eq("user_id", user_id)
+                .limit(1)
                 .execute()
                 .data,
             default=[],
             context="UsersRepo.get_permissions",
         ) or []
+        return rows[0] if rows else None
 
     @staticmethod
-    def set_permission(user_id: str, page: str, allowed: bool) -> bool:
+    def upsert_permissions(
+        user_id: str,
+        granted: list,
+        revoked: list,
+        effective: list,
+        updated_by: str = "",
+    ) -> bool:
+        """
+        Upsert the single user_permissions row (array model).
+
+        effective = (role_defaults ∪ granted) − revoked — callers must
+        compute this before calling here.
+        """
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_PERMS))
                 .upsert(
-                    {"user_id": user_id, "page": page, "can_view": allowed, "can_edit": allowed},
-                    on_conflict="user_id,page",
+                    {
+                        "user_id":    user_id,
+                        "granted":    list(dict.fromkeys(granted)),
+                        "revoked":    list(dict.fromkeys(revoked)),
+                        "effective":  effective,
+                        "updated_at": _now(),
+                        "updated_by": updated_by or None,
+                    },
+                    on_conflict="user_id",
                 )
                 .execute()
                 .data,
             default=None,
-            context="UsersRepo.set_permission",
+            context="UsersRepo.upsert_permissions",
         )
-        return bool(result)
+        return result is not None
 
     # ── USER SESSIONS ─────────────────────────────────────────────
 
     @staticmethod
-    def create_session(user_id: str, token_hash: str, ip: str = "", ttl_minutes: int = 480) -> Optional[dict]:
+    def create_session(
+        user_id: str,
+        jti: str,
+        ip: str = "",
+        user_agent: str = "",
+        ttl_minutes: int = 480,
+    ) -> Optional[dict]:
+        """
+        Record a new JWT session.
+
+        Schema (001 canonical): token_jti stores the JWT 'jti' claim
+        (not the raw token). revoked starts as False.
+        """
         from datetime import timedelta
         expires = datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
         result = safe_execute(
@@ -266,9 +313,11 @@ class UsersRepo:
                 .table(resolve_table(TABLE_USER_SESSIONS))
                 .insert({
                     "user_id":    user_id,
-                    "token":      token_hash,
-                    "ip_address": ip,
+                    "token_jti":  jti,
+                    "ip_address": ip or None,
+                    "user_agent": user_agent or None,
                     "expires_at": expires.isoformat(),
+                    "revoked":    False,
                     "created_at": _now(),
                 })
                 .execute()
@@ -279,18 +328,59 @@ class UsersRepo:
         return (result[0] if isinstance(result, list) else result) if result else None
 
     @staticmethod
-    def invalidate_sessions(user_id: str) -> bool:
+    def is_session_revoked(jti: str) -> bool:
+        """
+        Return True if the given JTI has been force-revoked.
+
+        Unknown tokens (not yet recorded) are treated as active — this
+        preserves backward compatibility for sessions created before the
+        user_sessions table existed.
+        """
+        row = safe_execute(
+            lambda: get_client()
+                .table(resolve_table(TABLE_USER_SESSIONS))
+                .select("revoked")
+                .eq("token_jti", jti)
+                .limit(1)
+                .execute()
+                .data,
+            default=[],
+            context="UsersRepo.is_session_revoked",
+        ) or []
+        if not row:
+            return False  # unknown token — allow (backwards compat)
+        return bool(row[0].get("revoked"))
+
+    @staticmethod
+    def revoke_all_sessions(user_id: str, revoked_by: str = "") -> bool:
+        """
+        Mark all non-revoked sessions for the user as revoked.
+        Uses UPDATE rather than DELETE so the audit trail is preserved.
+        """
         result = safe_execute(
             lambda: get_client()
                 .table(resolve_table(TABLE_USER_SESSIONS))
-                .delete()
+                .update({
+                    "revoked":    True,
+                    "revoked_at": _now(),
+                    "revoked_by": revoked_by or None,
+                })
                 .eq("user_id", user_id)
+                .eq("revoked", False)
                 .execute()
                 .data,
             default=None,
-            context="UsersRepo.invalidate_sessions",
+            context="UsersRepo.revoke_all_sessions",
         )
         return result is not None
+
+    @staticmethod
+    def invalidate_sessions(user_id: str) -> bool:
+        """
+        Revoke all sessions for a user (alias kept for callers that used
+        the old delete-based API).  Now delegates to revoke_all_sessions.
+        """
+        return UsersRepo.revoke_all_sessions(user_id)
 
     # ── USER ACTIVITY ─────────────────────────────────────────────
 
