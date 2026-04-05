@@ -257,7 +257,7 @@ class UsersRepo:
             default=[],
             context="UsersRepo.set_permission.read",
         ) or []
-        row = rows[0] if len(rows) > 0 else {}
+        row = rows[0] if rows else {}
         granted      = list(row.get("granted") or [])
         revoked_list = list(row.get("revoked") or [])
         if allowed:
