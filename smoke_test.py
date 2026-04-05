@@ -1001,5 +1001,55 @@ def main() -> int:
     return 0 if all_pass else 1
 
 
+def run_all_tests() -> dict:
+    """
+    Run all smoke tests and return a structured result dict.
+    Intended to be called from the /api/smoke-test endpoint.
+    """
+    from env import env
+
+    if not env.is_test:
+        raise RuntimeError("smoke tests must run in TEST mode (DP_ENV=TEST)")
+
+    problems = check_prerequisites()
+    if problems:
+        return {"passed": False, "prereq_failures": problems, "tests": []}
+
+    tests = [
+        test_meetings,
+        test_races,
+        test_runners,
+        test_results,
+        test_predictions,
+        test_learning,
+        test_backtesting,
+        test_source_logging,
+    ]
+
+    results = []
+    for fn in tests:
+        try:
+            r = fn()
+        except Exception as exc:
+            r = _Result(fn.__name__.replace("test_", ""))
+            r.fail(f"Uncaught exception: {exc}")
+        results.append(r)
+
+    all_pass = all(r.passed for r in results)
+    return {
+        "passed": all_pass,
+        "tests": [
+            {
+                "name": r.name,
+                "passed": r.passed,
+                "issues": r.issues,
+                "code_path": r.code_path,
+                "detail": r.detail,
+            }
+            for r in results
+        ],
+    }
+
+
 if __name__ == "__main__":
     sys.exit(main())
