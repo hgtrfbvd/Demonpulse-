@@ -5,8 +5,15 @@ Thin compatibility shim over db.py for architecture compliance.
 Provides typed helpers for race/runner/result CRUD operations
 against the Supabase backend (today_races, today_runners, results_log tables).
 
-All writes go through OddsPro-confirmed data only.
-FormFav provisional data is never written to official tables directly.
+Primary source (OddsPro):
+  All writes to today_races, today_runners, results_log go through
+  OddsPro-confirmed data only.
+
+Secondary source (FormFav):
+  FormFav enrichment is written to dedicated secondary tables:
+    formfav_race_enrichment   — one row per race (form, track bias, speed map)
+    formfav_runner_enrichment — one row per runner (stats, trends, probabilities)
+  These never overwrite OddsPro authoritative data.
 """
 from __future__ import annotations
 
@@ -402,3 +409,133 @@ def _build_race_payload(race: dict[str, Any]) -> dict[str, Any] | None:
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# FORMFAV SECONDARY SOURCE — race and runner enrichment
+# ---------------------------------------------------------------------------
+
+def upsert_formfav_race_enrichment(enrichment: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Insert or update a FormFav race-level enrichment record.
+    Conflict key: race_uid.
+    Never overwrites OddsPro authoritative tables.
+    """
+    race_uid = enrichment.get("race_uid") or ""
+    if not race_uid:
+        log.warning("database.upsert_formfav_race_enrichment: skipping row missing race_uid")
+        return None
+
+    payload = {
+        "race_uid":   race_uid,
+        "date":       enrichment.get("date") or date.today().isoformat(),
+        "track":      enrichment.get("track") or "",
+        "race_num":   enrichment.get("race_num"),
+        "code":       enrichment.get("code") or "GALLOPS",
+        "race_class": enrichment.get("race_class") or enrichment.get("grade") or "",
+        "condition":  enrichment.get("condition") or "",
+        "distance":   str(enrichment.get("distance") or ""),
+        "speed_map":  enrichment.get("speed_map") or {},
+        "track_bias": enrichment.get("track_bias") or {},
+        "raw_form":   enrichment.get("raw_form") or enrichment.get("race_form") or {},
+        "source":     "formfav",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = safe_query(
+        lambda: get_db()
+        .table(T("formfav_race_enrichment"))
+        .upsert(payload, on_conflict="race_uid")
+        .execute()
+        .data
+    )
+    if result:
+        log.debug(f"database: upserted formfav race enrichment {race_uid}")
+        return result[0] if isinstance(result, list) else result
+    return None
+
+
+def get_formfav_race_enrichment(race_uid: str) -> dict[str, Any] | None:
+    """Fetch FormFav race enrichment by race_uid."""
+    result = safe_query(
+        lambda: get_db()
+        .table(T("formfav_race_enrichment"))
+        .select("*")
+        .eq("race_uid", race_uid)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return (result or [None])[0]
+
+
+def get_formfav_race_enrichments_for_date(target_date: str) -> list[dict[str, Any]]:
+    """Fetch all FormFav race enrichment records for a given date."""
+    return safe_query(
+        lambda: get_db()
+        .table(T("formfav_race_enrichment"))
+        .select("*")
+        .eq("date", target_date)
+        .order("race_num")
+        .execute()
+        .data,
+        [],
+    ) or []
+
+
+def upsert_formfav_runner_enrichment(runner: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Insert or update a FormFav runner-level enrichment record.
+    Conflict key: (race_uid, runner_name).
+    Never overwrites OddsPro authoritative tables.
+    """
+    race_uid = runner.get("race_uid") or ""
+    runner_name = runner.get("runner_name") or runner.get("name") or ""
+    if not race_uid or not runner_name:
+        log.warning(
+            "database.upsert_formfav_runner_enrichment: skipping row missing "
+            "race_uid or runner_name"
+        )
+        return None
+
+    payload = {
+        "race_uid":     race_uid,
+        "runner_name":  runner_name,
+        "barrier":      runner.get("barrier"),
+        "number":       runner.get("number"),
+        "form_trend":   runner.get("form_trend") or {},
+        "runner_stats": runner.get("runner_stats") or runner.get("stats") or {},
+        "run_style":    runner.get("run_style") or "",
+        "class_fit":    runner.get("class_fit") or {},
+        "decorator":    runner.get("decorator") or {},
+        "win_prob":     runner.get("win_prob"),
+        "place_prob":   runner.get("place_prob"),
+        "source":       "formfav",
+        "updated_at":   datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = safe_query(
+        lambda: get_db()
+        .table(T("formfav_runner_enrichment"))
+        .upsert(payload, on_conflict="race_uid,runner_name")
+        .execute()
+        .data
+    )
+    if result:
+        log.debug(f"database: upserted formfav runner enrichment {race_uid}/{runner_name}")
+        return result[0] if isinstance(result, list) else result
+    return None
+
+
+def get_formfav_runner_enrichments(race_uid: str) -> list[dict[str, Any]]:
+    """Fetch all FormFav runner enrichment records for a race."""
+    return safe_query(
+        lambda: get_db()
+        .table(T("formfav_runner_enrichment"))
+        .select("*")
+        .eq("race_uid", race_uid)
+        .order("runner_name")
+        .execute()
+        .data,
+        [],
+    ) or []

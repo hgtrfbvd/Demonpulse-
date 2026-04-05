@@ -19,6 +19,7 @@ try:
     from api.prediction_routes import prediction_bp
     from api.market_routes import market_bp
     from api.external_routes import external_bp
+    from api.formfav_routes import formfav_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(race_bp)
     app.register_blueprint(board_bp)
@@ -26,6 +27,7 @@ try:
     app.register_blueprint(prediction_bp)
     app.register_blueprint(market_bp)
     app.register_blueprint(external_bp)
+    app.register_blueprint(formfav_bp)
     log.info("API blueprints registered")
 except Exception as _bp_err:
     log.warning(f"Blueprint registration failed: {_bp_err}")
