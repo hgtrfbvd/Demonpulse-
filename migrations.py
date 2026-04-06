@@ -816,6 +816,19 @@ _PHASE5_TABLES: list[tuple[str, str]] = [
         )
         """,
     ),
+    # TEST-mode mirrors — created after live tables so LIKE references resolve
+    (
+        "test_formfav_race_enrichment",
+        "CREATE TABLE IF NOT EXISTS test_formfav_race_enrichment (LIKE formfav_race_enrichment INCLUDING ALL)",
+    ),
+    (
+        "test_formfav_runner_enrichment",
+        "CREATE TABLE IF NOT EXISTS test_formfav_runner_enrichment (LIKE formfav_runner_enrichment INCLUDING ALL)",
+    ),
+    (
+        "test_formfav_debug_stats",
+        "CREATE TABLE IF NOT EXISTS test_formfav_debug_stats (LIKE formfav_debug_stats INCLUDING ALL)",
+    ),
 ]
 
 
@@ -948,6 +961,12 @@ def _ensure_phase5_indexes(db_client: Any, results: dict[str, Any]) -> None:
         "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_uid ON formfav_runner_enrichment(race_uid);",
         "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_num ON formfav_runner_enrichment(race_uid, number);",
         "CREATE INDEX IF NOT EXISTS idx_formfav_debug_stats_recorded_at ON formfav_debug_stats(recorded_at DESC);",
+        # TEST-mode mirror indexes
+        "CREATE INDEX IF NOT EXISTS idx_test_formfav_race_enrichment_race_uid ON test_formfav_race_enrichment(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_test_formfav_race_enrichment_date ON test_formfav_race_enrichment(date);",
+        "CREATE INDEX IF NOT EXISTS idx_test_formfav_runner_enrichment_race_uid ON test_formfav_runner_enrichment(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_test_formfav_runner_enrichment_race_num ON test_formfav_runner_enrichment(race_uid, number);",
+        "CREATE INDEX IF NOT EXISTS idx_test_formfav_debug_stats_recorded_at ON test_formfav_debug_stats(recorded_at DESC);",
     ]
     for sql in indexes:
         try:
