@@ -187,11 +187,6 @@ TRACK_ALIASES: dict[str, str] = {
     "wagga":                     "wagga-wagga",
     # Albury: long form
     "albury-racecourse":         "albury",
-    # Menangle Park harness (NSW): "Tabcorp Park Menangle" / "Menangle Park"
-    "menangle-park":             "menangle-park",
-    "tabcorp-park":              "tabcorp-park-menangle",
-    # Melton harness (VIC): "Tabcorp Park Melton"
-    "tabcorp-park-melton":       "tabcorp-park-melton",
     # Gloucester Park harness (WA): long form
     "gloucester-park-raceway":   "gloucester-park",
     # Wayville harness (SA): "Globe Derby Park"
@@ -247,6 +242,8 @@ TRACK_ALIASES: dict[str, str] = {
     "tabcorp-park-menangle":     "menangle",
     # Melton (VIC harness): "Tabcorp Park Melton" → "melton"
     "tabcorp-park-melton":       "melton",
+    # "Tabcorp Park" (without suffix) → assume Menangle as the primary venue
+    "tabcorp-park":              "menangle",
 }
 
 
@@ -323,10 +320,12 @@ GREYHOUND_NZ_TRACKS: frozenset[str] = frozenset({
 
 #: Australian harness venues.
 HARNESS_AU_TRACKS: frozenset[str] = frozenset({
-    # NSW
-    "menangle", "menangle-park", "tabcorp-park-menangle", "newcastle", "bathurst", "wagga-wagga",
-    # VIC
-    "melton", "tabcorp-park-melton", "ballarat", "bendigo", "kilmore", "shepparton", "geelong",
+    # NSW — "menangle-park" and "menangle" cover both API slugs;
+    # "tabcorp-park-menangle" resolves to "menangle" via TRACK_ALIASES
+    # so it need not be listed separately.
+    "menangle", "menangle-park", "newcastle", "bathurst", "wagga-wagga",
+    # VIC — "tabcorp-park-melton" resolves to "melton" via TRACK_ALIASES
+    "melton", "ballarat", "bendigo", "kilmore", "shepparton", "geelong",
     # WA
     "gloucester-park", "pinjarra", "bunbury",
     # QLD
