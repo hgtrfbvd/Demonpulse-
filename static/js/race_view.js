@@ -1,4 +1,6 @@
 (function () {
+    const _AEST = "Australia/Sydney";
+
     let raceData = null;
     let raceAnalysis = null;
     let countdownTimer = null;
@@ -25,6 +27,14 @@
 
     function parseJumpTimeToDate(jumpTime) {
         if (!jumpTime || typeof jumpTime !== "string") return null;
+
+        // ISO datetime strings: "2026-04-07T10:30:00+10:00", "2026-04-07T10:30:00Z", etc.
+        if (/^\d{4}-\d{2}-\d{2}T/.test(jumpTime) || /^\d{4}-\d{2}-\d{2} /.test(jumpTime)) {
+            const dt = new Date(jumpTime);
+            return isNaN(dt.getTime()) ? null : dt;
+        }
+
+        // HH:MM or HH:MM:SS — interpreted as local time for today
         const parts = jumpTime.split(":");
         if (parts.length < 2) return null;
         const hour = parseInt(parts[0], 10);
@@ -34,8 +44,31 @@
         return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
     }
 
+    // Resolve the best available jump datetime for countdown purposes
+    function getRaceJumpDate(race) {
+        if (!race) return null;
+        if (race.jump_dt_iso) {
+            const dt = new Date(race.jump_dt_iso);
+            if (!isNaN(dt.getTime())) return dt;
+        }
+        return parseJumpTimeToDate(race.jump_time || "");
+    }
+
+    // Format a readable local jump time for display (AEST)
+    function formatJumpTimeDisplay(race) {
+        if (!race) return "—";
+        if (race.jump_dt_iso) {
+            const dt = new Date(race.jump_dt_iso);
+            if (!isNaN(dt.getTime())) {
+                return dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
+            }
+        }
+        return race.jump_time || "—";
+    }
+
     function formatCountdownText(jumpTime) {
-        const target = parseJumpTimeToDate(jumpTime);
+        // Accept Date object or string
+        const target = (jumpTime instanceof Date) ? jumpTime : parseJumpTimeToDate(jumpTime);
         if (!target) return "—";
         const diffSeconds = Math.floor((target.getTime() - Date.now()) / 1000);
         if (diffSeconds <= 0) return "Jumped / due";
@@ -53,16 +86,31 @@
         if (!raceData) {
             setText("rvRaceTitle", "No race selected");
             setText("rvRaceMeta", "Open from Home or Live board, or use ?race_uid=...");
+            const strip = q("rvInfoStrip");
+            if (strip) strip.style.display = "none";
             return;
         }
 
         const code = normaliseCode(raceData.code);
+        const jumpDisplay = formatJumpTimeDisplay(raceData);
         setText("rvRaceTitle", `${raceData.track || "Unknown"} R${raceData.race_num || "?"}`);
-        setText("rvRaceMeta", `${code} • ${raceData.jump_time || "—"} • ${(raceData.status || "upcoming").toUpperCase()}`);
+        setText("rvRaceMeta", `${code} • ${jumpDisplay} • ${(raceData.status || "upcoming").toUpperCase()}`);
         setText("rvHeroCode", code);
         setText("rvHeroStatus", (raceData.status || "upcoming").toUpperCase());
-        setText("rvHeroJump", raceData.jump_time || "—");
-        setText("rvHeroCountdown", formatCountdownText(raceData.jump_time));
+        setText("rvHeroJump", jumpDisplay);
+        setText("rvHeroCountdown", formatCountdownText(getRaceJumpDate(raceData) || raceData.jump_time));
+
+        // Populate the race info strip
+        const strip = q("rvInfoStrip");
+        if (strip) strip.style.display = "";
+        setText("rvInfoTrack", raceData.track || "—");
+        setText("rvInfoRaceNum", raceData.race_num ? `Race ${raceData.race_num}` : "—");
+        setText("rvInfoCode", code);
+        setText("rvInfoDistance", raceData.distance || "—");
+        setText("rvInfoGrade", raceData.grade || "—");
+        setText("rvInfoCondition", raceData.condition || "—");
+        setText("rvInfoJump", jumpDisplay);
+        setText("rvInfoStatus", (raceData.status || "upcoming").toUpperCase());
     }
 
     function renderRunners() {
@@ -78,17 +126,26 @@
         setText("rvRunnerMeta", `${runners.length} runner${runners.length === 1 ? "" : "s"}`);
 
         if (tbody) {
-            tbody.innerHTML = runners.map(r => `
-                <tr>
-                    <td>${r.box ?? r.barrier ?? r.number ?? "—"}</td>
-                    <td>${r.name || r.runner_name || "—"}</td>
-                    <td>${r.odds ?? r.win_odds ?? "—"}</td>
-                    <td>${r.trainer || r.driver || r.jockey || "—"}</td>
-                    <td>${r.confidence ?? r.score ?? "—"}</td>
-                    <td>${r.ai_notes || r.notes || "—"}</td>
-                    <td>${r.scratched ? "SCR" : (r.status || "OK")}</td>
-                </tr>
-            `).join("");
+            tbody.innerHTML = runners.map(r => {
+                const box = r.box_num ?? r.box ?? r.barrier ?? r.number ?? "—";
+                const name = r.name || r.runner_name || "—";
+                const odds = r.price != null ? r.price : (r.odds ?? r.win_odds ?? "—");
+                const trainer = r.trainer || r.driver || r.jockey || "—";
+                const confidence = r.confidence ?? r.score ?? "—";
+                const notes = r.ai_notes || r.notes || "—";
+                const status = r.scratched ? "SCR" : (r.status || "OK");
+                return `
+                    <tr>
+                        <td>${box}</td>
+                        <td>${name}</td>
+                        <td>${odds}</td>
+                        <td>${trainer}</td>
+                        <td>${confidence}</td>
+                        <td>${notes}</td>
+                        <td>${status}</td>
+                    </tr>
+                `;
+            }).join("");
         }
     }
 
@@ -117,8 +174,8 @@
         setText("rvTruthUid", r.race_uid || "—");
         setText("rvTruthSource", r.source || "oddspro");
         setText("rvTruthRawDt", r.raw_datetime || r.jump_time || "—");
-        setText("rvTruthParsedDt", r.jump_time || "—");
-        setText("rvTruthTz", r.timezone || "AEST");
+        setText("rvTruthParsedDt", r.jump_dt_iso || r.jump_time || "—");
+        setText("rvTruthTz", r.jump_dt_iso ? "UTC (ISO)" : (r.timezone || "AEST"));
         setText("rvTruthCountry", r.country || "—");
         setText("rvTruthCode", normaliseCode(r.code));
         setText("rvTruthTrack", r.track || "—");
@@ -129,7 +186,7 @@
 
     function updateCountdown() {
         if (!raceData) return;
-        setText("rvHeroCountdown", formatCountdownText(raceData.jump_time));
+        setText("rvHeroCountdown", formatCountdownText(getRaceJumpDate(raceData) || raceData.jump_time));
     }
 
     function renderAll() {

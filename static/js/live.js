@@ -1,4 +1,6 @@
 (function () {
+    const _AEST = "Australia/Sydney";
+
     let liveRace = null;
     let liveAnalysis = null;
     let liveSignal = null;
@@ -15,6 +17,14 @@
 
     function parseJumpTimeToDate(jumpTime) {
         if (!jumpTime || typeof jumpTime !== "string") return null;
+
+        // ISO datetime strings: "2026-04-07T10:30:00+10:00", "2026-04-07T10:30:00Z", etc.
+        if (/^\d{4}-\d{2}-\d{2}T/.test(jumpTime) || /^\d{4}-\d{2}-\d{2} /.test(jumpTime)) {
+            const dt = new Date(jumpTime);
+            return isNaN(dt.getTime()) ? null : dt;
+        }
+
+        // HH:MM or HH:MM:SS — interpreted as local time for today
         const parts = jumpTime.split(":");
         if (parts.length < 2) return null;
 
@@ -28,7 +38,8 @@
     }
 
     function formatCountdownText(jumpTime) {
-        const target = parseJumpTimeToDate(jumpTime);
+        // Accept Date object or string
+        const target = (jumpTime instanceof Date) ? jumpTime : parseJumpTimeToDate(jumpTime);
         if (!target) return "—";
 
         const diffSeconds = Math.floor((target.getTime() - Date.now()) / 1000);
@@ -44,6 +55,28 @@
         }
 
         return `${mins}m ${String(secs).padStart(2, "0")}s`;
+    }
+
+    // Resolve the best available jump datetime for countdown purposes
+    function getRaceJumpDate(race) {
+        if (!race) return null;
+        if (race.jump_dt_iso) {
+            const dt = new Date(race.jump_dt_iso);
+            if (!isNaN(dt.getTime())) return dt;
+        }
+        return parseJumpTimeToDate(race.jump_time || "");
+    }
+
+    // Format a readable local jump time for display
+    function formatJumpTimeDisplay(race) {
+        if (!race) return "—";
+        if (race.jump_dt_iso) {
+            const dt = new Date(race.jump_dt_iso);
+            if (!isNaN(dt.getTime())) {
+                return dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
+            }
+        }
+        return race.jump_time || "—";
     }
 
     function setText(id, value) {
@@ -73,7 +106,8 @@
     }
 
     function updateRaceLock() {
-        const countdown = formatCountdownText(liveRace?.jump_time || "");
+        const jumpDate = getRaceJumpDate(liveRace);
+        const countdown = jumpDate ? formatCountdownText(jumpDate) : "—";
         const status = String(liveRace?.status || "").toLowerCase();
         raceLocked = countdown === "Jumped / due" || ["closed", "completed", "resulted"].includes(status);
 
@@ -94,18 +128,19 @@
         }
 
         const code = normaliseCode(liveRace.code);
+        const jumpDisplay = formatJumpTimeDisplay(liveRace);
         setText("liveRaceTitle", `${liveRace.track || "Unknown"} R${liveRace.race_num || "?"}`);
-        setText("liveRaceMeta", `${code} • ${liveRace.jump_time || "—"} • ${liveRace.status || "upcoming"}`);
+        setText("liveRaceMeta", `${code} • ${jumpDisplay} • ${liveRace.status || "upcoming"}`);
 
         setText("liveTrack", liveRace.track || "—");
         setText("liveRaceNum", liveRace.race_num ? `R${liveRace.race_num}` : "—");
         setText("liveDistance", liveRace.distance || "—");
         setText("liveGrade", liveRace.grade || "—");
-        setText("liveJump", liveRace.jump_time || "—");
+        setText("liveJump", jumpDisplay);
         setText("liveStatus", String(liveRace.status || "upcoming").toUpperCase());
 
         setText("liveHeroCode", code);
-        setText("liveHeroCountdown", formatCountdownText(liveRace.jump_time));
+        setText("liveHeroCountdown", formatCountdownText(getRaceJumpDate(liveRace) || liveRace.jump_time));
         updateRaceLock();
     }
 
@@ -243,7 +278,7 @@
 
     function updateCountdown() {
         if (!liveRace) return;
-        setText("liveHeroCountdown", formatCountdownText(liveRace.jump_time));
+        setText("liveHeroCountdown", formatCountdownText(getRaceJumpDate(liveRace) || liveRace.jump_time));
         updateRaceLock();
     }
 
@@ -288,11 +323,15 @@
                 headers: { "Content-Type": "application/json" }
             });
 
-            liveSimulation = data.simulation || null;
-            renderSimulation();
+            if (data && data.simulation) {
+                liveSimulation = data.simulation;
+                renderSimulation();
+            } else {
+                setText("liveSimMeta", data?.error || "Simulation not available");
+            }
         } catch (error) {
             console.error("Live simulation failed:", error);
-            setText("liveSimMeta", "Simulation failed");
+            setText("liveSimMeta", "Simulation not yet available");
         }
     }
 
