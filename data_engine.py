@@ -388,7 +388,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                 runners_by_race.setdefault(runner.race_uid, []).append(runner)
 
             for race in races:
-                _race_country = getattr(race, "country", "au") or "au"
+                _race_country = getattr(race, "country", "") or ""
                 log.info(
                     f"[ODDSPRO] DISCOVERED race_uid={race.race_uid}"
                     f" track={race.track!r} country={_race_country!r}"
@@ -461,8 +461,14 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                 f"Race(s) will be blocked by the domestic gate."
             )
         else:
-            # Both empty — assume domestic (location=domestic requested)
-            _domestic_races += 1
+            # Both empty — unknown country; flag as potential foreign leak.
+            # Races from this meeting will be blocked by the domestic gate
+            # (INVALID_COUNTRY) since no verified country can be resolved.
+            _international_races += 1
+            log.warning(
+                f"full_sweep: meeting with no country/state (possible foreign leak) "
+                f"— track={m.track!r}. Race(s) will be blocked by the domestic gate."
+            )
 
     log.info(
         f"full_sweep complete: {meetings_found} meetings found, {meetings_fetched} fetched, "
@@ -842,8 +848,7 @@ def _is_au_nz_race(race: dict[str, Any]) -> bool:
        country and are correctly excluded.
     2. `state` field — fallback for records that pre-date the country column.
        Known AU state abbreviations and NZ region names are recognised.
-    3. Empty both fields — assume AU only if both country AND state are empty,
-       since OddsPro's default country is 'au'.
+    3. Empty both fields — EXCLUDED; cannot verify country, so not eligible.
     """
     # Primary: explicit country field (stored since FormFav integration update)
     country = (race.get("country") or "").strip().lower()
@@ -855,15 +860,19 @@ def _is_au_nz_race(race: dict[str, Any]) -> bool:
     if state:
         return state in _AU_STATES or state in _NZ_IDENTIFIERS
 
-    # Both empty: assume AU (OddsPro default country is 'au')
-    return True
+    # Both empty: cannot confirm AU/NZ — exclude to avoid foreign races
+    # entering the FormFav pipeline.
+    return False
 
 
 def _get_formfav_country(race: dict[str, Any]) -> str:
     """
     Return the FormFav country code ('au' or 'nz') for a race.
     Uses the `country` field first, then falls back to the `state` field.
-    Defaults to 'au' if the race cannot be identified as NZ.
+    Returns 'au' if the race is confirmed domestic (via _is_au_nz_race) but
+    cannot be identified as NZ — i.e. it must be AU.
+
+    NOTE: This function must only be called after _is_au_nz_race() returns True.
     """
     country = (race.get("country") or "").strip().lower()
     if country in _NZ_COUNTRY_CODES:
@@ -1218,9 +1227,7 @@ def _store_with_pipeline(race: Any) -> bool:
         # Priority order for country resolution:
         #   1. Explicit `country` field from the connector (authoritative if non-empty)
         #   2. `state` field as secondary indicator — checked against known AU/NZ sets
-        #   3. Truly unknown (both empty) — allow through since location=domestic was
-        #      requested; assume domestic and let OddsPro's feed-level filter carry the
-        #      responsibility of excluding non-AU/NZ meetings.
+        #   3. Both empty — INVALID_COUNTRY; race is blocked (no guessing allowed)
         _country = (race_dict.get("country") or "").strip().lower()
         _state   = (race_dict.get("state") or "").strip().lower()
 
@@ -1256,9 +1263,15 @@ def _store_with_pipeline(race: Any) -> bool:
                     _pipeline_state.record_race_excluded(race_uid, "non_domestic_guard_state")
                 return False
         else:
-            # Both country and state are empty — assume domestic (location=domestic
-            # should exclude non-AU/NZ meetings at the OddsPro API level).
-            _effective_country = "au"
+            # Both country and state are empty — country cannot be verified.
+            # Per pipeline rules: no verified country = no pipeline.
+            log.warning(
+                f"[ODDSPRO] INVALID_COUNTRY race_uid={race_uid}"
+                f" track={race_dict.get('track', '')!r}"
+            )
+            if _pipeline_state is not None:
+                _pipeline_state.record_race_excluded(race_uid, "invalid_country")
+            return False
 
         # Persist the resolved country so downstream (formfav_sync etc.) uses the
         # confirmed domestic country rather than a blank or stale value.
