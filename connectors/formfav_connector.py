@@ -490,6 +490,58 @@ class FormFavConnector:
 
         return fresh_race, runners
 
+    def fetch_all_races_for_date(
+        self,
+        target_date: str | None = None,
+    ) -> list[tuple["RaceRecord", list["RunnerRecord"]]]:
+        """
+        Fetch ALL races for a date from FormFav across all supported race codes.
+
+        This is the Step-1 FORMFAV fetch in the new 10-step pipeline.
+        No country or domestic filtering is applied here — the caller (merge
+        engine / full_sweep) applies classification AFTER the full dataset is built.
+
+        Steps:
+          1. Fetch meeting list from /v1/form/meetings for each code
+          2. For each meeting, fetch race + runner detail via fetch_race_form_with_predictions
+          3. Return the flat list of (RaceRecord, [RunnerRecord]) tuples
+
+        Returns an empty list (not an error) when the connector is not enabled.
+        Individual race fetch failures are silently skipped (logged at DEBUG).
+        """
+        if not self.api_key:
+            return []
+
+        from datetime import date as _date
+        td = target_date or _date.today().isoformat()
+
+        results: list[tuple[RaceRecord, list[RunnerRecord]]] = []
+        for code in self.supported_codes:
+            raw_meetings = self._request_meetings(td, code)
+            for m in raw_meetings:
+                track = (m.get("track") or m.get("venue") or "").strip().lower().replace(" ", "-")
+                if not track:
+                    continue
+                race_numbers = m.get("raceNumbers") or m.get("race_numbers") or []
+                for race_num in race_numbers:
+                    try:
+                        race, runners = self.fetch_race_form_with_predictions(
+                            target_date=td,
+                            track=track,
+                            race_num=int(race_num),
+                            code=code,
+                        )
+                        results.append((race, runners))
+                    except Exception as exc:
+                        log.debug(
+                            "[FORMFAV] fetch_all_races_for_date: skipped"
+                            " track=%s race=%s code=%s error=%s",
+                            track, race_num, code, exc,
+                        )
+                        continue
+        return results
+
+
     def fetch_scratchings(self, target_date: str | None = None) -> dict[str, list[int]]:
         return {}
 
