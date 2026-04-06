@@ -34,12 +34,22 @@ _state: dict[str, Any] = {
 _recent_races: deque[dict[str, Any]] = deque(maxlen=20)
 
 
+_COUNTER_KEYS = (
+    "total_races_discovered",
+    "total_domestic_races",
+    "total_international_filtered",
+    "total_formfav_eligible",
+    "total_formfav_called",
+    "total_formfav_success",
+    "total_formfav_failed",
+)
+
+
 def reset() -> None:
     """Reset all counters and clear recent_races (called at start of each full_sweep)."""
     with _lock:
-        for k in list(_state.keys()):
-            if k != "last_reset":
-                _state[k] = 0
+        for k in _COUNTER_KEYS:
+            _state[k] = 0
         _recent_races.clear()
         _state["last_reset"] = datetime.now(timezone.utc).isoformat()
 
