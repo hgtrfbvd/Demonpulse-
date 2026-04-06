@@ -233,7 +233,7 @@ class MeetingRecord:
     track: str
     meeting_date: str
     state: str = ""
-    country: str = "au"
+    country: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -247,7 +247,7 @@ class RaceRecord:
     code: str
     source: str = "oddspro"
     state: str = ""
-    country: str = "au"
+    country: str = ""
     race_name: str = ""
     distance: str = ""
     grade: str = ""
