@@ -304,3 +304,154 @@ CODE_GATED_TRACKS: dict[str, frozenset[str]] = {
     # UK's "Sandown Park" is a thoroughbred (HORSE) venue — must be excluded.
     "sandown-park": frozenset({"GREYHOUND"}),
 }
+
+
+# ---------------------------------------------------------------------------
+# FORMFAV TRACK SUPPORT — separate from domestic classification
+# ---------------------------------------------------------------------------
+# These frozensets represent tracks that the FormFav API is known to support.
+# A race can be classified as domestic (AU/NZ) but still NOT be in FormFav's
+# database — especially small country meetings or overseas tracks that are
+# incorrectly labelled with country='au' by OddsPro.
+#
+# Rules:
+#   - Only tracks confirmed to exist in FormFav's venue list are included.
+#   - Tracks NOT in this set are skipped before any FormFav API call is made.
+#   - This set is intentionally defined independently of AU_TRACKS / NZ_TRACKS
+#     so that each can evolve without coupling.
+#
+# Known excluded examples (produce FormFav 404):
+#   - "riverton"  — small SA country harness venue; not in FormFav
+#   - "mohawk"    — Ontario (Canada) harness track; incorrectly tagged country=au
+#                   by some OddsPro feeds
+# ---------------------------------------------------------------------------
+
+#: FormFav-supported track slugs for Australian meetings.
+FORMFAV_AU_TRACKS: frozenset[str] = frozenset({
+    # NSW thoroughbred
+    "rosehill", "randwick", "warwick-farm", "canterbury", "newcastle",
+    "gosford", "wyong", "kembla-grange", "hawkesbury", "muswellbrook",
+    "armidale", "goulburn", "tamworth", "grafton", "lismore", "coffs-harbour",
+    "taree", "scone", "cessnock", "wagga-wagga", "albury", "orange",
+    "bathurst", "dubbo", "moruya", "nowra", "queanbeyan", "mudgee",
+    # VIC thoroughbred
+    "flemington", "caulfield", "moonee-valley", "sandown", "mornington",
+    "ballarat", "bendigo", "hamilton", "cranbourne", "pakenham",
+    "sale", "geelong", "seymour", "echuca", "swan-hill", "horsham",
+    "warracknabeal", "donald", "stawell", "avoca", "mildura", "wangaratta",
+    "wodonga", "benalla", "shepparton", "traralgon", "bairnsdale",
+    # QLD thoroughbred
+    "doomben", "eagle-farm", "gold-coast", "ipswich", "sunshine-coast",
+    "toowoomba", "warwick", "rockhampton", "mackay", "townsville",
+    "cairns", "bundaberg", "hervey-bay", "gympie", "beaudesert",
+    # SA thoroughbred
+    "morphettville", "victoria-park", "gawler", "mount-gambier",
+    "port-augusta", "port-lincoln", "naracoorte", "murray-bridge", "oakbank",
+    # WA thoroughbred
+    "ascot", "belmont-park", "bunbury", "pinjarra", "northam",
+    "kalgoorlie", "geraldton", "albany", "esperance",
+    # TAS thoroughbred
+    "elwick", "mowbray", "devonport", "launceston",
+    # ACT thoroughbred
+    "thoroughbred-park",
+    # NT thoroughbred
+    "darwin", "alice-springs",
+    # AU greyhound
+    "angle-park", "albion-park-greyhound", "albion-park", "cannington",
+    "dapto", "sandown-park", "the-meadows", "temora", "wentworth-park",
+    "mt-druitt", "richmond", "lismore-greyhound", "townsville-greyhound",
+    "ipswich-greyhound", "gold-coast-greyhound", "capalaba",
+    "bundaberg-greyhound", "rockhampton-greyhound", "mackay-greyhound",
+    "cairns-greyhound", "hobart-greyhound", "launceston-greyhound",
+    "alice-springs-greyhound",
+    # AU harness
+    "albion-park-harness", "menangle", "penrith", "bankstown",
+    "newcastle-harness", "tabcorp-park-menangle", "gloucester-park",
+    "wayville", "melton", "menangle-park", "cambridge-park",
+    "bathurst-harness", "parkes-harness",
+    "wagga-wagga-harness", "albury-harness",
+    "mildura-harness", "bendigo-harness",
+    "ballarat-harness", "cranbourne-harness",
+    "geelong-harness", "shepparton-harness",
+    "tabcorp-park-melton",
+    "pinjarra-harness", "bunbury-harness",
+})
+
+#: FormFav-supported track slugs for New Zealand meetings.
+FORMFAV_NZ_TRACKS: frozenset[str] = frozenset({
+    # NZ thoroughbred
+    "ellerslie", "te-rapa", "taupo", "hastings", "hawkes-bay",
+    "rotorua", "wanganui", "whanganui", "otaki", "awapuni", "riccarton",
+    "ashburton", "timaru", "gore", "winton", "invercargill",
+    "ruakaka", "matamata", "cambridge", "pukekohe", "new-plymouth",
+    "palmerston-north", "feilding", "foxton", "masterton",
+    "levin", "woodville", "waverley", "marton", "wairoa",
+    "napier", "gisborne", "tauranga", "huntly",
+    "dargaville", "whangarei",
+    # NZ greyhound
+    "auckland-dogs", "manukau", "manawatu-dogs", "christchurch-dogs",
+    "invercargill-dogs",
+    # NZ harness
+    "cambridge-harness", "addington", "forbury-park", "hutt-park",
+    "alexandra-park", "teretonga", "motukarara",
+    "rangiora", "feilding-harness", "ashburton-harness",
+    "invercargill-harness", "gore-harness",
+})
+
+#: Union of all FormFav-supported AU + NZ track slugs.
+FORMFAV_SUPPORTED_TRACKS: frozenset[str] = FORMFAV_AU_TRACKS | FORMFAV_NZ_TRACKS
+
+#: FormFav-specific track name aliases.
+#: These map OddsPro track slugs (after normalize_track) to the slug FormFav
+#: expects.  Use only when the FormFav slug differs from the canonical domestic
+#: slug already handled by TRACK_ALIASES.
+FORMFAV_TRACK_ALIASES: dict[str, str] = {
+    # "royal-randwick" is already mapped to "randwick" in TRACK_ALIASES;
+    # keep here as explicit FormFav confirmation.
+    "royal-randwick":        "randwick",
+    # FormFav uses plain "ballarat" for both the thoroughbred and harness meetings.
+    "ballarat-racecourse":   "ballarat",
+    # FormFav uses plain "mornington" (no suffix).
+    "mornington-racecourse": "mornington",
+}
+
+
+def resolve_formfav_track(track: str, country: str = "au") -> str | None:
+    """
+    Resolve and validate a track name for use with the FormFav API.
+
+    Returns the FormFav-compatible track slug if the track is supported for
+    the given country, or `None` if the track/country combination is NOT
+    in FormFav's supported venue list.
+
+    Processing order:
+      1. normalize_track() — lowercase, spaces→hyphens, strip non-alnum
+      2. Apply TRACK_ALIASES (shared domestic aliases)
+      3. Apply FORMFAV_TRACK_ALIASES (FormFav-specific overrides)
+      4. Validate against FORMFAV_AU_TRACKS (country=au) or
+         FORMFAV_NZ_TRACKS (country=nz)
+
+    Parameters
+    ----------
+    track:
+        Raw track name as stored in today_races (may be mixed-case, have
+        spaces, etc.).
+    country:
+        FormFav country code — 'au' or 'nz'.  Any other value causes the
+        function to return `None` immediately (FormFav only supports AU/NZ).
+        The caller is responsible for logging why the resolution failed.
+    """
+    norm_country = (country or "").strip().lower()
+    if norm_country not in ("au", "nz"):
+        return None
+
+    slug = normalize_track(track)
+    # Apply shared domestic alias (e.g. royal-randwick → randwick)
+    slug = TRACK_ALIASES.get(slug, slug)
+    # Apply FormFav-specific alias override
+    slug = FORMFAV_TRACK_ALIASES.get(slug, slug)
+
+    if norm_country == "au":
+        return slug if slug in FORMFAV_AU_TRACKS else None
+    # nz
+    return slug if slug in FORMFAV_NZ_TRACKS else None

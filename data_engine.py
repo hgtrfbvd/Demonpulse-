@@ -49,6 +49,7 @@ from core.domestic_tracks import (
     CODE_GATED_TRACKS, DOMESTIC_COUNTRY_CODES, DOMESTIC_TRACKS,
     NZ_COUNTRY_CODES, NZ_STATE_IDS, NZ_TRACKS,
     normalize_track, apply_track_alias,
+    resolve_formfav_track,
 )
 
 log = logging.getLogger(__name__)
@@ -1098,12 +1099,22 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
         raw_code = (race.get("code") or "HORSE").upper()
         ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
 
+        ff_country = _get_formfav_country(race)
+        ff_track = resolve_formfav_track(race.get("track") or "", ff_country)
+        if ff_track is None:
+            log.debug(
+                f"data_engine: FormFav overlay skipped for {race_uid}"
+                f" — unsupported track/country"
+                f" track={race.get('track')!r} country={ff_country!r}"
+            )
+            return race
+
         ff_race, ff_runners = ff.fetch_race_form(
             target_date=race.get("date") or date.today().isoformat(),
-            track=race.get("track") or "",
+            track=ff_track,
             race_num=int(race.get("race_num") or 0),
             code=ff_code,
-            country=_get_formfav_country(race),
+            country=ff_country,
         )
 
         provisional = ff_race.__dict__ if hasattr(ff_race, "__dict__") else {}
@@ -1262,8 +1273,9 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     runners_enriched = 0
     requests_made = 0
     errors = 0
-    skipped_missing_fields = 0  # race_uid / track / race_num absent
-    skipped_invalid_code = 0    # code is not HORSE, HARNESS, GREYHOUND
+    skipped_missing_fields = 0       # race_uid / track / race_num absent
+    skipped_invalid_code = 0         # code is not HORSE, HARNESS, GREYHOUND
+    skipped_unsupported_track = 0    # track/country not in FormFav-supported list
     fetched_at = datetime.now(timezone.utc).isoformat()
 
     for race in races:
@@ -1315,10 +1327,28 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         ff_country = _get_formfav_country(race)
         mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
 
+        # --- FormFav track/country validation ---
+        # resolve_formfav_track() normalises the track slug and checks it
+        # against the FormFav-supported venue whitelist.  This is a separate
+        # gate from domestic classification: a race can be classified as AU/NZ
+        # yet still not be in FormFav's database (e.g. small country meetings,
+        # or tracks that OddsPro incorrectly labels with country='au').
+        ff_track = resolve_formfav_track(track, ff_country)
+        if ff_track is None:
+            log.info(
+                f"[FORMFAV] SKIPPED race_uid={race_uid}"
+                f" reason=unsupported_track_or_country"
+                f" track={track!r} country={ff_country!r}"
+            )
+            skipped_unsupported_track += 1
+            if _pipeline_state is not None:
+                _pipeline_state.record_formfav_skipped(race_uid, "unsupported_track_or_country")
+            continue
+
         # --- Issue FormFav API call ---
         log.info(
             f"[FORMFAV] ELIGIBLE race_uid={race_uid}"
-            f" track={track!r} race_num={race_num} code={ff_code!r}"
+            f" track={ff_track!r} race_num={race_num} code={ff_code!r}"
             f" ff_code={mapped_race_code!r} country={ff_country!r}"
         )
         if _pipeline_state is not None:
@@ -1326,7 +1356,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         log.info(
             f"[FORMFAV] CALL"
             f" url={_FF_BASE_URL}/v1/form"
-            f" params=date={race_date}&track={track}&race={race_num}"
+            f" params=date={race_date}&track={ff_track}&race={race_num}"
             f"&race_code={mapped_race_code}&country={ff_country}"
             f" race_uid={race_uid}"
         )
@@ -1338,7 +1368,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             requests_made += 1
             ff_race, ff_runners = ff.fetch_race_form_with_predictions(
                 target_date=race_date,
-                track=track,
+                track=ff_track,
                 race_num=race_num,
                 code=ff_code,
                 country=ff_country,
@@ -1442,7 +1472,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             errors += 1
             continue
 
-    _total_skipped = skipped_missing_fields + skipped_invalid_code
+    _total_skipped = skipped_missing_fields + skipped_invalid_code + skipped_unsupported_track
 
     log.info(
         f"[FORMFAV] SYNC COMPLETE date={td}"
@@ -1452,6 +1482,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         f" errors={errors}"
         f" skipped_missing_fields={skipped_missing_fields}"
         f" skipped_invalid_code={skipped_invalid_code}"
+        f" skipped_unsupported_track={skipped_unsupported_track}"
     )
     if races_enriched > 0:
         log.info(
@@ -1468,7 +1499,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         f"formfav_races_enriched={races_enriched} "
         f"formfav_runners_enriched={runners_enriched} "
         f"formfav_skipped_missing_fields={skipped_missing_fields} "
-        f"formfav_skipped_invalid_code={skipped_invalid_code}"
+        f"formfav_skipped_invalid_code={skipped_invalid_code} "
+        f"formfav_skipped_unsupported_track={skipped_unsupported_track}"
     )
     if _pipeline_state is not None:
         _pipeline_state.persist_snapshot()
@@ -1481,6 +1513,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         "errors": errors,
         "skipped_missing_fields": skipped_missing_fields,
         "skipped_invalid_code": skipped_invalid_code,
+        "skipped_unsupported_track": skipped_unsupported_track,
         "skipped": _total_skipped,
         "source": "formfav",
     }
