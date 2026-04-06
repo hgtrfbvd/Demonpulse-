@@ -3,12 +3,23 @@ core/domestic_tracks.py
 -----------------------
 Authoritative track-based whitelist for AU + NZ domestic racing venues.
 
-This module is the SINGLE SOURCE OF TRUTH for domestic classification.
-Country and state fields from external APIs are unreliable and MUST NOT be
-used for classification decisions. Only track name membership in DOMESTIC_TRACKS
-determines whether a race enters the DemonPulse pipeline.
+This module provides:
+  1. Track-based whitelists (AU_TRACKS, NZ_TRACKS, DOMESTIC_TRACKS) used as a
+     fallback when OddsPro location fields are absent.
+  2. State/region identifier sets (AU_STATE_IDS, NZ_STATE_IDS) for country
+     resolution from OddsPro country/state/region API fields.
+
+Classification priority (enforced in connectors and data_engine):
+  TIER 1 — Explicit country field from OddsPro API ('au', 'nz', 'gb', etc.)
+  TIER 2 — State/region field from OddsPro API (resolved via AU_STATE_IDS / NZ_STATE_IDS)
+  TIER 3 — Track name whitelist (AU_TRACKS / NZ_TRACKS) — used ONLY when
+            BOTH country and state fields are absent/empty.
+
+If all three tiers fail → race is classified UNKNOWN and excluded.
 
 Structure:
+  AU_STATE_IDS    - frozenset of normalised AU state/territory identifiers
+  NZ_STATE_IDS    - frozenset of normalised NZ region/country identifiers
   AU_TRACKS       - frozenset of all known Australian venue slugs
   NZ_TRACKS       - frozenset of all known New Zealand venue slugs
   DOMESTIC_TRACKS - union of AU_TRACKS | NZ_TRACKS (the gate set)
@@ -35,6 +46,68 @@ def normalize_track(track: str) -> str:
     t = re.sub(r"\s+", "-", t)
     t = re.sub(r"[^a-z0-9\-]", "", t)
     return t
+
+
+# ---------------------------------------------------------------------------
+# COUNTRY / STATE IDENTIFIERS — used for Tier 1 + Tier 2 classification
+# ---------------------------------------------------------------------------
+# These frozensets contain normalised (lowercase, stripped) identifiers that
+# appear in OddsPro country / state / location / region API fields.
+#
+# Classification priority (see module docstring):
+#   TIER 1 — explicit country field → match against AU/NZ prefixes below
+#   TIER 2 — state/location/region field → match against AU_STATE_IDS / NZ_STATE_IDS
+#   TIER 3 — track whitelist (AU_TRACKS / NZ_TRACKS) — fallback only
+# ---------------------------------------------------------------------------
+
+#: Normalised AU country codes and state/territory names/abbreviations.
+AU_STATE_IDS: frozenset[str] = frozenset({
+    # Country-level identifiers
+    "au", "aus", "australia",
+    # State abbreviations (as returned by various OddsPro fields)
+    "vic", "nsw", "qld", "sa", "wa", "tas", "act", "nt",
+    # State full names
+    "victoria", "new south wales", "queensland", "south australia",
+    "western australia", "tasmania", "australian capital territory",
+    "northern territory",
+    # Numeric state codes: OddsPro has been observed returning integer state IDs
+    # in its state/location fields for some AU endpoints.
+    # 1=NSW, 2=VIC, 3=QLD, 4=SA, 5=WA, 6=TAS, 7=ACT, 8=NT.
+    # Only include if OddsPro API documentation or live observation confirms usage.
+    "1",   # NSW
+    "2",   # VIC
+    "3",   # QLD
+    "4",   # SA
+    "5",   # WA
+    "6",   # TAS
+    "7",   # ACT
+    "8",   # NT
+})
+
+#: Normalised NZ country codes and region/city names.
+NZ_STATE_IDS: frozenset[str] = frozenset({
+    # Country-level identifiers
+    "nz", "new zealand", "new-zealand",
+    # Major NZ regions / cities that OddsPro may return
+    "auckland", "waikato", "bay of plenty", "hawkes bay", "hawke's bay",
+    "taranaki", "manawatu", "wellington", "nelson", "marlborough",
+    "west coast", "canterbury", "otago", "southland", "northland",
+    "gisborne",
+    # Common OddsPro short-forms for NZ
+    "nzl",
+})
+
+#: Canonical lowercase country codes for AU races (including common ISO aliases).
+#: Used to deduplicate the check `country in ('au', 'aus', 'australia')` across files.
+AU_COUNTRY_CODES: frozenset[str] = frozenset({"au", "aus", "australia"})
+
+#: Canonical lowercase country codes for NZ races (including common ISO aliases).
+#: Used to deduplicate the check `country in ('nz', 'new zealand', 'new-zealand', 'nzl')`.
+NZ_COUNTRY_CODES: frozenset[str] = frozenset({"nz", "new zealand", "new-zealand", "nzl"})
+
+#: Union of AU and NZ canonical country codes — a race is domestic if its
+#: normalised country field is in this set.
+DOMESTIC_COUNTRY_CODES: frozenset[str] = AU_COUNTRY_CODES | NZ_COUNTRY_CODES
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +173,20 @@ TRACK_ALIASES: dict[str, str] = {
     "wagga":                     "wagga-wagga",
     # Albury: long form
     "albury-racecourse":         "albury",
+    # Menangle Park harness (NSW): "Tabcorp Park Menangle" / "Menangle Park"
+    "menangle-park":             "menangle-park",
+    "tabcorp-park":              "tabcorp-park-menangle",
+    # Melton harness (VIC): "Tabcorp Park Melton"
+    "tabcorp-park-melton":       "tabcorp-park-melton",
+    # Gloucester Park harness (WA): long form
+    "gloucester-park-raceway":   "gloucester-park",
+    # Wayville harness (SA): "Globe Derby Park"
+    "globe-derby-park":          "wayville",
+    "globe-derby":               "wayville",
+    # Alexandra Park (NZ harness): "Alexandra Park Raceway"
+    "alexandra-park-raceway":    "alexandra-park",
+    # Rangiora (NZ): long form
+    "rangiora-raceway":          "rangiora",
 }
 
 
@@ -159,6 +246,16 @@ AU_TRACKS: frozenset[str] = frozenset({
     "albion-park-harness", "menangle", "penrith", "bankstown",
     "newcastle-harness", "tabcorp-park-menangle", "gloucester-park",
     "wayville", "melton",
+    # Additional AU harness venues
+    "menangle-park", "cambridge-park",
+    "bathurst-harness", "parkes-harness",
+    "wagga-wagga-harness", "albury-harness",
+    "mildura-harness", "bendigo-harness",
+    "ballarat-harness", "cranbourne-harness",
+    "geelong-harness", "shepparton-harness",
+    "tabcorp-park-melton",
+    "pinjarra-harness",
+    "bunbury-harness",
 })
 
 # ---------------------------------------------------------------------------
@@ -181,6 +278,9 @@ NZ_TRACKS: frozenset[str] = frozenset({
     "cambridge-harness", "addington", "forbury-park", "hutt-park",
     "alexandra-park", "teretonga",
     "motukarara",  # Canterbury harness; previously missing from whitelist
+    # Additional NZ harness venues
+    "rangiora", "feilding-harness", "ashburton-harness",
+    "invercargill-harness", "gore-harness",
 })
 
 # ---------------------------------------------------------------------------
