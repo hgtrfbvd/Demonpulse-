@@ -897,8 +897,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             "[FORMFAV] SKIPPED all: connector not enabled (FORMFAV_API_KEY not configured)"
             " — no FormFav API calls will be made for this cycle"
         )
-        # Persist snapshot so the debug endpoint reflects real state (counters
-        # from the current full_sweep run) even when FormFav is disabled.
+        # Persist snapshot so the debug endpoint reflects real state (counters from
+        # the current full_sweep run) even when FormFav is disabled.
         if _pipeline_state is not None:
             _pipeline_state.persist_snapshot()
         return {"ok": False, "reason": "formfav_not_enabled", "races_enriched": 0, "runners_enriched": 0}
