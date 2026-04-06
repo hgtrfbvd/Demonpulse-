@@ -648,6 +648,11 @@ def upsert_formfav_debug_stats(counters: dict[str, Any]) -> None:
         "total_races_discovered":    int(counters.get("total_races_discovered", 0)),
         "total_domestic_races":      int(counters.get("total_domestic_races", 0)),
         "total_international_filtered": int(counters.get("total_international_filtered", 0)),
+        # Merge-stage counters
+        "formfav_merge_called":      int(counters.get("formfav_merge_called", 0)),
+        "formfav_merge_matched":     int(counters.get("formfav_merge_matched", 0)),
+        "formfav_merge_failed":      int(counters.get("formfav_merge_failed", 0)),
+        # Sync-stage counters
         "total_formfav_eligible":    int(counters.get("total_formfav_eligible", 0)),
         "total_formfav_called":      int(counters.get("total_formfav_called", 0)),
         "total_formfav_success":     int(counters.get("total_formfav_success", 0)),

@@ -439,6 +439,18 @@ def api_debug_formfav():
 
         return jsonify({
             "ok": True,
+            # ── Structured stage views ──────────────────────────────────────
+            "merge_stage": {
+                "called":  _final("formfav_merge_called"),
+                "matched": _final("formfav_merge_matched"),
+                "failed":  _final("formfav_merge_failed"),
+            },
+            "sync_stage": {
+                "called":  _final("total_formfav_called"),
+                "success": _final("total_formfav_success"),
+                "failed":  _final("total_formfav_failed"),
+            },
+            # ── Legacy flat counters (kept for backward compatibility) ──────
             "total_races_discovered":       _final("total_races_discovered"),
             "total_domestic_races":         _final("total_domestic_races"),
             "total_international_filtered": _final("total_international_filtered"),

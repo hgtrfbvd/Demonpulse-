@@ -529,6 +529,16 @@ _SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("test_source_log", "url",           "TEXT",    ""),
     ("test_source_log", "status",        "TEXT",    ""),
     ("test_source_log", "rows_returned", "INTEGER", ""),
+
+    # ── formfav_debug_stats ───────────────────────────────────────────────────
+    # Merge-stage counters added to track full_sweep FormFav usage separately
+    # from sync-stage counters.  Safe to add; existing rows default to 0.
+    ("formfav_debug_stats",      "formfav_merge_called",  "INTEGER", "DEFAULT 0 NOT NULL"),
+    ("formfav_debug_stats",      "formfav_merge_matched", "INTEGER", "DEFAULT 0 NOT NULL"),
+    ("formfav_debug_stats",      "formfav_merge_failed",  "INTEGER", "DEFAULT 0 NOT NULL"),
+    ("test_formfav_debug_stats", "formfav_merge_called",  "INTEGER", "DEFAULT 0 NOT NULL"),
+    ("test_formfav_debug_stats", "formfav_merge_matched", "INTEGER", "DEFAULT 0 NOT NULL"),
+    ("test_formfav_debug_stats", "formfav_merge_failed",  "INTEGER", "DEFAULT 0 NOT NULL"),
 ]
 
 
@@ -809,6 +819,9 @@ _PHASE5_TABLES: list[tuple[str, str]] = [
             total_races_discovered INTEGER NOT NULL DEFAULT 0,
             total_domestic_races INTEGER NOT NULL DEFAULT 0,
             total_international_filtered INTEGER NOT NULL DEFAULT 0,
+            formfav_merge_called INTEGER NOT NULL DEFAULT 0,
+            formfav_merge_matched INTEGER NOT NULL DEFAULT 0,
+            formfav_merge_failed INTEGER NOT NULL DEFAULT 0,
             total_formfav_eligible INTEGER NOT NULL DEFAULT 0,
             total_formfav_called INTEGER NOT NULL DEFAULT 0,
             total_formfav_success INTEGER NOT NULL DEFAULT 0,
