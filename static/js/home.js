@@ -1,4 +1,6 @@
 (function () {
+    const _AEST = "Australia/Sydney";
+
     let allBoardItems = [];
     let activeCodeFilter = "ALL";
     let countdownTimer = null;
@@ -162,7 +164,7 @@
                 if (item.jump_dt_iso) {
                     const d = new Date(item.jump_dt_iso);
                     if (!isNaN(d.getTime())) {
-                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: "Australia/Sydney" });
+                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
                     }
                 }
                 return item.jump_time || "—";
@@ -280,7 +282,7 @@
                 if (next.jump_dt_iso) {
                     const d = new Date(next.jump_dt_iso);
                     if (!isNaN(d.getTime())) {
-                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: "Australia/Sydney" });
+                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
                     }
                 }
                 return next.jump_time || "—";

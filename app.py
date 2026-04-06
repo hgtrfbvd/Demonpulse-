@@ -404,7 +404,9 @@ def api_live_race(race_uid: str):
 
 @app.route("/api/live/watch-sim/<race_uid>", methods=["POST"])
 def api_live_watch_sim(race_uid: str):
-    """Trigger a simulation for the given race (proxies to simulation engine)."""
+    """Trigger a simulation for the given race (proxies to simulation engine).
+    TODO: wire to the Monte Carlo simulation engine once live trigger is supported.
+    """
     try:
         from database import get_race
 
@@ -412,12 +414,13 @@ def api_live_watch_sim(race_uid: str):
         if not race:
             return jsonify({"ok": False, "error": "Race not found"}), 404
 
+        # Simulation engine live trigger is not yet wired — return 501 with context.
         return jsonify({
-            "ok": True,
+            "ok": False,
             "race_uid": race_uid,
             "simulation": None,
-            "message": "Simulation engine not yet wired for live trigger",
-        })
+            "error": "Live simulation trigger not yet implemented",
+        }), 501
     except Exception as e:
         log.error(f"/api/live/watch-sim/{race_uid} failed: {e}")
         return jsonify({"ok": False, "error": "Simulation unavailable"}), 500

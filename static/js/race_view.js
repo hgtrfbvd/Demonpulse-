@@ -1,4 +1,6 @@
 (function () {
+    const _AEST = "Australia/Sydney";
+
     let raceData = null;
     let raceAnalysis = null;
     let countdownTimer = null;
@@ -58,7 +60,7 @@
         if (race.jump_dt_iso) {
             const dt = new Date(race.jump_dt_iso);
             if (!isNaN(dt.getTime())) {
-                return dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: "Australia/Sydney" });
+                return dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
             }
         }
         return race.jump_time || "—";

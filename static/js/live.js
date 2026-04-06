@@ -1,4 +1,6 @@
 (function () {
+    const _AEST = "Australia/Sydney";
+
     let liveRace = null;
     let liveAnalysis = null;
     let liveSignal = null;
@@ -71,7 +73,7 @@
         if (race.jump_dt_iso) {
             const dt = new Date(race.jump_dt_iso);
             if (!isNaN(dt.getTime())) {
-                return dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: "Australia/Sydney" });
+                return dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
             }
         }
         return race.jump_time || "—";
@@ -321,11 +323,15 @@
                 headers: { "Content-Type": "application/json" }
             });
 
-            liveSimulation = data.simulation || null;
-            renderSimulation();
+            if (data && data.simulation) {
+                liveSimulation = data.simulation;
+                renderSimulation();
+            } else {
+                setText("liveSimMeta", data?.error || "Simulation not available");
+            }
         } catch (error) {
             console.error("Live simulation failed:", error);
-            setText("liveSimMeta", "Simulation failed");
+            setText("liveSimMeta", "Simulation not yet available");
         }
     }
 
