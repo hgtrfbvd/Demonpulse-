@@ -77,6 +77,17 @@ def _country_from_state(state: str) -> str:
     return ""
 
 
+def _item_state_field(item: dict) -> str:
+    """
+    Extract the state/region/location value from an OddsPro item dict.
+    OddsPro uses different field names across endpoints; this helper
+    checks them in priority order: location > state > region.
+    """
+    return str(
+        item.get("location") or item.get("state") or item.get("region") or ""
+    )
+
+
 # ---------------------------------------------------------------------------
 # PAYLOAD NORMALISATION HELPERS
 # ---------------------------------------------------------------------------
@@ -755,14 +766,10 @@ class OddsProConnector:
                             or item.get("meetingName") or ""
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
-                        state=str(
-                            item.get("location") or item.get("state") or item.get("region") or ""
-                        ),
+                        state=_item_state_field(item),
                         country=str(
                             item.get("country")
-                            or _country_from_state(
-                                item.get("location") or item.get("state") or item.get("region") or ""
-                            )
+                            or _country_from_state(_item_state_field(item))
                             or self.country
                         ),
                         extra={"raw": item},
@@ -812,14 +819,10 @@ class OddsProConnector:
                             or item.get("meetingName") or ""
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
-                        state=str(
-                            item.get("location") or item.get("state") or item.get("region") or ""
-                        ),
+                        state=_item_state_field(item),
                         country=str(
                             item.get("country")
-                            or _country_from_state(
-                                item.get("location") or item.get("state") or item.get("region") or ""
-                            )
+                            or _country_from_state(_item_state_field(item))
                             or self.country
                         ),
                         extra={"raw": item},
@@ -903,10 +906,10 @@ class OddsProConnector:
             source=self.source_name,
             track=self._clean_track(item.get("track") or item.get("venue") or ""),
             meeting_date=str(item.get("date") or ""),
-            state=str(item.get("state") or ""),
+            state=_item_state_field(item),
             country=str(
                 item.get("country")
-                or _country_from_state(item.get("state") or item.get("location") or item.get("region") or "")
+                or _country_from_state(_item_state_field(item))
                 or self.country
             ),
             extra={"raw": item},
@@ -1560,12 +1563,11 @@ class OddsProConnector:
             race_num=race_num,
             code=code,
             source=self.source_name,
-            state=str(item.get("state") or (meeting.state if meeting else "") or ""),
+            state=str(_item_state_field(item) or (meeting.state if meeting else "") or ""),
             country=str(
                 item.get("country")
                 or _country_from_state(
-                    item.get("state") or item.get("location") or item.get("region")
-                    or (meeting.state if meeting else "") or ""
+                    _item_state_field(item) or (meeting.state if meeting else "") or ""
                 )
                 or (meeting.country if meeting else None)
                 or self.country
