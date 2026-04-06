@@ -45,6 +45,15 @@
 
     function parseJumpTimeToDate(jumpTime) {
         if (!jumpTime || typeof jumpTime !== "string") return null;
+
+        // ISO datetime strings: "2026-04-07T10:30:00+10:00", "2026-04-07T10:30:00Z", etc.
+        // Detect by full date pattern before the "T" separator
+        if (/^\d{4}-\d{2}-\d{2}T/.test(jumpTime) || /^\d{4}-\d{2}-\d{2} /.test(jumpTime)) {
+            const dt = new Date(jumpTime);
+            return isNaN(dt.getTime()) ? null : dt;
+        }
+
+        // HH:MM or HH:MM:SS — interpreted as local time for today
         const parts = jumpTime.split(":");
         if (parts.length < 2) return null;
 
@@ -57,8 +66,22 @@
         return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
     }
 
-    function formatCountdownText(jumpTime) {
-        const target = parseJumpTimeToDate(jumpTime);
+    // Use jump_dt_iso (UTC ISO from backend) when available, else fall back to jump_time
+    function getJumpDate(item) {
+        if (item && item.jump_dt_iso) {
+            const dt = new Date(item.jump_dt_iso);
+            if (!isNaN(dt.getTime())) return dt;
+        }
+        return parseJumpTimeToDate(item && item.jump_time ? item.jump_time : (typeof item === "string" ? item : null));
+    }
+
+    function formatCountdownText(jumpTimeOrDate) {
+        let target;
+        if (jumpTimeOrDate instanceof Date) {
+            target = jumpTimeOrDate;
+        } else {
+            target = parseJumpTimeToDate(jumpTimeOrDate);
+        }
         if (!target) return "—";
 
         const diffSeconds = Math.floor((target.getTime() - Date.now()) / 1000);
@@ -91,8 +114,14 @@
 
     function sortByJumpTime(items) {
         return items.sort((a, b) => {
-            const aDate = parseJumpTimeToDate(a.jump_time);
-            const bDate = parseJumpTimeToDate(b.jump_time);
+            // Prefer backend-computed seconds_to_jump (already server-side calculated)
+            const aHasSecs = a.seconds_to_jump != null;
+            const bHasSecs = b.seconds_to_jump != null;
+            if (aHasSecs && bHasSecs) return a.seconds_to_jump - b.seconds_to_jump;
+
+            // Fall back to jump_dt_iso (UTC ISO) or jump_time (HH:MM)
+            const aDate = getJumpDate(a);
+            const bDate = getJumpDate(b);
 
             if (!aDate && !bDate) return 0;
             if (!aDate) return 1;
@@ -128,13 +157,25 @@
                 : "/race";
             const detailId = `home-detail-${idx}`;
 
+            // Display the jump time: prefer formatted local time from jump_dt_iso
+            const jumpDisplay = (() => {
+                if (item.jump_dt_iso) {
+                    const d = new Date(item.jump_dt_iso);
+                    if (!isNaN(d.getTime())) {
+                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: "Australia/Sydney" });
+                    }
+                }
+                return item.jump_time || "—";
+            })();
+            const jumpIso = item.jump_dt_iso || "";
+
             return `
                 <tr class="home-board-row" data-detail="${detailId}" style="cursor:pointer;" title="Click to expand timing detail">
                     <td><span class="code-badge ${codeClass(code)}">${code}</span></td>
                     <td>${item.track || "—"}</td>
                     <td>R${item.race_num || "—"}</td>
-                    <td>${item.jump_time || "—"}</td>
-                    <td class="countdown-cell" data-jump="${item.jump_time || ""}">${formatCountdownText(item.jump_time)}</td>
+                    <td>${jumpDisplay}</td>
+                    <td class="countdown-cell" data-jump-iso="${jumpIso}" data-jump="${item.jump_time || ""}">${formatCountdownText(item.jump_dt_iso ? new Date(item.jump_dt_iso) : item.jump_time)}</td>
                     <td><span class="status-pill">${(item.status || "upcoming").toUpperCase()}</span></td>
                     <td><span class="signal-pill ${signalClass(signal)}">${signal}</span></td>
                     <td>${confidence}</td>
@@ -150,8 +191,9 @@
                             <div class="home-detail-grid">
                                 <div class="home-detail-item"><span class="home-detail-key">race_uid</span><span class="home-detail-val">${item.race_uid || "—"}</span></div>
                                 <div class="home-detail-item"><span class="home-detail-key">source jump</span><span class="home-detail-val">${item.source_jump_time || item.jump_time || "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">parsed jump</span><span class="home-detail-val">${item.jump_time || "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">timezone</span><span class="home-detail-val">${item.timezone || "AEST"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">jump_dt_iso</span><span class="home-detail-val">${item.jump_dt_iso || "—"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">ntj_label</span><span class="home-detail-val">${item.ntj_label || "—"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">seconds_to_jump</span><span class="home-detail-val">${item.seconds_to_jump != null ? item.seconds_to_jump : "—"}</span></div>
                                 <div class="home-detail-item"><span class="home-detail-key">status</span><span class="home-detail-val">${item.status || "—"}</span></div>
                                 <div class="home-detail-item"><span class="home-detail-key">country</span><span class="home-detail-val">${item.country || "—"}</span></div>
                             </div>
@@ -234,7 +276,16 @@
 
         if (next) {
             el.nextUpMain.textContent = `${next.track || "—"} R${next.race_num || "—"}`;
-            el.nextUpSub.textContent = `${normaliseCode(next.code)} • ${next.jump_time || "—"}`;
+            const nextJump = (() => {
+                if (next.jump_dt_iso) {
+                    const d = new Date(next.jump_dt_iso);
+                    if (!isNaN(d.getTime())) {
+                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: "Australia/Sydney" });
+                    }
+                }
+                return next.jump_time || "—";
+            })();
+            el.nextUpSub.textContent = `${normaliseCode(next.code)} • ${nextJump}`;
         } else {
             el.nextUpMain.textContent = "—";
             el.nextUpSub.textContent = "Waiting for board";
@@ -247,6 +298,16 @@
 
     function refreshCountdowns() {
         document.querySelectorAll(".countdown-cell").forEach(cell => {
+            // Prefer jump_dt_iso (UTC ISO) for precise countdown
+            const iso = cell.dataset.jumpIso || "";
+            if (iso) {
+                const dt = new Date(iso);
+                if (!isNaN(dt.getTime())) {
+                    cell.textContent = formatCountdownText(dt);
+                    return;
+                }
+            }
+            // Fall back to jump_time (HH:MM)
             cell.textContent = formatCountdownText(cell.dataset.jump || "");
         });
     }

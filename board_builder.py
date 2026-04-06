@@ -149,6 +149,8 @@ def _board_item(race: dict[str, Any], ntj: dict[str, Any], confidence: float) ->
         "seconds_to_jump": ntj.get("seconds_to_jump"),
         "ntj_label": ntj.get("ntj_label"),
         "is_near_jump": ntj.get("is_near_jump"),
+        # ISO datetime of jump (UTC-aware) — use this in frontend for exact countdowns
+        "jump_dt_iso": ntj.get("jump_dt_iso"),
         # FormFav persistent enrichment (attached separately; None if not yet synced)
         "formfav": race.get("formfav"),
         # FormFav per-runner enrichment (win_prob, model_rank, decorators, etc.)

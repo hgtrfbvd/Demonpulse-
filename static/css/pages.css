@@ -1343,6 +1343,38 @@
     border-color: rgba(255,255,255,0.12);
 }
 
+/* Race info strip — formguide-style race header */
+.rv-info-strip {
+    padding: 14px 20px;
+}
+
+.rv-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px 20px;
+}
+
+.rv-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.rv-info-key {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
+.rv-info-val {
+    font-size: 13px;
+    font-family: var(--font-mono, monospace);
+    color: var(--text-primary, #e8eaf0);
+    font-weight: 500;
+}
+
 @media (max-width: 1100px) {
     .rv-hero,
     .rv-main-grid {

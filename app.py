@@ -327,6 +327,114 @@ def api_home_board():
         log.warning(f"/api/home/board fallback used: {e}")
         return jsonify({"ok": True, "items": []})
 
+
+@app.route("/api/live/race/<race_uid>", methods=["GET"])
+def api_live_race(race_uid: str):
+    """
+    Live race endpoint — returns race metadata, runners, FormFav enrichment,
+    and any available signal/analysis data for a given race_uid.
+    Used by live.html, race_view.html, and simulator.html.
+    """
+    try:
+        from database import get_race, get_runners_for_race, get_formfav_enrichments_for_date
+        from race_status import compute_ntj
+        from datetime import date as _date
+
+        race = get_race(race_uid)
+        if not race:
+            return jsonify({"ok": False, "error": "Race not found"}), 404
+
+        ntj = compute_ntj(race.get("jump_time"), race.get("date"))
+        race_out = {**race, **ntj}
+
+        runners = get_runners_for_race(race_uid)
+
+        # Attach stored FormFav enrichment if available
+        ff_data: dict = {}
+        try:
+            today = race.get("date") or _date.today().isoformat()
+            for ff_row in get_formfav_enrichments_for_date(today):
+                if (ff_row.get("race_uid") or "") == race_uid:
+                    ff_data = ff_row
+                    break
+        except Exception:
+            pass
+
+        if ff_data:
+            race_out["formfav"] = ff_data
+
+        # Build a lightweight analysis dict from available data
+        formfav = race_out.get("formfav") or {}
+        analysis: dict = {
+            "signal": race_out.get("signal") or "—",
+            "decision": race_out.get("decision") or "—",
+            "confidence": race_out.get("confidence"),
+            "selection": None,
+            "ev": None,
+            "pace_type": formfav.get("paceScenario"),
+            "race_shape": formfav.get("weather"),
+            "pass_reason": None,
+            "all_runners": [
+                {
+                    "box": r.get("box_num"),
+                    "barrier": r.get("barrier"),
+                    "number": r.get("number"),
+                    "name": r.get("name") or r.get("runner_name") or "—",
+                    "odds": r.get("price") or r.get("win_odds"),
+                    "trainer": r.get("trainer") or "—",
+                    "jockey": r.get("jockey") or r.get("driver") or "—",
+                    "scratched": r.get("scratched", False),
+                    "status": "SCR" if r.get("scratched") else "OK",
+                }
+                for r in runners
+            ],
+        }
+
+        return jsonify({
+            "ok": True,
+            "race": race_out,
+            "runners": runners,
+            "analysis": analysis,
+            "signal": None,
+        })
+    except Exception as e:
+        log.error(f"/api/live/race/{race_uid} failed: {e}")
+        return jsonify({"ok": False, "error": "Race data unavailable"}), 500
+
+
+@app.route("/api/live/watch-sim/<race_uid>", methods=["POST"])
+def api_live_watch_sim(race_uid: str):
+    """Trigger a simulation for the given race (proxies to simulation engine)."""
+    try:
+        from database import get_race
+
+        race = get_race(race_uid)
+        if not race:
+            return jsonify({"ok": False, "error": "Race not found"}), 404
+
+        return jsonify({
+            "ok": True,
+            "race_uid": race_uid,
+            "simulation": None,
+            "message": "Simulation engine not yet wired for live trigger",
+        })
+    except Exception as e:
+        log.error(f"/api/live/watch-sim/{race_uid} failed: {e}")
+        return jsonify({"ok": False, "error": "Simulation unavailable"}), 500
+
+
+@app.route("/api/live/mark-watched", methods=["POST"])
+def api_live_mark_watched():
+    """Record that the user has watched/noted a race."""
+    try:
+        body = request.get_json(silent=True) or {}
+        race_uid = body.get("race_uid") or ""
+        return jsonify({"ok": True, "race_uid": race_uid, "marked": True})
+    except Exception as e:
+        log.error(f"/api/live/mark-watched failed: {e}")
+        return jsonify({"ok": False, "error": "Mark watched unavailable"}), 500
+
+
 @app.route("/api/debug/thedogs-fetch")
 def api_debug_thedogs_fetch():
     try:

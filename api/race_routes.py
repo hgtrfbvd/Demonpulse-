@@ -46,7 +46,7 @@ def list_races():
 def get_race(race_uid: str):
     """Get a single race by race_uid."""
     try:
-        from database import get_race
+        from database import get_race, get_runners_for_race
         from race_status import compute_ntj
 
         race = get_race(race_uid)
@@ -54,7 +54,8 @@ def get_race(race_uid: str):
             return jsonify({"ok": False, "error": "Race not found"}), 404
 
         ntj = compute_ntj(race.get("jump_time"), race.get("date"))
-        return jsonify({"ok": True, "race": {**race, **ntj}})
+        runners = get_runners_for_race(race_uid)
+        return jsonify({"ok": True, "race": {**race, **ntj, "runners": runners}})
     except Exception as e:
         log.error(f"/api/races/{race_uid} failed: {e}")
         return jsonify({"ok": False, "error": "Could not retrieve race"}), 500
