@@ -19,14 +19,19 @@ Core functions:
 Architecture rules enforced here:
   - full_sweep fetches ALL races from BOTH sources before any filtering
   - OddsPro = base layer; FormFav = enrichment (Steps 5-6 merge priority)
-  - Domestic classification by TRACK NAME vs DOMESTIC_TRACKS (Step 8)
+  - Domestic classification by TRACK NAME vs DOMESTIC_TRACKS (Step 8),
+    with CODE_GATED_TRACKS for race_code-aware disambiguation
   - Domestic filter applied ONLY after the full merged dataset is built
-  - International races stored with status='international' (not deleted)
+  - EXCLUDED races are NEVER written to any database table (no upsert, no touch)
+  - _store_with_pipeline() enforces a hard domestic gate before any DB write
   - FormFav processes all active races (no AU/NZ pre-filter in formfav_sync)
   - FormFav persistent data stored in separate enrichment tables
   - FormFav provisional overlays stored in-memory (near-jump only)
   - NTJ calculated from stored jump_time (race_status.compute_ntj)
   - Blocked races tracked explicitly in database
+
+Pipeline order (enforced, no exceptions):
+  FETCH → NORMALIZE → MERGE → CLASSIFY → FILTER → WRITE
 """
 import logging
 import threading
@@ -36,7 +41,8 @@ from typing import Any
 import requests as _requests_lib
 
 from core.domestic_tracks import (
-    AU_TRACKS, DOMESTIC_TRACKS, NZ_TRACKS, normalize_track, apply_track_alias,
+    AU_TRACKS, CODE_GATED_TRACKS, DOMESTIC_TRACKS, NZ_TRACKS,
+    normalize_track, apply_track_alias,
 )
 
 log = logging.getLogger(__name__)
@@ -305,29 +311,6 @@ def _merge_race_datasets(
             log.info(f"[MERGE] ODDS_ONLY race_id={cid}")
 
     return list(merged.values())
-
-
-# ---------------------------------------------------------------------------
-# STEP 9 (international variant) — store a race excluded from betting pipeline
-# ---------------------------------------------------------------------------
-
-def _store_international_race(race_dict: dict[str, Any]) -> None:
-    """
-    Persist a race that was classified as international by the Step-8 domestic
-    filter.  The race is stored in today_races with status='international' so it
-    is excluded from board building, formfav_sync, rolling_refresh, and
-    near_jump_refresh (all of which filter by LIVE_STATUSES).
-
-    The race is NOT deleted — it remains available for audit / diagnostics.
-    """
-    try:
-        from database import upsert_race
-        payload = dict(race_dict)
-        payload["status"] = "international"
-        payload["country"] = "international"
-        upsert_race(payload)
-    except Exception as exc:
-        log.warning(f"data_engine: _store_international_race failed: {exc}")
 
 
 # ------------------------------------------------------------
@@ -635,8 +618,21 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         _track = (race_dict.get("track") or "").strip()
         track_key = apply_track_alias(_track)
 
-        # Step 8 — classify by TRACK NAME only; never by country/state field
+        # Step 8 — classify by TRACK NAME (+ race_code for code-gated tracks)
+        # Never use country/state fields from external APIs for this decision.
         is_domestic = track_key in DOMESTIC_TRACKS
+        _filter_logged = False
+        if is_domestic and track_key in CODE_GATED_TRACKS:
+            # This track is only domestic for specific race codes.
+            race_code = (race_dict.get("code") or "").upper()
+            if race_code not in CODE_GATED_TRACKS[track_key]:
+                is_domestic = False
+                _filter_logged = True
+                log.info(
+                    f"[FILTER] EXCLUDED track={_track!r} code={race_code!r}"
+                    f" (code not valid for this venue; expected one of"
+                    f" {sorted(CODE_GATED_TRACKS[track_key])!r})"
+                )
 
         if is_domestic:
             effective_country = "nz" if track_key in NZ_TRACKS else "au"
@@ -644,9 +640,9 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             domestic_count += 1
             log.info(f"[FILTER] INCLUDED track={_track!r} country={effective_country!r}")
         else:
-            race_dict["country"] = "international"
             international_count += 1
-            log.info(f"[FILTER] EXCLUDED track={_track!r}")
+            if not _filter_logged:
+                log.info(f"[FILTER] EXCLUDED track={_track!r}")
 
         # Step 9 — Storage
         if is_domestic:
@@ -720,8 +716,9 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                     log.debug(f"full_sweep: FF runner enrichment write failed: {_ff_exc}")
 
         else:
-            # International race — store but exclude from betting pipeline
-            _store_international_race(race_dict)
+            # International race — NEVER write to DB.
+            # [FILTER] EXCLUDED was already logged above.
+            # No upsert, no table touch.
             if _pipeline_state is not None:
                 _pipeline_state.record_race_excluded(
                     race_dict.get("race_uid") or "", "non_domestic_track"
@@ -1399,22 +1396,26 @@ def _write_race(race: Any) -> None:
 def _store_with_pipeline(race: Any) -> bool:
     """
     Enforce pipeline order before storing a race record:
-      1. Normalize  (already done by connector / merge engine)
-      2. Validate   (log warning; data is stored regardless)
-      3. Integrity  (if blocked, mark before storing)
-      4. Store
+      1. Domestic gate (hard block — excluded races NEVER reach the DB)
+      2. Normalize  (already done by connector / merge engine)
+      3. Validate   (log warning; data is stored regardless)
+      4. Integrity  (if blocked, mark before storing)
+      5. Store
 
-    The domestic filter is NO LONGER applied here.  Classification by track
-    name vs DOMESTIC_TRACKS happens in full_sweep() AFTER the OddsPro + FormFav
-    datasets are merged (Step 8 of the 10-step pipeline).  Only races that have
-    already been classified as domestic are passed to _store_with_pipeline().
-    International races are stored via _store_international_race().
+    The domestic gate is the first check: if the race track is not in
+    DOMESTIC_TRACKS (or fails CODE_GATED_TRACKS validation), the function
+    returns False immediately WITHOUT touching the database.
+
+    full_sweep() is the primary call-site and applies the filter before calling
+    this function.  This gate acts as a belt-and-suspenders safety check for
+    rolling_refresh / near_jump_refresh callers that receive raw OddsPro data.
 
     Board building happens separately in board_builder.py.  Blocked races are
     stored with status='blocked' so they are tracked explicitly rather than
     silently dropped.
 
-    Returns True if the race passed integrity (not blocked), False otherwise.
+    Returns True if the race passed the domestic gate and integrity check,
+    False otherwise.
     """
     try:
         from database import upsert_race
@@ -1424,17 +1425,35 @@ def _store_with_pipeline(race: Any) -> bool:
         race_dict = _race_to_dict(race)
         race_uid = race_dict.get("race_uid") or "(no uid)"
 
-        # Ensure canonical country is set (fallback: determine from track membership).
-        # In the new pipeline full_sweep() sets this before calling _store_with_pipeline,
-        # but rolling_refresh / near_jump_refresh call this directly from OddsPro data.
+        # ----------------------------------------------------------------
+        # Step 1 — HARD DOMESTIC GATE
+        # Excluded races must NEVER be written to any DB table.
+        # ----------------------------------------------------------------
+        _track = (race_dict.get("track") or "").strip()
+        track_key = apply_track_alias(_track)
+
+        gate_pass = track_key in DOMESTIC_TRACKS
+        if gate_pass and track_key in CODE_GATED_TRACKS:
+            race_code = (race_dict.get("code") or "").upper()
+            if race_code not in CODE_GATED_TRACKS[track_key]:
+                gate_pass = False
+
+        if not gate_pass:
+            log.info(
+                f"[FILTER] EXCLUDED track={_track!r}"
+                f" race_uid={race_uid} (hard gate in _store_with_pipeline — no DB write)"
+            )
+            return False
+
+        # Ensure canonical country is set (full_sweep sets this before calling us;
+        # rolling_refresh / near_jump_refresh pass raw OddsPro objects so we set it here).
         if not race_dict.get("country"):
-            _track = (race_dict.get("track") or "").strip()
-            track_key = apply_track_alias(_track)
             if track_key in NZ_TRACKS:
                 race_dict["country"] = "nz"
             elif track_key in AU_TRACKS:
                 race_dict["country"] = "au"
-            # If still unknown, leave blank — DB default handles it.
+            # track_key is guaranteed to be in DOMESTIC_TRACKS at this point
+            # (enforced by the hard gate above), so one of the two branches will match.
 
         log.debug(
             f"[PIPELINE] STORING race_uid={race_uid}"
@@ -1458,7 +1477,7 @@ def _store_with_pipeline(race: Any) -> bool:
             race_dict["status"] = "blocked"
             race_dict["block_code"] = block_code
 
-        # Step 4 — Store
+        # Step 4 — Store (only reached for domestic races that passed Step 1)
         upsert_race(race_dict)
         return bool(allowed)
 
