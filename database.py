@@ -174,13 +174,32 @@ def get_races_for_date(target_date: str) -> list[dict[str, Any]]:
 
 
 def get_active_races(target_date: str) -> list[dict[str, Any]]:
-    """Fetch all upcoming/open races for today."""
+    """
+    Fetch all live (non-final) races for today.
+
+    Matches race_status.LIVE_STATUSES: upcoming, open, interim, near_jump,
+    jumped_estimated, awaiting_result.  Races that have transitioned beyond
+    "upcoming"/"open"/"interim" (e.g. via the race state machine) are still
+    live and must be included so rolling_refresh, near_jump_refresh and
+    formfav_sync all operate on the full live race pool rather than a stale
+    subset.
+    """
     return safe_query(
         lambda: get_db()
         .table(T("today_races"))
         .select("*")
         .eq("date", target_date)
-        .in_("status", ["upcoming", "open", "interim"])
+        .in_(
+            "status",
+            [
+                "upcoming",
+                "open",
+                "interim",
+                "near_jump",
+                "jumped_estimated",
+                "awaiting_result",
+            ],
+        )
         .order("jump_time")
         .execute()
         .data,
