@@ -45,8 +45,10 @@ from typing import Any
 import requests as _requests_lib
 
 from core.domestic_tracks import (
-    AU_STATE_IDS, AU_TRACKS, CODE_GATED_TRACKS, DOMESTIC_TRACKS,
-    NZ_STATE_IDS, NZ_TRACKS, normalize_track, apply_track_alias,
+    AU_COUNTRY_CODES, AU_STATE_IDS, AU_TRACKS,
+    CODE_GATED_TRACKS, DOMESTIC_COUNTRY_CODES, DOMESTIC_TRACKS,
+    NZ_COUNTRY_CODES, NZ_STATE_IDS, NZ_TRACKS,
+    normalize_track, apply_track_alias,
 )
 
 log = logging.getLogger(__name__)
@@ -633,12 +635,12 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
 
         api_country = (race_dict.get("country") or "").strip().lower()
 
-        if api_country in ("au", "aus", "australia"):
+        if api_country in AU_COUNTRY_CODES:
             # TIER 1: API explicitly confirmed AU
             is_domestic = True
             effective_country = "au"
             country_source = "api_country"
-        elif api_country in ("nz", "new zealand", "new-zealand", "nzl"):
+        elif api_country in NZ_COUNTRY_CODES:
             # TIER 1: API explicitly confirmed NZ
             is_domestic = True
             effective_country = "nz"
@@ -1124,7 +1126,7 @@ def _is_au_nz_race(race: dict[str, Any]) -> bool:
       TIER 3 — track name whitelist (DOMESTIC_TRACKS) — fallback only
     """
     country = (race.get("country") or "").strip().lower()
-    if country in ("au", "aus", "australia", "nz", "new zealand", "new-zealand", "nzl"):
+    if country in DOMESTIC_COUNTRY_CODES:
         return True
     if country:
         # Explicitly set to a non-AU/NZ country → international
@@ -1154,9 +1156,9 @@ def _get_formfav_country(race: dict[str, Any]) -> str:
     NOTE: This function should only be called after _is_au_nz_race() returns True.
     """
     country = (race.get("country") or "").strip().lower()
-    if country in ("nz", "new zealand", "new-zealand", "nzl"):
+    if country in NZ_COUNTRY_CODES:
         return "nz"
-    if country in ("au", "aus", "australia"):
+    if country in AU_COUNTRY_CODES:
         return "au"
 
     state = (race.get("state") or "").strip().lower()
@@ -1528,7 +1530,7 @@ def _store_with_pipeline(race: Any) -> bool:
         # (a) Explicit country gate — blocks races where connector resolved a
         #     non-AU/NZ country from OddsPro API fields.
         stored_country = (race_dict.get("country") or "").strip().lower()
-        if stored_country and stored_country not in ("au", "aus", "australia", "nz", "new zealand", "new-zealand", "nzl"):
+        if stored_country and stored_country not in DOMESTIC_COUNTRY_CODES:
             log.info(
                 f"[FILTER] EXCLUDED track={_track!r} country={stored_country!r}"
                 f" race_uid={race_uid} (international country; hard gate in _store_with_pipeline — no DB write)"

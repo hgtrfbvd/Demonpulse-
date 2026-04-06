@@ -70,7 +70,10 @@ AU_STATE_IDS: frozenset[str] = frozenset({
     "victoria", "new south wales", "queensland", "south australia",
     "western australia", "tasmania", "australian capital territory",
     "northern territory",
-    # Numeric state codes sometimes used by OddsPro
+    # Numeric state codes: OddsPro has been observed returning integer state IDs
+    # in its state/location fields for some AU endpoints.
+    # 1=NSW, 2=VIC, 3=QLD, 4=SA, 5=WA, 6=TAS, 7=ACT, 8=NT.
+    # Only include if OddsPro API documentation or live observation confirms usage.
     "1",   # NSW
     "2",   # VIC
     "3",   # QLD
@@ -93,6 +96,18 @@ NZ_STATE_IDS: frozenset[str] = frozenset({
     # Common OddsPro short-forms for NZ
     "nzl",
 })
+
+#: Canonical lowercase country codes for AU races (including common ISO aliases).
+#: Used to deduplicate the check `country in ('au', 'aus', 'australia')` across files.
+AU_COUNTRY_CODES: frozenset[str] = frozenset({"au", "aus", "australia"})
+
+#: Canonical lowercase country codes for NZ races (including common ISO aliases).
+#: Used to deduplicate the check `country in ('nz', 'new zealand', 'new-zealand', 'nzl')`.
+NZ_COUNTRY_CODES: frozenset[str] = frozenset({"nz", "new zealand", "new-zealand", "nzl"})
+
+#: Union of AU and NZ canonical country codes — a race is domestic if its
+#: normalised country field is in this set.
+DOMESTIC_COUNTRY_CODES: frozenset[str] = AU_COUNTRY_CODES | NZ_COUNTRY_CODES
 
 
 # ---------------------------------------------------------------------------

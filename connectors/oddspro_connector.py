@@ -49,7 +49,9 @@ from urllib.parse import quote
 import requests
 
 from core.domestic_tracks import (
-    AU_TRACKS, AU_STATE_IDS, DOMESTIC_TRACKS, NZ_TRACKS, NZ_STATE_IDS,
+    AU_COUNTRY_CODES, AU_TRACKS, AU_STATE_IDS,
+    DOMESTIC_COUNTRY_CODES, DOMESTIC_TRACKS,
+    NZ_COUNTRY_CODES, NZ_TRACKS, NZ_STATE_IDS,
     normalize_track,
 )
 
@@ -68,8 +70,11 @@ log = logging.getLogger(__name__)
 def _country_from_track(track: str) -> str:
     """
     Return 'au' for a known Australian venue, 'nz' for a known New Zealand
-    venue, or '' when not recognised.  Track whitelist is TIER 3 — used only
-    when both country and state API fields are absent/empty.
+    venue, or '' when not recognised.
+
+    This function checks only track name membership in AU_TRACKS / NZ_TRACKS.
+    It is TIER 3 in the classification hierarchy — called only when OddsPro
+    API country and state fields are both absent for the item and its meeting.
     """
     t = normalize_track(track)
     if t in AU_TRACKS:
@@ -104,9 +109,9 @@ def _country_from_api_fields(item: dict) -> str:
     # TIER 1: explicit country field
     raw_country = str(item.get("country") or "").strip().lower()
     if raw_country:
-        if raw_country in ("au", "aus", "australia"):
+        if raw_country in AU_COUNTRY_CODES:
             return "au"
-        if raw_country in ("nz", "new zealand", "new-zealand", "nzl"):
+        if raw_country in NZ_COUNTRY_CODES:
             return "nz"
         # Non-empty, non-AU/NZ: explicitly international — return as-is so
         # callers can distinguish "unknown" ('') from "confirmed international"
