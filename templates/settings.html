@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Settings / Admin{% endblock %}
+
+{% block content %}
+<div class="page-shell settings-page">
+
+    <!-- HERO -->
+    <section class="settings-hero card">
+        <div class="settings-hero-left">
+            <div class="page-kicker">SYSTEM CONTROL</div>
+            <h1 class="page-title">Settings &amp; Admin</h1>
+            <div class="page-subtitle">
+                Manual control center. Environment, refresh settings, data controls, source status, and maintenance actions.
+            </div>
+        </div>
+        <div class="settings-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">ENV</div>
+                <div class="hero-stat-value" id="settingsEnv">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">BOARD RACES</div>
+                <div class="hero-stat-value" id="settingsBoardCount">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">DATA STATUS</div>
+                <div class="hero-stat-value" id="settingsDataStatus">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">LAST SYNC</div>
+                <div class="hero-stat-value hero-stat-small" id="settingsLastSync">—</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION TABS -->
+    <section class="card">
+        <div class="settings-tabs">
+            <button class="settings-tab active" data-tab="general">General</button>
+            <button class="settings-tab" data-tab="data">Data Controls</button>
+            <button class="settings-tab" data-tab="visibility">System Visibility</button>
+            <button class="settings-tab" data-tab="maintenance">Maintenance</button>
+        </div>
+    </section>
+
+    <!-- A. GENERAL -->
+    <section class="card settings-section" id="settings-general">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">GENERAL</div>
+                <h2 class="section-title">Environment &amp; Display</h2>
+            </div>
+        </div>
+
+        <div class="settings-grid">
+            <div class="settings-field">
+                <label class="settings-label">Environment</label>
+                <div class="settings-value" id="genEnvDisplay">—</div>
+            </div>
+            <div class="settings-field">
+                <label class="settings-label">Timezone</label>
+                <div class="settings-value">AEST (Australia/Sydney)</div>
+            </div>
+            <div class="settings-field">
+                <label class="settings-label">Board Refresh Interval</label>
+                <div class="settings-value">30 seconds (auto)</div>
+            </div>
+            <div class="settings-field">
+                <label class="settings-label">FormFav Sync Interval</label>
+                <div class="settings-value">300 seconds (5 min)</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- B. DATA CONTROLS -->
+    <section class="card settings-section" id="settings-data" style="display:none;">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">DATA CONTROLS</div>
+                <h2 class="section-title">Source &amp; Pipeline Controls</h2>
+            </div>
+        </div>
+
+        <div class="settings-source-list" id="settingsSourceList">
+            <div class="settings-source-row">
+                <span class="settings-source-name">OddsPro</span>
+                <span class="settings-source-status" id="srcOddsPro">—</span>
+            </div>
+            <div class="settings-source-row">
+                <span class="settings-source-name">FormFav</span>
+                <span class="settings-source-status" id="srcFormFav">—</span>
+            </div>
+        </div>
+
+        <div class="settings-note">
+            Blacklist management and FormFav skip controls will be available here in a future release.
+        </div>
+    </section>
+
+    <!-- C. SYSTEM VISIBILITY -->
+    <section class="card settings-section" id="settings-visibility" style="display:none;">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">SYSTEM VISIBILITY</div>
+                <h2 class="section-title">Counters &amp; Stats</h2>
+            </div>
+            <button class="dp-btn" id="refreshVisibilityBtn">Refresh</button>
+        </div>
+
+        <div class="settings-grid" id="visibilityGrid">
+            <div class="settings-field"><label class="settings-label">Board Races</label><div class="settings-value" id="visBoardRaces">—</div></div>
+            <div class="settings-field"><label class="settings-label">Greyhound</label><div class="settings-value" id="visGH">—</div></div>
+            <div class="settings-field"><label class="settings-label">Horse</label><div class="settings-value" id="visHorse">—</div></div>
+            <div class="settings-field"><label class="settings-label">Harness</label><div class="settings-value" id="visHarness">—</div></div>
+            <div class="settings-field"><label class="settings-label">FormFav Synced</label><div class="settings-value" id="visFormfavSynced">—</div></div>
+            <div class="settings-field"><label class="settings-label">Source</label><div class="settings-value" id="visSource">OddsPro</div></div>
+        </div>
+
+        <div class="section-head" style="margin-top:18px;">
+            <div>
+                <div class="section-kicker">FORMFAV DEBUG</div>
+                <h2 class="section-title">FormFav Sync Stats</h2>
+            </div>
+        </div>
+        <pre class="rv-raw-pre" id="formfavDebugPre" style="display:block; max-height:300px;"></pre>
+    </section>
+
+    <!-- D. MAINTENANCE -->
+    <section class="card settings-section" id="settings-maintenance" style="display:none;">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">MAINTENANCE</div>
+                <h2 class="section-title">Manual Actions</h2>
+            </div>
+        </div>
+
+        <div class="settings-action-grid">
+            <div class="settings-action-card">
+                <div class="settings-action-title">Force Refresh Board</div>
+                <div class="settings-action-desc">Trigger a full OddsPro sweep and rebuild the board now.</div>
+                <button class="dp-btn dp-btn-primary" id="forceRefreshBtn">Force Refresh</button>
+                <div class="section-meta" id="forceRefreshMeta"></div>
+            </div>
+
+            <div class="settings-action-card">
+                <div class="settings-action-title">Run FormFav Sync</div>
+                <div class="settings-action-desc">Manually trigger FormFav enrichment for active races.</div>
+                <button class="dp-btn" id="formfavSyncBtn">Run FormFav Sync</button>
+                <div class="section-meta" id="formfavSyncMeta"></div>
+            </div>
+
+            <div class="settings-action-card">
+                <div class="settings-action-title">Health Check</div>
+                <div class="settings-action-desc">Run a quick health check on all system components.</div>
+                <button class="dp-btn" id="healthCheckBtn">Check Health</button>
+                <div class="section-meta" id="healthCheckMeta"></div>
+            </div>
+        </div>
+
+        <div class="section-head" style="margin-top:18px;">
+            <div>
+                <div class="section-kicker">HEALTH DETAILS</div>
+                <h2 class="section-title">Component Status</h2>
+            </div>
+        </div>
+        <pre class="rv-raw-pre" id="healthDetailPre" style="display:none;"></pre>
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/settings.js"></script>
+{% endblock %}

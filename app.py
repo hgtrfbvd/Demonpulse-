@@ -130,6 +130,11 @@ def page_backtesting():
     return render_template("backtesting.html")
 
 
+@app.route("/race")
+def page_race_view():
+    return render_template("race_view.html")
+
+
 @app.route("/settings")
 def page_settings():
     return render_template("settings.html")

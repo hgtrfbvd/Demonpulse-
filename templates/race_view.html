@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Race View{% endblock %}
+
+{% block content %}
+<div class="page-shell race-view-page">
+
+    <!-- HERO -->
+    <section class="rv-hero card">
+        <div class="rv-hero-left">
+            <div class="page-kicker">RACE INSPECTION</div>
+            <h1 class="page-title" id="rvRaceTitle">Select a race</h1>
+            <div class="page-subtitle" id="rvRaceMeta">Open from the Home or Live board, or use ?race_uid=...</div>
+        </div>
+
+        <div class="rv-hero-right">
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">CODE</div>
+                <div class="hero-stat-value hero-stat-small" id="rvHeroCode">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">STATUS</div>
+                <div class="hero-stat-value hero-stat-small" id="rvHeroStatus">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">JUMP</div>
+                <div class="hero-stat-value hero-stat-small" id="rvHeroJump">—</div>
+            </div>
+            <div class="hero-stat-card">
+                <div class="hero-stat-label">COUNTDOWN</div>
+                <div class="hero-stat-value hero-stat-small" id="rvHeroCountdown">—</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- TOOLBAR -->
+    <section class="rv-toolbar card">
+        <div class="rv-toolbar-left">
+            <button class="dp-btn dp-btn-primary" id="rvRefreshBtn">Refresh Race</button>
+            <button class="dp-btn" id="rvSimulateBtn">Run Simulation</button>
+            <button class="dp-btn" id="rvSendToBettingBtn">Add to Betting</button>
+            <button class="dp-btn" id="rvBacktestBtn">Mark for Backtest</button>
+        </div>
+        <div class="rv-toolbar-right">
+            <button class="dp-btn" id="rvTruthToggle">Show Truth Panel</button>
+        </div>
+    </section>
+
+    <!-- MAIN GRID -->
+    <section class="rv-main-grid">
+
+        <!-- LEFT: RUNNERS + FORM -->
+        <div class="rv-left-stack">
+
+            <!-- RUNNER TABLE -->
+            <div class="card rv-runners-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">FIELD</div>
+                        <h2 class="section-title">Runners</h2>
+                    </div>
+                    <div class="section-meta" id="rvRunnerMeta">No race loaded</div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="board-terminal-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Runner</th>
+                                <th>Odds</th>
+                                <th>Trainer</th>
+                                <th>Confidence</th>
+                                <th>AI Notes</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rvRunnerRows">
+                            <tr><td colspan="7" class="board-empty">No race loaded.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TRUTH PANEL (hidden by default) -->
+            <div class="card rv-truth-card" id="rvTruthPanel" style="display:none;">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">INSPECTION</div>
+                        <h2 class="section-title">Race Truth Panel</h2>
+                    </div>
+                </div>
+
+                <div class="rv-truth-grid">
+                    <div class="rv-truth-row"><span class="rv-truth-key">race_uid</span><span class="rv-truth-val" id="rvTruthUid">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">source</span><span class="rv-truth-val" id="rvTruthSource">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">raw_datetime</span><span class="rv-truth-val" id="rvTruthRawDt">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">parsed_datetime</span><span class="rv-truth-val" id="rvTruthParsedDt">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">timezone</span><span class="rv-truth-val" id="rvTruthTz">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">country</span><span class="rv-truth-val" id="rvTruthCountry">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">code</span><span class="rv-truth-val" id="rvTruthCode">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">normalized_track</span><span class="rv-truth-val" id="rvTruthTrack">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">merge_status</span><span class="rv-truth-val" id="rvTruthMerge">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">formfav_status</span><span class="rv-truth-val" id="rvTruthFormfav">—</span></div>
+                    <div class="rv-truth-row"><span class="rv-truth-key">board_inclusion</span><span class="rv-truth-val" id="rvTruthBoard">—</span></div>
+                </div>
+            </div>
+
+            <!-- RACE NOTES -->
+            <div class="card rv-notes-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">NOTES</div>
+                        <h2 class="section-title">Race Notes</h2>
+                    </div>
+                </div>
+                <textarea class="rv-notes-input" id="rvNotesInput" placeholder="Add race notes…" rows="4"></textarea>
+                <div class="inline-actions" style="margin-top:10px;">
+                    <button class="dp-btn dp-btn-primary" id="rvSaveNoteBtn">Save Note</button>
+                    <span class="section-meta" id="rvNoteMeta"></span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT: AI + FORMFAV + SOURCE -->
+        <div class="rv-right-stack">
+
+            <!-- AI PANEL -->
+            <div class="card rv-ai-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">AI ANALYSIS</div>
+                        <h2 class="section-title">Signal &amp; Decision</h2>
+                    </div>
+                    <div class="section-meta" id="rvAiMeta">—</div>
+                </div>
+
+                <div class="rv-ai-grid">
+                    <div class="rv-ai-row"><span class="rv-ai-key">Signal</span><span class="rv-ai-val" id="rvAiSignal">—</span></div>
+                    <div class="rv-ai-row"><span class="rv-ai-key">Decision</span><span class="rv-ai-val" id="rvAiDecision">—</span></div>
+                    <div class="rv-ai-row"><span class="rv-ai-key">Confidence</span><span class="rv-ai-val" id="rvAiConfidence">—</span></div>
+                    <div class="rv-ai-row"><span class="rv-ai-key">Top Selection</span><span class="rv-ai-val" id="rvAiSelection">—</span></div>
+                    <div class="rv-ai-row"><span class="rv-ai-key">EV</span><span class="rv-ai-val" id="rvAiEv">—</span></div>
+                </div>
+
+                <div class="rv-reason-box" id="rvReasonBox">No analysis available.</div>
+            </div>
+
+            <!-- FORMFAV ENRICHMENT -->
+            <div class="card rv-formfav-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">FORMFAV</div>
+                        <h2 class="section-title">Enrichment Panel</h2>
+                    </div>
+                    <div class="section-meta" id="rvFormfavMeta">—</div>
+                </div>
+
+                <div class="rv-ai-grid" id="rvFormfavGrid">
+                    <div class="rv-ai-row"><span class="rv-ai-key">Weather</span><span class="rv-ai-val" id="rvFfWeather">—</span></div>
+                    <div class="rv-ai-row"><span class="rv-ai-key">Pace Scenario</span><span class="rv-ai-val" id="rvFfPace">—</span></div>
+                    <div class="rv-ai-row"><span class="rv-ai-key">Track Condition</span><span class="rv-ai-val" id="rvFfTrackCond">—</span></div>
+                    <div class="rv-ai-row"><span class="rv-ai-key">Start Time</span><span class="rv-ai-val" id="rvFfStartTime">—</span></div>
+                </div>
+            </div>
+
+            <!-- SOURCE / RAW DATA -->
+            <div class="card rv-source-card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">SOURCE</div>
+                        <h2 class="section-title">Raw Race Data</h2>
+                    </div>
+                    <button class="dp-btn dp-btn-small" id="rvRawToggle">Show Raw</button>
+                </div>
+                <pre class="rv-raw-pre" id="rvRawPre" style="display:none;"></pre>
+            </div>
+
+        </div>
+
+    </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/race_view.js"></script>
+{% endblock %}
