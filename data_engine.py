@@ -168,8 +168,12 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         log.warning("full_sweep skipped: OddsPro not configured")
         return {"ok": False, "reason": "oddspro_not_configured", "date": today}
 
+    log.info(
+        f"full_sweep: fetching domestic-only meetings from OddsPro "
+        f"(location=domestic, date={today})"
+    )
     try:
-        meetings = conn.fetch_meetings(today)
+        meetings = conn.fetch_meetings(today, location="domestic")
     except _requests_lib.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else None
         reason = f"oddspro_http_{status_code}" if status_code else "oddspro_request_exception"
@@ -400,6 +404,11 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         f"{races_stored} races stored ({races_blocked} blocked), "
         f"{runners_stored} runners stored for {today}"
     )
+    log.info(
+        f"LOCATION FILTER: domestic-only feed applied at OddsPro source "
+        f"(location=domestic) — races discovered: {races_found} "
+        f"races stored: {races_stored} international excluded: 0 (filtered at API source)"
+    )
     # Mandatory pipeline validation output
     log.info(
         f"PIPELINE VALIDATION: date={today} "
@@ -410,6 +419,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     return {
         "ok": True,
         "date": today,
+        "location_filter": "domestic",
         "meetings_found": meetings_found,
         "meetings_fetched": meetings_fetched,
         "meeting_ids_found": meeting_ids_found,
@@ -423,6 +433,9 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "runners_stored": runners_stored,
         "races_blocked": races_blocked,
         "races_passed": races_stored - races_blocked,
+        # International races are excluded at the OddsPro API source via location=domestic.
+        # This field is always 0 because no international races enter the pipeline.
+        "international_excluded": 0,
         "discovery_failed": _discovery_failed,
         "discovery_diag": _discovery_diag,
         "first_detail_error": _first_detail_error,
@@ -615,7 +628,7 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
         return {"ok": False, "reason": "oddspro_not_configured", "date": today}
 
     try:
-        results = conn.fetch_results(today)
+        results = conn.fetch_results(today, location="domestic")
     except Exception as e:
         log.error(f"check_results: fetch_results failed: {e}")
         return {"ok": False, "error": "Data engine error", "date": today}
