@@ -48,29 +48,86 @@ from urllib.parse import quote
 
 import requests
 
-from core.domestic_tracks import AU_TRACKS, DOMESTIC_TRACKS, NZ_TRACKS, normalize_track
+from core.domestic_tracks import (
+    AU_TRACKS, AU_STATE_IDS, DOMESTIC_TRACKS, NZ_TRACKS, NZ_STATE_IDS,
+    normalize_track,
+)
 
 log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# TRACK-BASED COUNTRY HELPERS
+# COUNTRY RESOLUTION HELPERS
 # ---------------------------------------------------------------------------
-# Country and state fields from OddsPro API responses are unreliable.
-# Track name membership in AU_TRACKS / NZ_TRACKS is the sole authority.
+# Classification uses a 3-tier priority (matching core/domestic_tracks.py):
+#   TIER 1 — explicit 'country' field from the API item
+#   TIER 2 — state/location/region field, matched against AU_STATE_IDS / NZ_STATE_IDS
+#   TIER 3 — track name membership in AU_TRACKS / NZ_TRACKS (fallback only)
 # ---------------------------------------------------------------------------
 
 def _country_from_track(track: str) -> str:
     """
     Return 'au' for a known Australian venue, 'nz' for a known New Zealand
-    venue, or '' when not recognised.  Uses the DOMESTIC_TRACKS whitelist
-    from core.domestic_tracks as the sole authority.
+    venue, or '' when not recognised.  Track whitelist is TIER 3 — used only
+    when both country and state API fields are absent/empty.
     """
     t = normalize_track(track)
     if t in AU_TRACKS:
         return "au"
     if t in NZ_TRACKS:
         return "nz"
+    return ""
+
+
+def _country_from_api_fields(item: dict) -> str:
+    """
+    Determine country from OddsPro API location metadata.
+
+    Resolution order (3 tiers):
+      TIER 1 — item['country'] field
+               'au'/'aus'/'australia'   → 'au'
+               'nz'/'new zealand'       → 'nz'
+               any other non-empty str  → that value (signals explicitly non-AU/NZ)
+      TIER 2 — item state/location/region field
+               matches AU_STATE_IDS     → 'au'
+               matches NZ_STATE_IDS     → 'nz'
+               non-empty but unmatched  → '' (unrecognised state; do NOT default)
+      TIER 3 — returns '' (caller should fall back to track whitelist)
+
+    Returns:
+      'au'          — confirmed Australian
+      'nz'          — confirmed New Zealand
+      ''            — no conclusive location data (caller uses track whitelist)
+      <other str>   — explicitly non-AU/NZ country code (e.g. 'gb', 'us', 'ie');
+                      caller should treat this as international and exclude.
+    """
+    # TIER 1: explicit country field
+    raw_country = str(item.get("country") or "").strip().lower()
+    if raw_country:
+        if raw_country in ("au", "aus", "australia"):
+            return "au"
+        if raw_country in ("nz", "new zealand", "new-zealand", "nzl"):
+            return "nz"
+        # Non-empty, non-AU/NZ: explicitly international — return as-is so
+        # callers can distinguish "unknown" ('') from "confirmed international"
+        return raw_country
+
+    # TIER 2: state / location / region field
+    state = _item_state_field(item).strip().lower()
+    if state:
+        if state in AU_STATE_IDS:
+            return "au"
+        if state in NZ_STATE_IDS:
+            return "nz"
+        # Non-empty state that doesn't match AU or NZ — likely international.
+        # Return '' so the caller's track whitelist fallback (TIER 3) is skipped
+        # (returning a recognised international state code here would be confusing;
+        # returning '' is safe because the caller treats '' as "use track whitelist"
+        # but this path only occurs when there IS state data that is unrecognised —
+        # in that edge case we prefer to exclude rather than admit via track name).
+        return ""
+
+    # TIER 3: no location data at all — signal to caller to use track whitelist
     return ""
 
 
@@ -83,6 +140,58 @@ def _item_state_field(item: dict) -> str:
     return str(
         item.get("location") or item.get("state") or item.get("region") or ""
     )
+
+
+def _resolve_race_country(
+    item: dict,
+    track: str,
+    meeting: "MeetingRecord | None" = None,
+) -> str:
+    """
+    Resolve the country for a race item using 3-tier priority.
+
+    TIER 1 + TIER 2: OddsPro API fields from *item* (via _country_from_api_fields).
+      'au' / 'nz'       → confirmed domestic; return immediately.
+      other non-empty   → confirmed international (e.g. 'gb'); return that code.
+      ''                → item has NO location data; proceed to meeting + track tiers.
+
+    If the item itself carries ANY state/location/region data but _country_from_api_fields
+    still returns '' (unrecognised jurisdiction), we do NOT fall through to the track
+    whitelist — an unrecognised location may be international, so we return '' to exclude.
+
+    Meeting-level state is checked before the track fallback: if the race item has
+    no location fields but the parent meeting does, the meeting's state resolves Tier 2.
+
+    TIER 3: Track whitelist (_country_from_track) is used ONLY when BOTH the race
+    item AND the parent meeting carry no location data at all.
+    """
+    # Tier 1 + 2: race-level API fields
+    country = _country_from_api_fields(item)
+    if country:
+        # Could be 'au', 'nz', or an international code like 'gb' — return as-is.
+        # Callers that only want AU/NZ treat any other non-empty value as international.
+        return country
+
+    # If the item has ANY state/location data that _country_from_api_fields could
+    # not resolve to AU or NZ, do NOT fall back to track whitelist — this prevents
+    # ambiguous tracks (e.g. "sandown" in AU_TRACKS) from admitting a UK race whose
+    # OddsPro state field (e.g. "Surrey") was simply not in AU_STATE_IDS / NZ_STATE_IDS.
+    if _item_state_field(item).strip():
+        return ""
+
+    # Check meeting-level state as an additional Tier 2 source
+    if meeting and meeting.state:
+        m_state = meeting.state.strip().lower()
+        if m_state in AU_STATE_IDS:
+            return "au"
+        if m_state in NZ_STATE_IDS:
+            return "nz"
+        # Non-empty unrecognised meeting state — potentially international.
+        # Do NOT fall through to track whitelist; return '' to signal unknown.
+        return ""
+
+    # Tier 3: track whitelist — only when both item and meeting have no location data
+    return _country_from_track(track)
 
 
 # ---------------------------------------------------------------------------
@@ -764,11 +873,14 @@ class OddsProConnector:
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
                         state=_item_state_field(item),
-                        country=_country_from_track(self._clean_track(
-                            item.get("track") or item.get("meetingTrack")
-                            or item.get("venue") or item.get("name")
-                            or item.get("meetingName") or ""
-                        )),
+                        country=(
+                            _country_from_api_fields(item)
+                            or _country_from_track(self._clean_track(
+                                item.get("track") or item.get("meetingTrack")
+                                or item.get("venue") or item.get("name")
+                                or item.get("meetingName") or ""
+                            ))
+                        ),
                         extra={"raw": item},
                     )
                 )
@@ -817,11 +929,14 @@ class OddsProConnector:
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
                         state=_item_state_field(item),
-                        country=_country_from_track(self._clean_track(
-                            item.get("track") or item.get("meetingTrack")
-                            or item.get("venue") or item.get("name")
-                            or item.get("meetingName") or ""
-                        )),
+                        country=(
+                            _country_from_api_fields(item)
+                            or _country_from_track(self._clean_track(
+                                item.get("track") or item.get("meetingTrack")
+                                or item.get("venue") or item.get("name")
+                                or item.get("meetingName") or ""
+                            ))
+                        ),
                         extra={"raw": item},
                     )
                 )
@@ -904,7 +1019,10 @@ class OddsProConnector:
             track=self._clean_track(item.get("track") or item.get("venue") or ""),
             meeting_date=str(item.get("date") or ""),
             state=_item_state_field(item),
-            country=_country_from_track(self._clean_track(item.get("track") or item.get("venue") or "")),
+            country=(
+                _country_from_api_fields(item)
+                or _country_from_track(self._clean_track(item.get("track") or item.get("venue") or ""))
+            ),
             extra={"raw": item},
         )
 
@@ -1557,7 +1675,7 @@ class OddsProConnector:
             code=code,
             source=self.source_name,
             state=str(_item_state_field(item) or (meeting.state if meeting else "") or ""),
-            country=_country_from_track(track),
+            country=_resolve_race_country(item, track, meeting),
             race_name=str(item.get("raceName") or item.get("name") or ""),
             distance=str(item.get("distance") or ""),
             grade=str(item.get("grade") or item.get("raceClass") or ""),
