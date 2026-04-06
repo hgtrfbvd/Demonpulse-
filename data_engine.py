@@ -35,6 +35,11 @@ import requests as _requests_lib
 
 log = logging.getLogger(__name__)
 
+try:
+    import pipeline_state as _pipeline_state
+except ImportError:
+    _pipeline_state = None  # type: ignore[assignment]
+
 _oddspro_connector = None
 _formfav_connector = None
 
@@ -167,6 +172,11 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     if not conn.is_enabled():
         log.warning("full_sweep skipped: OddsPro not configured")
         return {"ok": False, "reason": "oddspro_not_configured", "date": today}
+
+    # Reset pipeline state at the start of each full sweep so counters reflect
+    # the current day's run rather than accumulating across multiple days.
+    if _pipeline_state is not None:
+        _pipeline_state.reset()
 
     log.info(
         f"full_sweep: fetching domestic-only meetings from OddsPro "
@@ -378,6 +388,15 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                 runners_by_race.setdefault(runner.race_uid, []).append(runner)
 
             for race in races:
+                _race_country = getattr(race, "country", "au") or "au"
+                log.info(
+                    f"[ODDSPRO] DISCOVERED race_uid={race.race_uid}"
+                    f" track={race.track!r} country={_race_country!r}"
+                )
+                if _pipeline_state is not None:
+                    _pipeline_state.record_race_discovered(
+                        race.race_uid, race.track, _race_country
+                    )
                 stored_ok = _store_with_pipeline(race)
                 races_stored += 1
                 if not stored_ok:
@@ -386,7 +405,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                     log.debug(
                         f"[ODDSPRO] RACE_INSERTED race_uid={race.race_uid}"
                         f" track={race.track!r} race_num={race.race_num}"
-                        f" code={race.code!r} country={getattr(race, 'country', 'au')!r}"
+                        f" code={race.code!r} country={_race_country!r}"
                     )
 
                 # Store runners associated with this race
@@ -918,6 +937,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" reason=international_excluded country={country_val!r}"
             )
             skipped_international += 1
+            if _pipeline_state is not None and race_uid:
+                _pipeline_state.record_formfav_skipped(race_uid, "international_excluded")
             continue
 
         # --- Validate required fields ---
@@ -943,6 +964,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" (expected HORSE, HARNESS or GREYHOUND)"
             )
             skipped_invalid_code += 1
+            if _pipeline_state is not None:
+                _pipeline_state.record_formfav_skipped(race_uid, "invalid_code")
             continue
 
         track = race.get("track") or ""
@@ -955,6 +978,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" reason=missing_track_or_race_num track={track!r} race_num={race_num}"
             )
             skipped_missing_fields += 1
+            if _pipeline_state is not None:
+                _pipeline_state.record_formfav_skipped(race_uid, "missing_track_or_race_num")
             continue
 
         # Determine the correct country to send to FormFav (au or nz).
@@ -967,6 +992,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             f" track={track!r} race_num={race_num} code={ff_code!r}"
             f" ff_code={mapped_race_code!r} country={ff_country!r}"
         )
+        if _pipeline_state is not None:
+            _pipeline_state.record_formfav_eligible(race_uid)
         log.info(
             f"[FORMFAV] CALL"
             f" url={_FF_BASE_URL}/v1/form"
@@ -974,6 +1001,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             f"&race_code={mapped_race_code}&country={ff_country}"
             f" race_uid={race_uid}"
         )
+        if _pipeline_state is not None:
+            _pipeline_state.record_formfav_called(race_uid)
 
         try:
             requests_made += 1
@@ -1058,6 +1087,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" track={track!r} race_num={race_num}"
                 f" runners_enriched={race_runners_enriched}"
             )
+            if _pipeline_state is not None:
+                _pipeline_state.record_formfav_success(race_uid)
 
         except Exception as e:
             import requests as _req_lib
@@ -1075,6 +1106,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" country={ff_country!r} status={status_code}"
                 f" body={resp_body!r} error={e}"
             )
+            if _pipeline_state is not None:
+                _pipeline_state.record_formfav_failed(race_uid)
             errors += 1
             continue
 
@@ -1144,6 +1177,7 @@ def _write_race(race: Any) -> None:
 def _store_with_pipeline(race: Any) -> bool:
     """
     Enforce pipeline order before storing an OddsPro race record:
+      0. Domestic failsafe (hard gate: only AU/NZ races reach the DB)
       1. Normalize  (already done by connector)
       2. Validate   (log warning; OddsPro data is stored regardless)
       3. Integrity  (if blocked, mark before storing)
@@ -1162,6 +1196,24 @@ def _store_with_pipeline(race: Any) -> bool:
 
         race_dict = _race_to_dict(race)
         race_uid = race_dict.get("race_uid") or "(no uid)"
+
+        # Step 0 — Domestic failsafe (HARD GATE — no international race enters the DB)
+        _country = (race_dict.get("country") or "au").strip().lower()
+        if _country not in _AU_COUNTRY_CODES and _country not in _NZ_COUNTRY_CODES:
+            log.warning(
+                f"[ODDSPRO] EXCLUDED race_uid={race_uid}"
+                f" reason=non_domestic_guard country={_country!r}"
+            )
+            if _pipeline_state is not None:
+                _pipeline_state.record_race_excluded(race_uid, "non_domestic_guard")
+            return False
+
+        log.info(
+            f"[ODDSPRO] INCLUDED race_uid={race_uid}"
+            f" reason=domestic_source country={_country!r}"
+        )
+        if _pipeline_state is not None:
+            _pipeline_state.record_race_included(race_uid)
 
         # Step 2 — Validate (informational; OddsPro data is always stored)
         passes, confidence, issues = validate_race(race_dict)

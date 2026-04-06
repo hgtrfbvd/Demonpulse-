@@ -351,6 +351,11 @@ class OddsProConnector:
             "items_found": 0,
         }
 
+        log.info(
+            f"[ODDSPRO] REQUEST location={params.get('location', 'all')!r}"
+            f" url={url_requested}"
+        )
+
         try:
             resp = self._get("/api/meetings", params=params)
         except requests.exceptions.HTTPError as http_err:
@@ -553,6 +558,11 @@ class OddsProConnector:
             "response_preview": "",
             "redirected_url": "",
         }
+
+        log.info(
+            f"[ODDSPRO] REQUEST location={params.get('location', 'all')!r}"
+            f" url={url_requested}"
+        )
 
         try:
             resp = self._get("/api/external/meetings", params=params)

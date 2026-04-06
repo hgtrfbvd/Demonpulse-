@@ -343,6 +343,35 @@ def api_debug_thedogs_scratchings_fetch():
         log.exception(f"/api/debug/thedogs-scratchings-fetch failed: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
+@app.route("/api/debug/formfav", methods=["GET"])
+def api_debug_formfav():
+    """
+    GET /api/debug/formfav
+    Expose the full OddsPro → FormFav pipeline state for debugging.
+
+    Returns real runtime counters and the last 20 processed races with their
+    pipeline status (discovered → domestic filter → FormFav eligibility → call result).
+    """
+    try:
+        import pipeline_state
+        state = pipeline_state.get_state()
+        return jsonify({
+            "ok": True,
+            "total_races_discovered":      state.get("total_races_discovered", 0),
+            "total_domestic_races":        state.get("total_domestic_races", 0),
+            "total_international_filtered": state.get("total_international_filtered", 0),
+            "total_formfav_eligible":      state.get("total_formfav_eligible", 0),
+            "total_formfav_called":        state.get("total_formfav_called", 0),
+            "total_formfav_success":       state.get("total_formfav_success", 0),
+            "total_formfav_failed":        state.get("total_formfav_failed", 0),
+            "recent_races":                state.get("recent_races", []),
+            "last_reset":                  state.get("last_reset"),
+        })
+    except Exception as e:
+        log.exception(f"/api/debug/formfav failed: {e}")
+        return jsonify({"ok": False, "error": "Could not retrieve pipeline debug state"}), 500
+
 # ------------------------------------------------------------
 # SMOKE TEST
 # ------------------------------------------------------------
