@@ -10,10 +10,13 @@ latest pipeline status.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 
@@ -54,6 +57,27 @@ def reset() -> None:
         _state["last_reset"] = datetime.now(timezone.utc).isoformat()
 
 
+def _log_counters() -> None:
+    """Emit a single DEBUG line with all current counter values. Must be called under _lock."""
+    log.debug(
+        "[DEBUG] COUNTERS updated"
+        " total_races_discovered=%d"
+        " total_domestic_races=%d"
+        " total_international_filtered=%d"
+        " total_formfav_eligible=%d"
+        " total_formfav_called=%d"
+        " total_formfav_success=%d"
+        " total_formfav_failed=%d",
+        _state["total_races_discovered"],
+        _state["total_domestic_races"],
+        _state["total_international_filtered"],
+        _state["total_formfav_eligible"],
+        _state["total_formfav_called"],
+        _state["total_formfav_success"],
+        _state["total_formfav_failed"],
+    )
+
+
 def _find_entry(race_uid: str) -> dict[str, Any] | None:
     """Return existing entry for race_uid, or None. Must be called under _lock."""
     for entry in _recent_races:
@@ -80,6 +104,7 @@ def record_race_discovered(race_uid: str, track: str, country: str) -> None:
                 "formfav_called": False,
                 "status": "discovered",
             })
+        _log_counters()
 
 
 def record_race_included(race_uid: str) -> None:
@@ -89,6 +114,7 @@ def record_race_included(race_uid: str) -> None:
         entry = _find_entry(race_uid)
         if entry is not None:
             entry["status"] = "included"
+        _log_counters()
 
 
 def record_race_excluded(race_uid: str, reason: str) -> None:
@@ -99,6 +125,7 @@ def record_race_excluded(race_uid: str, reason: str) -> None:
         if entry is not None:
             entry["skip_reason"] = reason
             entry["status"] = "excluded"
+        _log_counters()
 
 
 def record_formfav_skipped(race_uid: str, reason: str) -> None:
@@ -118,6 +145,7 @@ def record_formfav_eligible(race_uid: str) -> None:
         entry = _find_entry(race_uid)
         if entry is not None:
             entry["eligible"] = True
+        _log_counters()
 
 
 def record_formfav_called(race_uid: str) -> None:
@@ -127,6 +155,7 @@ def record_formfav_called(race_uid: str) -> None:
         entry = _find_entry(race_uid)
         if entry is not None:
             entry["formfav_called"] = True
+        _log_counters()
 
 
 def record_formfav_success(race_uid: str) -> None:
@@ -136,6 +165,7 @@ def record_formfav_success(race_uid: str) -> None:
         entry = _find_entry(race_uid)
         if entry is not None:
             entry["status"] = "success"
+        _log_counters()
 
 
 def record_formfav_failed(race_uid: str) -> None:
@@ -145,6 +175,7 @@ def record_formfav_failed(race_uid: str) -> None:
         entry = _find_entry(race_uid)
         if entry is not None:
             entry["status"] = "failed"
+        _log_counters()
 
 
 def get_state() -> dict[str, Any]:
