@@ -635,3 +635,76 @@ def get_formfav_runner_enrichments_for_races(race_uids: list[str]) -> dict[str, 
         if uid:
             result.setdefault(uid, []).append(row)
     return result
+
+
+# ---------------------------------------------------------------------------
+# FORMFAV DEBUG STATS — persistent counter snapshots
+# ---------------------------------------------------------------------------
+
+def insert_formfav_debug_stats(state: dict[str, Any]) -> None:
+    """
+    Insert a counter snapshot into formfav_debug_stats.
+    Called at the end of each formfav_sync() run so that
+    /api/debug/formfav always reflects the real pipeline state
+    even after a process restart.
+    """
+    payload = {
+        "recorded_at":               datetime.now(timezone.utc).isoformat(),
+        "total_races_discovered":     int(state.get("total_races_discovered", 0)),
+        "total_domestic_races":       int(state.get("total_domestic_races", 0)),
+        "total_international_filtered": int(state.get("total_international_filtered", 0)),
+        "total_formfav_eligible":     int(state.get("total_formfav_eligible", 0)),
+        "total_formfav_called":       int(state.get("total_formfav_called", 0)),
+        "total_formfav_success":      int(state.get("total_formfav_success", 0)),
+        "total_formfav_failed":       int(state.get("total_formfav_failed", 0)),
+        "recent_races":               _as_json(state.get("recent_races", [])),
+    }
+    safe_query(
+        lambda: get_db()
+        .table(T("formfav_debug_stats"))
+        .insert(payload)
+        .execute()
+        .data
+    )
+    log.debug("database: inserted formfav_debug_stats snapshot")
+
+
+def get_latest_formfav_debug_stats() -> dict[str, Any] | None:
+    """
+    Return the most recent formfav_debug_stats row, or None if the table
+    is empty or unreachable.  The row is normalised to the same shape
+    returned by pipeline_state.get_state() so callers can use either
+    source transparently.
+    """
+    rows = safe_query(
+        lambda: get_db()
+        .table(T("formfav_debug_stats"))
+        .select("*")
+        .order("recorded_at", desc=True)
+        .limit(1)
+        .execute()
+        .data,
+        [],
+    ) or []
+    if not rows:
+        return None
+    row = rows[0]
+    # Deserialise recent_races JSONB field if it came back as a string.
+    recent = row.get("recent_races") or []
+    if isinstance(recent, str):
+        try:
+            recent = json.loads(recent)
+        except Exception as _json_err:
+            log.warning("database.get_latest_formfav_debug_stats: recent_races parse error: %s", _json_err)
+            recent = []
+    return {
+        "total_races_discovered":      int(row.get("total_races_discovered", 0)),
+        "total_domestic_races":        int(row.get("total_domestic_races", 0)),
+        "total_international_filtered": int(row.get("total_international_filtered", 0)),
+        "total_formfav_eligible":      int(row.get("total_formfav_eligible", 0)),
+        "total_formfav_called":        int(row.get("total_formfav_called", 0)),
+        "total_formfav_success":       int(row.get("total_formfav_success", 0)),
+        "total_formfav_failed":        int(row.get("total_formfav_failed", 0)),
+        "recent_races":                recent,
+        "last_reset":                  row.get("recorded_at"),
+    }

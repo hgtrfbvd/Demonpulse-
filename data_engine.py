@@ -1144,6 +1144,17 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         f"formfav_skipped_missing_fields={skipped_missing_fields} "
         f"formfav_skipped_invalid_code={skipped_invalid_code}"
     )
+
+    # Persist counter snapshot to DB so the debug endpoint always reflects
+    # the real pipeline run even after a process restart or across workers.
+    if _pipeline_state is not None:
+        try:
+            from database import insert_formfav_debug_stats
+            insert_formfav_debug_stats(_pipeline_state.get_state())
+            log.debug("[FORMFAV] COUNTERS snapshot persisted to formfav_debug_stats")
+        except Exception as _persist_err:
+            log.warning(f"[FORMFAV] COUNTERS persist failed: {_persist_err}")
+
     return {
         "ok": True,
         "date": td,

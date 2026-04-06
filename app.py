@@ -350,14 +350,31 @@ def api_debug_formfav():
     GET /api/debug/formfav
     Expose the full OddsPro → FormFav pipeline state for debugging.
 
-    Returns real runtime counters and the last 20 processed races with their
-    pipeline status (discovered → domestic filter → FormFav eligibility → call result).
+    Reads from the formfav_debug_stats DB table (written at the end of each
+    formfav_sync run) so the counters reflect the REAL pipeline execution
+    across restarts and workers.  Falls back to the in-process pipeline_state
+    if no DB snapshot exists yet.
     """
     try:
-        import pipeline_state
-        state = pipeline_state.get_state()
+        # Primary: DB snapshot persisted after each formfav_sync() run.
+        state = None
+        source = "in_memory"
+        try:
+            from database import get_latest_formfav_debug_stats
+            state = get_latest_formfav_debug_stats()
+            if state is not None:
+                source = "db"
+        except Exception as _db_err:
+            log.warning(f"/api/debug/formfav: db read failed: {_db_err}")
+
+        # Fallback: live in-process counters.
+        if state is None:
+            import pipeline_state
+            state = pipeline_state.get_state()
+
         return jsonify({
             "ok": True,
+            "source": source,
             "total_races_discovered":      state.get("total_races_discovered", 0),
             "total_domestic_races":        state.get("total_domestic_races", 0),
             "total_international_filtered": state.get("total_international_filtered", 0),

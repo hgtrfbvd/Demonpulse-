@@ -1361,6 +1361,28 @@ CREATE TABLE IF NOT EXISTS sectional_benchmarks (
     UNIQUE (track, distance, code, grade)
 );
 
+-- ================================================================
+-- SECTION 11b: FORMFAV DEBUG STATS
+-- Persistent counter snapshots written at the end of every
+-- formfav_sync() run so that /api/debug/formfav reflects the REAL
+-- pipeline execution rather than ephemeral in-process memory.
+-- ================================================================
+
+CREATE TABLE IF NOT EXISTS formfav_debug_stats (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    total_races_discovered      INTEGER NOT NULL DEFAULT 0,
+    total_domestic_races        INTEGER NOT NULL DEFAULT 0,
+    total_international_filtered INTEGER NOT NULL DEFAULT 0,
+    total_formfav_eligible      INTEGER NOT NULL DEFAULT 0,
+    total_formfav_called        INTEGER NOT NULL DEFAULT 0,
+    total_formfav_success       INTEGER NOT NULL DEFAULT 0,
+    total_formfav_failed        INTEGER NOT NULL DEFAULT 0,
+    recent_races    JSONB       NOT NULL DEFAULT '[]'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_formfav_debug_stats_recorded_at ON formfav_debug_stats(recorded_at DESC);
+
 
 -- ================================================================
 -- SECTION 12: TEST-MODE MIRROR TABLES
@@ -1398,6 +1420,7 @@ CREATE TABLE IF NOT EXISTS test_sectional_snapshots (       LIKE sectional_snaps
 CREATE TABLE IF NOT EXISTS test_race_shape_snapshots (      LIKE race_shape_snapshots       INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_chat_history (    LIKE chat_history    INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_training_logs (   LIKE training_logs   INCLUDING ALL );
+CREATE TABLE IF NOT EXISTS test_formfav_debug_stats (       LIKE formfav_debug_stats        INCLUDING ALL );
 
 -- Remove NOT NULL on race_uid in test_today_races to allow test-mode inserts
 -- without a pre-generated race_uid
