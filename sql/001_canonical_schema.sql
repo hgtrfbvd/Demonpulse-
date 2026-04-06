@@ -1435,6 +1435,26 @@ CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_uid ON formfav_run
 CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_num ON formfav_runner_enrichment(race_uid, number);
 
 -- ================================================================
+-- SECTION 12b: FORMFAV DEBUG STATS
+-- Persisted pipeline counter snapshots — written after each pipeline
+-- run so /api/debug/formfav always reflects real execution state.
+-- ================================================================
+
+CREATE TABLE IF NOT EXISTS formfav_debug_stats (
+    id                          BIGSERIAL PRIMARY KEY,
+    recorded_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    total_races_discovered      INTEGER NOT NULL DEFAULT 0,
+    total_domestic_races        INTEGER NOT NULL DEFAULT 0,
+    total_international_filtered INTEGER NOT NULL DEFAULT 0,
+    total_formfav_eligible      INTEGER NOT NULL DEFAULT 0,
+    total_formfav_called        INTEGER NOT NULL DEFAULT 0,
+    total_formfav_success       INTEGER NOT NULL DEFAULT 0,
+    total_formfav_failed        INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_formfav_debug_stats_recorded_at ON formfav_debug_stats(recorded_at DESC);
+
+-- ================================================================
 -- SECTION 13: TEST-MODE MIRROR TABLES
 -- In TEST mode, env.table() prefixes all testable tables with
 -- "test_" so production data is never touched.
@@ -1472,6 +1492,7 @@ CREATE TABLE IF NOT EXISTS test_chat_history (    LIKE chat_history    INCLUDING
 CREATE TABLE IF NOT EXISTS test_training_logs (   LIKE training_logs   INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_formfav_race_enrichment (   LIKE formfav_race_enrichment    INCLUDING ALL );
 CREATE TABLE IF NOT EXISTS test_formfav_runner_enrichment ( LIKE formfav_runner_enrichment  INCLUDING ALL );
+CREATE TABLE IF NOT EXISTS test_formfav_debug_stats (       LIKE formfav_debug_stats        INCLUDING ALL );
 
 -- Remove NOT NULL on race_uid in test_today_races to allow test-mode inserts
 -- without a pre-generated race_uid

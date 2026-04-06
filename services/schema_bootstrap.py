@@ -48,6 +48,7 @@ _OPTIONAL_TABLES = [
     "race_shape_snapshots",
     "formfav_race_enrichment",
     "formfav_runner_enrichment",
+    "formfav_debug_stats",
     "user_accounts",
     "user_permissions",
     "user_sessions",

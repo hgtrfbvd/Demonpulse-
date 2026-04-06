@@ -487,6 +487,8 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         f"runners_inserted={runners_stored} "
         f"runners_skipped=0"
     )
+    if _pipeline_state is not None:
+        _pipeline_state.persist_snapshot()
     return {
         "ok": True,
         "date": today,
@@ -1144,6 +1146,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         f"formfav_skipped_missing_fields={skipped_missing_fields} "
         f"formfav_skipped_invalid_code={skipped_invalid_code}"
     )
+    if _pipeline_state is not None:
+        _pipeline_state.persist_snapshot()
     return {
         "ok": True,
         "date": td,
