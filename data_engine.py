@@ -618,20 +618,10 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             _ff_track = (_ff_race.get("track") or "").strip()
             _pipeline_state.record_formfav_merge_called(_ff_track)
         for _mr in merged_races:
-            if "formfav" in (_mr.get("_merge_sources") or []):
-                if "oddspro" in (_mr.get("_merge_sources") or []):
-                    _pipeline_state.record_formfav_merge_matched(
-                        _mr.get("race_uid") or _mr.get("_canonical_race_id") or ""
-                    )
-    else:
-        # Logging only (no pipeline_state available)
-        for _ff_race in _formfav_raw:
-            _ff_track = (_ff_race.get("track") or "").strip()
-            log.info(f"[FORMFAV][MERGE] CALLED track={_ff_track!r}")
-        for _mr in merged_races:
             if "formfav" in (_mr.get("_merge_sources") or []) and "oddspro" in (_mr.get("_merge_sources") or []):
-                _mr_uid = _mr.get("race_uid") or _mr.get("_canonical_race_id") or ""
-                log.info(f"[FORMFAV][MERGE] MATCHED race_uid={_mr_uid!r}")
+                _pipeline_state.record_formfav_merge_matched(
+                    _mr.get("race_uid") or _mr.get("_canonical_race_id") or ""
+                )
 
     # ----------------------------------------------------------------
     # STEPS 7-8 — BUILD FINAL BOARD + DOMESTIC FILTER (AFTER MERGE)
