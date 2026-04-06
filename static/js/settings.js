@@ -53,8 +53,8 @@
                     };
                     return t(a) - t(b);
                 });
-                const last = sorted[sorted.length - 1];
-                setText("settingsLastSync", last ? last.jump_time || "—" : "—");
+                const furthestRace = sorted[sorted.length - 1];
+                setText("settingsLastSync", furthestRace ? furthestRace.jump_time || "—" : "—");
             }
         } catch (_) {
             setText("settingsDataStatus", "ERR");
