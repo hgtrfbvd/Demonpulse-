@@ -266,7 +266,18 @@
     function updateSummary(items) {
         const visibleCount = items.length;
         const hotCount = items.filter(item => isHotSignal(item.signal)).length;
-        const next = items[0] || null;
+
+        // NEXT UP: only races still in the future (seconds_to_jump > 0)
+        // Never use a PAST race (jumped/expired) or an UNKNOWN-time race as next-up.
+        // Both ntj_label and seconds_to_jump are checked: ntj_label covers the
+        // server-classified state while the seconds_to_jump guard handles any
+        // edge case where ntj_label hasn't propagated but the number is present.
+        const upcomingItems = items.filter(item => {
+            if (item.ntj_label === "PAST" || item.ntj_label === "UNKNOWN") return false;
+            if (item.seconds_to_jump != null && item.seconds_to_jump <= 0) return false;
+            return true;
+        });
+        const next = upcomingItems[0] || null;
 
         const ghCount = items.filter(item => normaliseCode(item.code) === "GREYHOUND").length;
         const horseCount = items.filter(item => normaliseCode(item.code) === "HORSE").length;
@@ -290,7 +301,7 @@
             el.nextUpSub.textContent = `${normaliseCode(next.code)} • ${nextJump}`;
         } else {
             el.nextUpMain.textContent = "—";
-            el.nextUpSub.textContent = "Waiting for board";
+            el.nextUpSub.textContent = visibleCount ? "No upcoming races" : "Waiting for board";
         }
 
         el.boardMeta.textContent = visibleCount
