@@ -406,8 +406,8 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     )
     log.info(
         f"LOCATION FILTER: domestic-only feed applied at OddsPro source "
-        f"(location=domestic) — total races discovered (domestic): {races_found} "
-        f"domestic included: {races_stored} international excluded: 0 (filtered at source)"
+        f"(location=domestic) — races discovered: {races_found} "
+        f"races stored: {races_stored} international excluded: 0 (filtered at API source)"
     )
     # Mandatory pipeline validation output
     log.info(
@@ -433,6 +433,8 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "runners_stored": runners_stored,
         "races_blocked": races_blocked,
         "races_passed": races_stored - races_blocked,
+        # International races are excluded at the OddsPro API source via location=domestic.
+        # This field is always 0 because no international races enter the pipeline.
         "international_excluded": 0,
         "discovery_failed": _discovery_failed,
         "discovery_diag": _discovery_diag,
