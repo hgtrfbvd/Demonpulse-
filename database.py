@@ -694,7 +694,8 @@ def get_latest_formfav_debug_stats() -> dict[str, Any] | None:
     if isinstance(recent, str):
         try:
             recent = json.loads(recent)
-        except Exception:
+        except Exception as _json_err:
+            log.warning("database.get_latest_formfav_debug_stats: recent_races parse error: %s", _json_err)
             recent = []
     return {
         "total_races_discovered":      int(row.get("total_races_discovered", 0)),
