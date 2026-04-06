@@ -830,6 +830,9 @@ _NZ_COUNTRY_CODES = frozenset({"nz", "nzl", "new zealand", "new-zealand"})
 # Known Australian racing track names as returned by OddsPro after _clean_track()
 # (lowercased, spaces → hyphens).  Used as tier-3 country resolution when both
 # the `country` and `state` fields are empty.
+# NOTE: A parallel copy (_AU_TRACK_IDS / _NZ_TRACK_IDS) lives in
+# connectors/oddspro_connector.py for connector-level pre-resolution.
+# Keep both sets in sync when adding new venues.
 _AU_TRACKS: frozenset[str] = frozenset({
     # NSW thoroughbred
     "rosehill", "randwick", "warwick-farm", "canterbury", "newcastle",
@@ -849,8 +852,7 @@ _AU_TRACKS: frozenset[str] = frozenset({
     "cairns", "bundaberg", "hervey-bay", "gympie", "beaudesert",
     # SA thoroughbred
     "morphettville", "victoria-park", "gawler", "mount-gambier",
-    "port-augusta", "port-lincoln", "naracoorte", "Murray-Bridge",
-    "murray-bridge", "oakbank",
+    "port-augusta", "port-lincoln", "naracoorte", "murray-bridge", "oakbank",
     # WA thoroughbred
     "ascot", "belmont-park", "bunbury", "pinjarra", "northam",
     "kalgoorlie", "geraldton", "albany", "esperance",
@@ -883,7 +885,7 @@ _NZ_TRACKS: frozenset[str] = frozenset({
     "ruakaka", "matamata", "cambridge", "pukekohe", "new-plymouth",
     "palmerston-north", "feilding", "foxton", "masterton",
     "levin", "woodville", "waverley", "marton", "wairoa",
-    "napier", "gisborne", "tauranga", "hamilton", "huntly",
+    "napier", "gisborne", "tauranga", "huntly",
     "dargaville", "whangarei",
     # Greyhound (NZ)
     "auckland-dogs", "manukau", "manawatu-dogs", "christchurch-dogs",

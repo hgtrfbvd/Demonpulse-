@@ -100,6 +100,8 @@ def _country_from_state(state: str) -> str:
 # Known AU/NZ track names after _clean_track() normalisation (lowercased,
 # spaces → hyphens).  Used as tier-3 country resolver in the connector when
 # both explicit country and state fields are absent.
+# NOTE: A parallel copy (_AU_TRACKS / _NZ_TRACKS) lives in data_engine.py.
+# Keep both sets in sync when adding new venues.
 _AU_TRACK_IDS: frozenset[str] = frozenset({
     # NSW thoroughbred
     "rosehill", "randwick", "warwick-farm", "canterbury", "newcastle",
