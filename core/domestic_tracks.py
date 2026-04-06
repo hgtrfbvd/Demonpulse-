@@ -421,7 +421,7 @@ def resolve_formfav_track(track: str, country: str = "au") -> str | None:
     Resolve and validate a track name for use with the FormFav API.
 
     Returns the FormFav-compatible track slug if the track is supported for
-    the given country, or ``None`` if the track/country combination is NOT
+    the given country, or `None` if the track/country combination is NOT
     in FormFav's supported venue list.
 
     Processing order:
@@ -438,7 +438,8 @@ def resolve_formfav_track(track: str, country: str = "au") -> str | None:
         spaces, etc.).
     country:
         FormFav country code — 'au' or 'nz'.  Any other value causes the
-        function to return ``None`` immediately (FormFav only supports AU/NZ).
+        function to return `None` immediately (FormFav only supports AU/NZ).
+        The caller is responsible for logging why the resolution failed.
     """
     norm_country = (country or "").strip().lower()
     if norm_country not in ("au", "nz"):
