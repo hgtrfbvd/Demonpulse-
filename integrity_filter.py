@@ -30,7 +30,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 # How old (in seconds) a race record may be before it is considered stale
-STALE_THRESHOLD_SECONDS = 3600  # 60 minutes
+STALE_THRESHOLD_SECONDS = 7200  # 2 hours (rolling_refresh runs every 150 s; allow for failures)
 
 # Race statuses that hard-block a race from the board
 BLOCKED_STATUSES = {"abandoned", "invalid", "blocked", "cancelled", "void"}
@@ -79,10 +79,13 @@ def filter_race(
             return False, "BLOCKED_TRACK"
 
     # NO_RUNNERS block only applies when race is IMMINENT (< 2 min to jump)
-    # — at that point, runners must already be loaded
+    # — at that point, runners must already be loaded.
+    # Only block when runner_count is *explicitly* 0; treat None/absent as
+    # "count not yet recorded" and allow through (avoids false positives when
+    # today_races does not carry runner_count yet for a given row).
     if imminent:
-        runner_count = int(race.get("runner_count") or 0)
-        if runner_count == 0:
+        runner_count = race.get("runner_count")
+        if runner_count is not None and int(runner_count) == 0:
             return False, "NO_RUNNERS"
 
     # Stale check (if fetched_at is available)

@@ -459,6 +459,10 @@ def _build_race_payload(race: dict[str, Any]) -> dict[str, Any] | None:
         "time_status": race.get("time_status") or "PARTIAL",
         "condition": race.get("condition") or "",
         "race_name": race.get("race_name") or "",
+        # runner_count is set by full_sweep before calling upsert_race so the
+        # integrity_filter NO_RUNNERS check can use it.  Only included when
+        # explicitly set; absence means unknown (not zero).
+        "runner_count": int(race["runner_count"]) if race.get("runner_count") is not None else 0,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

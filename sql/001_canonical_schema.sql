@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS today_races (
     completeness_quality TEXT                   DEFAULT 'LOW',
     race_hash           TEXT                    DEFAULT '',
     lifecycle_state     TEXT                    DEFAULT 'fetched',
+    runner_count        INTEGER                 DEFAULT 0,
     fetched_at          TIMESTAMPTZ             DEFAULT NOW(),
     updated_at          TIMESTAMPTZ             DEFAULT NOW(),
     completed_at        TIMESTAMPTZ,
@@ -126,6 +127,7 @@ ALTER TABLE today_races ADD COLUMN IF NOT EXISTS completeness_score INTEGER     
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS completeness_quality TEXT               DEFAULT 'LOW';
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS race_hash          TEXT                 DEFAULT '';
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS lifecycle_state    TEXT                 DEFAULT 'fetched';
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS runner_count       INTEGER              DEFAULT 0;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS normalized_at      TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS scored_at          TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS packet_built_at    TIMESTAMPTZ;

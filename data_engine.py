@@ -673,14 +673,22 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             # Store via pipeline (validate + integrity + upsert)
             if _pipeline_state is not None:
                 _pipeline_state.record_race_included(race_dict.get("race_uid") or "")
+
+            # Pre-resolve runner count so it is persisted with the race row.
+            # Lookup must happen before _store_with_pipeline so the count is
+            # included in the upsert payload (prevents NO_RUNNERS false positives
+            # in integrity_filter when the race becomes IMMINENT on the board).
+            race_uid = race_dict.get("race_uid") or ""
+            op_runners = _oddspro_runners_by_race.get(race_uid) or []
+            if op_runners:
+                race_dict["runner_count"] = len(op_runners)
+
             stored_ok = _store_with_pipeline(race_dict)
             races_stored += 1
             if not stored_ok:
                 races_blocked += 1
 
             # Store runners (OddsPro runners take priority)
-            race_uid = race_dict.get("race_uid") or ""
-            op_runners = _oddspro_runners_by_race.get(race_uid) or []
             if op_runners:
                 stored = _store_runners_for_race(race_uid, op_runners)
                 runners_stored += stored
@@ -827,7 +835,7 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
     overlay_count = 0
 
     try:
-        from database import get_active_races
+        from database import get_active_races, update_race_status
         from race_status import should_trigger_formfav_overlay
 
         active_races = get_active_races(today)
@@ -836,6 +844,15 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
         for stored_race in active_races:
             oddspro_race_id = stored_race.get("oddspro_race_id") or ""
             if not oddspro_race_id:
+                # No race-level OddsPro ID — touch updated_at so the race does
+                # not become STALE_RACE-blocked on the board before the next
+                # full_sweep can re-populate oddspro_race_id.
+                race_uid = stored_race.get("race_uid") or ""
+                if race_uid:
+                    try:
+                        update_race_status(race_uid, stored_race.get("status") or "upcoming")
+                    except Exception as _touch_exc:
+                        log.debug(f"rolling_refresh: timestamp touch failed for {race_uid}: {_touch_exc}")
                 continue
 
             try:
