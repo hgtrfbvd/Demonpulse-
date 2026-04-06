@@ -7,13 +7,20 @@ Used by GET /api/debug/formfav to expose full pipeline state at runtime.
 Data is accumulated during the current process lifetime (resets on restart).
 The recent_races deque always holds the last 20 discovered races with their
 latest pipeline status.
+
+Counters are also persisted to the formfav_debug_stats database table after
+each pipeline run so the debug endpoint reflects real execution state even
+after process restarts.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 
@@ -154,3 +161,29 @@ def get_state() -> dict[str, Any]:
             **_state,
             "recent_races": [dict(e) for e in _recent_races],
         }
+
+
+def persist_snapshot() -> None:
+    """
+    Persist the current counter snapshot to the formfav_debug_stats database
+    table so it survives process restarts and is visible to all threads.
+
+    Called at the end of full_sweep() and formfav_sync() in data_engine.py.
+    Failures are logged at WARNING level and never raise.
+    """
+    snapshot = get_state()
+    log.info(
+        f"[DEBUG] COUNTERS updated"
+        f" total_races_discovered={snapshot['total_races_discovered']}"
+        f" total_domestic_races={snapshot['total_domestic_races']}"
+        f" total_international_filtered={snapshot['total_international_filtered']}"
+        f" total_formfav_eligible={snapshot['total_formfav_eligible']}"
+        f" total_formfav_called={snapshot['total_formfav_called']}"
+        f" total_formfav_success={snapshot['total_formfav_success']}"
+        f" total_formfav_failed={snapshot['total_formfav_failed']}"
+    )
+    try:
+        from database import upsert_formfav_debug_stats
+        upsert_formfav_debug_stats(snapshot)
+    except Exception as e:
+        log.warning(f"pipeline_state.persist_snapshot: could not write to DB: {e}")

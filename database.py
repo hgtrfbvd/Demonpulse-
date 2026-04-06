@@ -635,3 +635,47 @@ def get_formfav_runner_enrichments_for_races(race_uids: list[str]) -> dict[str, 
         if uid:
             result.setdefault(uid, []).append(row)
     return result
+
+
+def upsert_formfav_debug_stats(counters: dict[str, Any]) -> None:
+    """
+    Insert a pipeline counter snapshot into formfav_debug_stats.
+    Called after each formfav_sync() and full_sweep() so the debug endpoint
+    always reflects the real execution state (survives restarts).
+    """
+    payload = {
+        "recorded_at":               datetime.now(timezone.utc).isoformat(),
+        "total_races_discovered":    int(counters.get("total_races_discovered", 0)),
+        "total_domestic_races":      int(counters.get("total_domestic_races", 0)),
+        "total_international_filtered": int(counters.get("total_international_filtered", 0)),
+        "total_formfav_eligible":    int(counters.get("total_formfav_eligible", 0)),
+        "total_formfav_called":      int(counters.get("total_formfav_called", 0)),
+        "total_formfav_success":     int(counters.get("total_formfav_success", 0)),
+        "total_formfav_failed":      int(counters.get("total_formfav_failed", 0)),
+    }
+    safe_query(
+        lambda: get_db()
+        .table(T("formfav_debug_stats"))
+        .insert(payload)
+        .execute()
+        .data
+    )
+    log.debug(f"database: inserted formfav_debug_stats snapshot recorded_at={payload['recorded_at']}")
+
+
+def get_latest_formfav_debug_stats() -> dict[str, Any] | None:
+    """
+    Return the most recent formfav_debug_stats row, or None if none exist.
+    Used by GET /api/debug/formfav to expose the real pipeline state.
+    """
+    rows = safe_query(
+        lambda: get_db()
+        .table(T("formfav_debug_stats"))
+        .select("*")
+        .order("recorded_at", desc=True)
+        .limit(1)
+        .execute()
+        .data,
+        [],
+    ) or []
+    return rows[0] if rows else None

@@ -350,23 +350,45 @@ def api_debug_formfav():
     GET /api/debug/formfav
     Expose the full OddsPro → FormFav pipeline state for debugging.
 
+    Reads the latest persisted snapshot from formfav_debug_stats (DB) so
+    counters always match what the logs show, even after process restarts.
+    Falls back to the live in-memory state when no DB snapshot exists yet.
+
     Returns real runtime counters and the last 20 processed races with their
     pipeline status (discovered → domestic filter → FormFav eligibility → call result).
     """
     try:
         import pipeline_state
-        state = pipeline_state.get_state()
+        mem_state = pipeline_state.get_state()
+
+        # Prefer the DB snapshot — it is written after every pipeline run and
+        # reflects the REAL execution state regardless of which worker/thread
+        # is handling this request.
+        db_row: dict = {}
+        try:
+            from database import get_latest_formfav_debug_stats
+            db_row = get_latest_formfav_debug_stats() or {}
+        except Exception as db_err:
+            log.warning(f"/api/debug/formfav: could not read DB snapshot: {db_err}")
+
+        # Counter values: prefer DB snapshot; fall back to in-memory.
+        def _val(key: str) -> int:
+            return int(db_row.get(key) or mem_state.get(key) or 0)
+
         return jsonify({
             "ok": True,
-            "total_races_discovered":      state.get("total_races_discovered", 0),
-            "total_domestic_races":        state.get("total_domestic_races", 0),
-            "total_international_filtered": state.get("total_international_filtered", 0),
-            "total_formfav_eligible":      state.get("total_formfav_eligible", 0),
-            "total_formfav_called":        state.get("total_formfav_called", 0),
-            "total_formfav_success":       state.get("total_formfav_success", 0),
-            "total_formfav_failed":        state.get("total_formfav_failed", 0),
-            "recent_races":                state.get("recent_races", []),
-            "last_reset":                  state.get("last_reset"),
+            "total_races_discovered":       _val("total_races_discovered"),
+            "total_domestic_races":         _val("total_domestic_races"),
+            "total_international_filtered": _val("total_international_filtered"),
+            "total_formfav_eligible":       _val("total_formfav_eligible"),
+            "total_formfav_called":         _val("total_formfav_called"),
+            "total_formfav_success":        _val("total_formfav_success"),
+            "total_formfav_failed":         _val("total_formfav_failed"),
+            # recent_races comes from in-memory (not stored in DB)
+            "recent_races":                 mem_state.get("recent_races", []),
+            "last_reset":                   mem_state.get("last_reset"),
+            "snapshot_recorded_at":         db_row.get("recorded_at"),
+            "counter_source":               "db" if db_row else "memory",
         })
     except Exception as e:
         log.exception(f"/api/debug/formfav failed: {e}")

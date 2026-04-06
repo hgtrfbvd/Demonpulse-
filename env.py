@@ -75,6 +75,7 @@ _TESTABLE_TABLES = {
     # Phase 5 — FormFav persistent enrichment tables
     "formfav_race_enrichment",
     "formfav_runner_enrichment",
+    "formfav_debug_stats",
     # Phase 3 — Intelligence layer tables (prediction, learning, backtest)
     "feature_snapshots",
     "prediction_snapshots",

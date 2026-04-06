@@ -800,6 +800,22 @@ _PHASE5_TABLES: list[tuple[str, str]] = [
         )
         """,
     ),
+    (
+        "formfav_debug_stats",
+        """
+        CREATE TABLE IF NOT EXISTS formfav_debug_stats (
+            id BIGSERIAL PRIMARY KEY,
+            recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            total_races_discovered INTEGER NOT NULL DEFAULT 0,
+            total_domestic_races INTEGER NOT NULL DEFAULT 0,
+            total_international_filtered INTEGER NOT NULL DEFAULT 0,
+            total_formfav_eligible INTEGER NOT NULL DEFAULT 0,
+            total_formfav_called INTEGER NOT NULL DEFAULT 0,
+            total_formfav_success INTEGER NOT NULL DEFAULT 0,
+            total_formfav_failed INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+    ),
 ]
 
 
@@ -931,6 +947,7 @@ def _ensure_phase5_indexes(db_client: Any, results: dict[str, Any]) -> None:
         "CREATE INDEX IF NOT EXISTS idx_formfav_race_enrichment_date ON formfav_race_enrichment(date);",
         "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_uid ON formfav_runner_enrichment(race_uid);",
         "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_num ON formfav_runner_enrichment(race_uid, number);",
+        "CREATE INDEX IF NOT EXISTS idx_formfav_debug_stats_recorded_at ON formfav_debug_stats(recorded_at DESC);",
     ]
     for sql in indexes:
         try:
