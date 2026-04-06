@@ -14,15 +14,24 @@ Architecture rules:
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from integrity_filter import filter_race, guard_formfav_overwrite, is_duplicate
-from race_status import compute_ntj, should_trigger_formfav_overlay, is_race_live
+from race_status import (
+    compute_ntj,
+    should_trigger_formfav_overlay,
+    is_race_live,
+    is_race_expired_by_time,
+    is_invalid_jump_time,
+    BOARD_EXPIRED_GRACE_SECS,
+)
 from validation_engine import validate_race
 
 log = logging.getLogger(__name__)
 
+_AEST = ZoneInfo("Australia/Sydney")
 _NTJ_SORT_ORDER = {"IMMINENT": 0, "NEAR": 1, "UPCOMING": 2, "PAST": 3, "UNKNOWN": 4}
 
 
@@ -50,6 +59,10 @@ def build_board(
     blocked_count = 0
     rejected_count = 0
     settled_count = 0
+    expired_count = 0
+    invalid_time_count = 0
+
+    now_aest = datetime.now(timezone.utc).astimezone(_AEST)
 
     for race in races:
         race_uid = race.get("race_uid") or ""
@@ -63,8 +76,51 @@ def build_board(
             settled_count += 1
             continue
 
-        # Compute NTJ from stored jump_time (needed for filter and sort)
+        # Compute NTJ from stored jump_time (needed for filter, sort, and expiry)
         ntj = compute_ntj(race.get("jump_time"), race.get("date"))
+
+        # --- DATETIME VALIDATION ---
+        # Reject races whose jump_time is missing, unparseable, or a
+        # midnight/date-only fallback.  These must not appear in next-up or
+        # live-board ordering.
+        jump_time_raw = race.get("jump_time")
+        if is_invalid_jump_time(jump_time_raw, race.get("date")):
+            log.debug(
+                f"board_builder: INVALID_TIME {race_uid} "
+                f"jump_time={jump_time_raw!r} "
+                f"now_aest={now_aest.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+                f"reason=midnight_or_unparseable excluded=True"
+            )
+            invalid_time_count += 1
+            continue
+
+        # --- EXPIRED / RESULTED FILTER ---
+        # Remove races whose jump time has passed by more than the grace period
+        # and that have not yet received an authoritative settled status from
+        # OddsPro.  This handles stale DB records where the status column was
+        # never updated after the race ran.
+        if is_race_expired_by_time(race, grace_secs=BOARD_EXPIRED_GRACE_SECS):
+            expired_count += 1
+            log.debug(
+                f"board_builder: EXPIRED_BY_TIME {race_uid} "
+                f"jump_time={jump_time_raw!r} "
+                f"jump_dt_iso={ntj.get('jump_dt_iso')!r} "
+                f"seconds_to_jump={ntj.get('seconds_to_jump')} "
+                f"now_aest={now_aest.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+                f"status={race.get('status')!r} "
+                f"grace_secs={BOARD_EXPIRED_GRACE_SECS} "
+                f"excluded=True"
+            )
+            continue
+
+        log.debug(
+            f"board_builder: INCLUDED {race_uid} "
+            f"jump_dt_iso={ntj.get('jump_dt_iso')!r} "
+            f"ntj_label={ntj.get('ntj_label')} "
+            f"seconds_to_jump={ntj.get('seconds_to_jump')} "
+            f"now_aest={now_aest.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+            f"status={race.get('status')!r}"
+        )
 
         # Integrity hard gate
         allowed, block_code = filter_race(
@@ -106,6 +162,10 @@ def build_board(
             reasons.append("no_races_in_db")
         if settled_count:
             reasons.append(f"settled={settled_count}")
+        if expired_count:
+            reasons.append(f"expired_by_time={expired_count}")
+        if invalid_time_count:
+            reasons.append(f"invalid_time={invalid_time_count}")
         if blocked_count:
             reasons.append(f"blocked={blocked_count}")
         if rejected_count:
@@ -113,6 +173,7 @@ def build_board(
         log.warning(
             f"board_builder: board is EMPTY — "
             f"input={len(races)} settled={settled_count} "
+            f"expired={expired_count} invalid_time={invalid_time_count} "
             f"blocked={blocked_count} rejected={rejected_count} "
             f"reasons=[{', '.join(reasons) or 'unknown'}]"
         )
@@ -120,6 +181,7 @@ def build_board(
         log.info(
             f"board_builder: {len(board)} races on board "
             f"(input={len(races)} settled={settled_count} "
+            f"expired={expired_count} invalid_time={invalid_time_count} "
             f"blocked={blocked_count} rejected={rejected_count})"
         )
 

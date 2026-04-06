@@ -49,6 +49,11 @@ NTJ_OVERLAY_TRIGGER = 600   # FormFav overlay triggered when NTJ < 10 min
 # Seconds past jump_time before a race is considered awaiting_result
 _AWAITING_RESULT_THRESHOLD = 1800  # 30 minutes
 
+# Seconds past jump_time before a race is considered expired and removed from
+# the live board (applies when no authoritative settled status has been received).
+# Configurable grace period: 30 minutes matches _AWAITING_RESULT_THRESHOLD.
+BOARD_EXPIRED_GRACE_SECS = 1800  # 30 minutes
+
 # Status constants — Phase 1 originals
 STATUS_UPCOMING = "upcoming"
 STATUS_OPEN = "open"
@@ -215,6 +220,59 @@ def is_race_live(race: dict[str, Any]) -> bool:
 def is_race_settled(race: dict[str, Any]) -> bool:
     """Return True if the race is settled and should leave the board."""
     return (race.get("status") or "").lower() in SETTLED_STATUSES
+
+
+def is_race_expired_by_time(
+    race: dict[str, Any],
+    grace_secs: int = BOARD_EXPIRED_GRACE_SECS,
+) -> bool:
+    """
+    Return True when the race's jump time has passed by more than *grace_secs*
+    and no authoritative settled status has been received yet.
+
+    This handles the case where the DB status column is stale (still "upcoming"
+    or "open") even though the race jumped long ago.  Races already in a
+    SETTLED_STATUSES state are never considered expired by this function —
+    their status is authoritative.
+
+    Args:
+        race:       Race dict with at least "jump_time", "date", and "status".
+        grace_secs: Seconds after jump before expiry kicks in (default 30 min).
+    """
+    current = (race.get("status") or "").lower()
+    # Already officially settled — not "expired by time"
+    if current in SETTLED_STATUSES:
+        return False
+
+    ntj = compute_ntj(race.get("jump_time"), race.get("date"))
+    secs = ntj.get("seconds_to_jump")
+    if secs is None:
+        return False
+
+    return secs < -grace_secs
+
+
+def is_invalid_jump_time(jump_time: str | None, race_date: str | None = None) -> bool:
+    """
+    Return True if *jump_time* is missing, unparseable, or appears to be a
+    date-only/midnight fallback (time component is exactly 00:00:00).
+
+    Such values must not be used as the NEXT-UP race or for live-board ordering
+    because they represent a data quality issue rather than a real scheduled time.
+
+    Note: a race whose midnight timestamp is already in the past will also be
+    caught by is_race_expired_by_time(), providing defence-in-depth.
+    """
+    if not jump_time:
+        return True
+
+    dt = parse_jump_time(jump_time, race_date)
+    if dt is None:
+        return True
+
+    # Convert to local AEST/AEDT for the time-of-day check
+    dt_local = dt.astimezone(_AEST)
+    return dt_local.hour == 0 and dt_local.minute == 0 and dt_local.second == 0
 
 
 def get_active_race_uids_from_db(db_client, table_name: str, target_date: str) -> list[str]:
