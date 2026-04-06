@@ -52,6 +52,32 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# COUNTRY HELPERS
+# ---------------------------------------------------------------------------
+
+# NZ region/state identifiers that may appear in the `state`, `location`,
+# or `region` fields of OddsPro API responses.  Used to infer country='nz'
+# when the API does not return an explicit country field for NZ meetings/races.
+_NZ_STATE_IDS: frozenset[str] = frozenset({
+    "nz", "nzl", "new zealand", "new-zealand",
+    "auckland", "wellington", "christchurch", "otago", "canterbury",
+    "hawkes bay", "hawkes-bay", "hawke's bay", "waikato", "manawatu",
+    "northland", "taranaki", "southland", "nelson", "marlborough",
+    "wanganui", "whanganui", "bay of plenty", "gisborne", "westland",
+})
+
+
+def _country_from_state(state: str) -> str:
+    """
+    Return 'nz' when *state* matches a known NZ region/state identifier,
+    otherwise return '' (empty — caller should fall back to its own default).
+    """
+    if (state or "").strip().lower() in _NZ_STATE_IDS:
+        return "nz"
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # PAYLOAD NORMALISATION HELPERS
 # ---------------------------------------------------------------------------
 
@@ -732,7 +758,13 @@ class OddsProConnector:
                         state=str(
                             item.get("location") or item.get("state") or item.get("region") or ""
                         ),
-                        country=str(item.get("country") or self.country),
+                        country=str(
+                            item.get("country")
+                            or _country_from_state(
+                                item.get("location") or item.get("state") or item.get("region") or ""
+                            )
+                            or self.country
+                        ),
                         extra={"raw": item},
                     )
                 )
@@ -783,7 +815,13 @@ class OddsProConnector:
                         state=str(
                             item.get("location") or item.get("state") or item.get("region") or ""
                         ),
-                        country=str(item.get("country") or self.country),
+                        country=str(
+                            item.get("country")
+                            or _country_from_state(
+                                item.get("location") or item.get("state") or item.get("region") or ""
+                            )
+                            or self.country
+                        ),
                         extra={"raw": item},
                     )
                 )
@@ -866,7 +904,11 @@ class OddsProConnector:
             track=self._clean_track(item.get("track") or item.get("venue") or ""),
             meeting_date=str(item.get("date") or ""),
             state=str(item.get("state") or ""),
-            country=str(item.get("country") or self.country),
+            country=str(
+                item.get("country")
+                or _country_from_state(item.get("state") or item.get("location") or item.get("region") or "")
+                or self.country
+            ),
             extra={"raw": item},
         )
 
@@ -1521,6 +1563,10 @@ class OddsProConnector:
             state=str(item.get("state") or (meeting.state if meeting else "") or ""),
             country=str(
                 item.get("country")
+                or _country_from_state(
+                    item.get("state") or item.get("location") or item.get("region")
+                    or (meeting.state if meeting else "") or ""
+                )
                 or (meeting.country if meeting else None)
                 or self.country
                 or "au"

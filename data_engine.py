@@ -805,8 +805,9 @@ _AU_STATES = frozenset({
 _NZ_IDENTIFIERS = frozenset({
     "nz", "nzl", "new zealand", "new-zealand",
     "auckland", "wellington", "christchurch", "otago", "canterbury",
-    "hawkes bay", "hawkes-bay", "waikato", "manawatu", "northland",
+    "hawkes bay", "hawkes-bay", "hawke's bay", "waikato", "manawatu", "northland",
     "taranaki", "southland", "nelson", "marlborough",
+    "wanganui", "whanganui", "bay of plenty", "gisborne", "westland",
 })
 
 # Country codes that map to Australia / New Zealand in the `country` field.

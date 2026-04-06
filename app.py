@@ -350,13 +350,13 @@ def api_debug_formfav():
     GET /api/debug/formfav
     Expose the full OddsPro → FormFav pipeline state for debugging.
 
-    Reads the latest persisted snapshot from formfav_debug_stats (DB) so
-    counters always match what the logs show, even after process restarts.
-    Falls back to the live in-memory state when no DB snapshot exists yet.
-
-    Returns real runtime counters and the last 20 processed races with their
-    pipeline status (discovered → domestic filter → FormFav eligibility → call result).
+    Priority order for counter values:
+      1. Persisted DB snapshot (formfav_debug_stats) — survives restarts / multi-worker
+      2. Live in-memory pipeline_state — same worker only
+      3. Direct DB table counts (today_races + formfav_race_enrichment) — always accurate
     """
+    from datetime import date as _date
+
     try:
         import pipeline_state
         mem_state = pipeline_state.get_state()
@@ -375,20 +375,55 @@ def api_debug_formfav():
         def _val(key: str) -> int:
             return int(db_row.get(key) or mem_state.get(key) or 0)
 
+        # When neither DB snapshot nor memory has useful data (e.g. first startup
+        # or multi-worker deployment before first persist), compute real counters
+        # directly from the source tables so the endpoint never shows false zeros.
+        live_counts: dict = {}
+        counter_source = "db" if db_row else "memory"
+        if not db_row and all(_val(k) == 0 for k in (
+            "total_races_discovered", "total_formfav_called",
+            "total_formfav_success", "total_formfav_failed",
+        )):
+            try:
+                from database import get_races_for_date, get_formfav_enrichments_for_date
+                today = _date.today().isoformat()
+                all_races = get_races_for_date(today)
+                _au_nz_codes = {"au", "aus", "australia", "nz", "nzl", "new zealand", "new-zealand"}
+                _domestic = [r for r in all_races if (r.get("country") or "au").strip().lower() in _au_nz_codes]
+                _intl = len(all_races) - len(_domestic)
+                ff_rows = get_formfav_enrichments_for_date(today)
+                _ff_success = len([r for r in ff_rows if r.get("raw_response")])
+                _ff_total = len(ff_rows)
+                live_counts = {
+                    "total_races_discovered":       len(all_races),
+                    "total_domestic_races":         len(_domestic),
+                    "total_international_filtered": _intl,
+                    "total_formfav_eligible":       len(_domestic),
+                    "total_formfav_called":         _ff_total,
+                    "total_formfav_success":        _ff_success,
+                    "total_formfav_failed":         _ff_total - _ff_success,
+                }
+                counter_source = "live_tables"
+            except Exception as live_err:
+                log.debug(f"/api/debug/formfav: live table fallback failed: {live_err}")
+
+        def _final(key: str) -> int:
+            return int(live_counts.get(key) or _val(key) or 0)
+
         return jsonify({
             "ok": True,
-            "total_races_discovered":       _val("total_races_discovered"),
-            "total_domestic_races":         _val("total_domestic_races"),
-            "total_international_filtered": _val("total_international_filtered"),
-            "total_formfav_eligible":       _val("total_formfav_eligible"),
-            "total_formfav_called":         _val("total_formfav_called"),
-            "total_formfav_success":        _val("total_formfav_success"),
-            "total_formfav_failed":         _val("total_formfav_failed"),
+            "total_races_discovered":       _final("total_races_discovered"),
+            "total_domestic_races":         _final("total_domestic_races"),
+            "total_international_filtered": _final("total_international_filtered"),
+            "total_formfav_eligible":       _final("total_formfav_eligible"),
+            "total_formfav_called":         _final("total_formfav_called"),
+            "total_formfav_success":        _final("total_formfav_success"),
+            "total_formfav_failed":         _final("total_formfav_failed"),
             # recent_races comes from in-memory (not stored in DB)
             "recent_races":                 mem_state.get("recent_races", []),
             "last_reset":                   mem_state.get("last_reset"),
             "snapshot_recorded_at":         db_row.get("recorded_at"),
-            "counter_source":               "db" if db_row else "memory",
+            "counter_source":               counter_source,
         })
     except Exception as e:
         log.exception(f"/api/debug/formfav failed: {e}")
