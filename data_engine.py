@@ -674,8 +674,9 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             if _pipeline_state is not None:
                 _pipeline_state.record_race_included(race_dict.get("race_uid") or "")
             stored_ok = _store_with_pipeline(race_dict)
-            races_stored += 1
-            if not stored_ok:
+            if stored_ok:
+                races_stored += 1
+            else:
                 races_blocked += 1
 
             # Store runners (OddsPro runners take priority)
@@ -737,7 +738,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                                 "fetched_at": _fetched_at,
                             })
                 except Exception as _ff_exc:
-                    log.debug(f"full_sweep: FF runner enrichment write failed: {_ff_exc}")
+                    log.warning(f"full_sweep: FF runner enrichment write failed: {_ff_exc}")
 
         else:
             # International race — NEVER write to DB.
@@ -769,6 +770,16 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         f"runners_skipped=0"
     )
 
+    # Warn loudly when domestic races were discovered but none made it into the DB.
+    # This is the clearest signal of a data pipeline failure (DB down, bad credentials,
+    # all races blocked by integrity filter, or upsert returning None).
+    if domestic_count > 0 and races_stored == 0:
+        log.warning(
+            f"[PIPELINE] WARNING: {domestic_count} domestic races found but 0 stored in DB"
+            f" (races_blocked={races_blocked}) for {today}"
+            f" — check DB connectivity, integrity filter, and upsert logs"
+        )
+
     if _pipeline_state is not None:
         _pipeline_state.persist_snapshot()
 
@@ -790,7 +801,6 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "races_stored": races_stored,
         "runners_stored": runners_stored,
         "races_blocked": races_blocked,
-        "races_passed": races_stored - races_blocked,
         "domestic_count": domestic_count,
         "international_excluded": international_count,
         "discovery_failed": _discovery_failed,
@@ -842,8 +852,9 @@ def rolling_refresh(target_date: str | None = None) -> dict[str, Any]:
                 fresh_race, runners = conn.fetch_race_with_runners(oddspro_race_id)
                 if fresh_race:
                     fresh_dict = _race_to_dict(fresh_race)
-                    _store_with_pipeline(fresh_race)
-                    races_refreshed += 1
+                    refresh_ok = _store_with_pipeline(fresh_race)
+                    if refresh_ok:
+                        races_refreshed += 1
 
                     # Near-jump FormFav provisional overlay (enrichment only)
                     if should_trigger_formfav_overlay(fresh_dict):
@@ -921,7 +932,8 @@ def near_jump_refresh(target_date: str | None = None) -> dict[str, Any]:
                 fresh_race, _runners = conn.fetch_race_with_runners(oddspro_race_id)
                 if fresh_race:
                     integrity_ok = _store_with_pipeline(fresh_race)
-                    races_refreshed += 1
+                    if integrity_ok:
+                        races_refreshed += 1
                     fresh_dict = _race_to_dict(fresh_race)
 
                     # Clear stale overlay ONLY after successful OddsPro refresh
@@ -1013,8 +1025,11 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
         f"check_results: {written} results confirmed and written, "
         f"{skipped} skipped (no confirmation) for {today}"
     )
+    # Flag as not-ok when results were found but none could be confirmed/written.
+    # ok=True only when we either wrote something OR there was nothing to write.
+    all_skipped = bool(results) and written == 0
     return {
-        "ok": True,
+        "ok": not all_skipped,
         "date": today,
         "results_written": written,
         "results_skipped": skipped,
@@ -1077,7 +1092,7 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
         return enriched
 
     except Exception as e:
-        log.debug(f"data_engine: FormFav overlay failed for {race_uid}: {e}")
+        log.warning(f"data_engine: FormFav overlay failed for {race_uid}: {e}")
         return race
 
 
@@ -1533,7 +1548,18 @@ def _store_with_pipeline(race: Any) -> bool:
             race_dict["block_code"] = block_code
 
         # Step 4 — Store (only reached for domestic races that passed Step 1)
-        upsert_race(race_dict)
+        write_result = upsert_race(race_dict)
+        if write_result is None:
+            # upsert_race returns None when: (a) safe_query caught an exception
+            # (data NOT written), or (b) Supabase upsert succeeded but returned
+            # empty data (data IS written — e.g. RLS or return=minimal config).
+            # We log a warning either way so the operator can investigate, but
+            # we do not fail the pipeline since the DB write may have succeeded.
+            log.warning(
+                f"data_engine: _store_with_pipeline upsert_race returned None"
+                f" race_uid={race_uid} track={race_dict.get('track')!r}"
+                f" — DB write may have failed; check DB logs"
+            )
         return bool(allowed)
 
     except Exception as e:

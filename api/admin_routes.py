@@ -114,6 +114,137 @@ def scheduler_status():
         return jsonify({"ok": False, "error": "Scheduler status unavailable"}), 500
 
 
+@admin_bp.route("/diagnostics", methods=["GET"])
+def pipeline_diagnostics():
+    """
+    GET /api/admin/diagnostics
+
+    Comprehensive pipeline health snapshot for rapid live diagnosis.
+    Shows env mode, connector status, scheduler state, last sweep result,
+    DB connectivity, and which critical env vars are present (never their values).
+
+    Use this endpoint first when debugging "no data in live env" issues.
+    """
+    from datetime import date as _date, datetime as _datetime
+    import os as _os
+
+    diag: dict = {"ok": True, "timestamp": _datetime.utcnow().isoformat()}
+
+    # ── Environment ──────────────────────────────────────────────────────────
+    from env import env as _env
+    diag["env"] = {
+        "mode": _env.mode,
+        "is_live": _env.is_live,
+        "is_test": _env.is_test,
+    }
+
+    # ── Critical env var presence (never values — security) ──────────────────
+    diag["env_vars"] = {
+        "ODDSPRO_BASE_URL":     bool(_os.environ.get("ODDSPRO_BASE_URL")),
+        "ODDSPRO_API_KEY":      bool(_os.environ.get("ODDSPRO_API_KEY")),
+        "SUPABASE_URL":         bool(_os.environ.get("SUPABASE_URL")),
+        "SUPABASE_KEY":         bool(_os.environ.get("SUPABASE_KEY")),
+        "SUPABASE_TEST_URL":    bool(_os.environ.get("SUPABASE_TEST_URL")),
+        "FORMFAV_API_KEY":      bool(_os.environ.get("FORMFAV_API_KEY")),
+        "SCHEDULER_ENABLED":    _os.environ.get("SCHEDULER_ENABLED", "true"),
+        "RUN_MAIN_STARTUP":     _os.environ.get("RUN_MAIN_STARTUP", "1"),
+        "DP_ENV":               _os.environ.get("DP_ENV", "(not set, defaults to LIVE)"),
+    }
+
+    # ── Connector status ─────────────────────────────────────────────────────
+    try:
+        from connectors.oddspro_connector import OddsProConnector
+        _op = OddsProConnector()
+        diag["oddspro_connector"] = {
+            "enabled": _op.is_enabled(),
+            "public_mode": _op.is_public_mode(),
+            "api_key_present": bool(_op.api_key),
+        }
+    except Exception as _e:
+        diag["oddspro_connector"] = {"enabled": False, "error": str(_e)}
+
+    try:
+        from connectors.formfav_connector import FormFavConnector
+        _ff = FormFavConnector()
+        diag["formfav_connector"] = {
+            "enabled": _ff.is_enabled(),
+            "api_key_present": bool(_ff.api_key),
+        }
+    except Exception as _e:
+        diag["formfav_connector"] = {"enabled": False, "error": str(_e)}
+
+    # ── DB connectivity ───────────────────────────────────────────────────────
+    try:
+        from db import get_db, safe_query, T
+        _row = safe_query(
+            lambda: get_db().table(T("system_state")).select("id").limit(1).execute().data,
+            None,
+        )
+        diag["db"] = {"ok": _row is not None, "mode": _env.mode}
+    except Exception as _e:
+        diag["db"] = {"ok": False, "error": str(_e)}
+
+    # ── Scheduler status ─────────────────────────────────────────────────────
+    try:
+        from scheduler import get_status as _get_sched_status
+        _ss = _get_sched_status()
+        diag["scheduler"] = {
+            "running": _ss.get("running", False),
+            "thread_alive": _ss.get("thread_alive", False),
+            "started_at": _ss.get("started_at"),
+            "last_full_sweep_at": _ss.get("last_full_sweep_at"),
+            "last_full_sweep_ok": (_ss.get("last_full_sweep_result") or {}).get("ok"),
+            "last_full_sweep_races_stored": (_ss.get("last_full_sweep_result") or {}).get("races_stored"),
+            "last_error": _ss.get("last_error"),
+        }
+    except Exception as _e:
+        diag["scheduler"] = {"running": False, "error": str(_e)}
+
+    # ── Today's data counts ───────────────────────────────────────────────────
+    try:
+        from database import get_races_for_date, get_active_races, get_blocked_races
+        today = _date.today().isoformat()
+        _all = get_races_for_date(today)
+        _active = get_active_races(today)
+        _blocked = get_blocked_races(today)
+        diag["today_data"] = {
+            "date": today,
+            "total_races": len(_all),
+            "active_races": len(_active),
+            "blocked_races": len(_blocked),
+        }
+    except Exception as _e:
+        diag["today_data"] = {"error": str(_e)}
+
+    # ── Summarise any obvious issues ─────────────────────────────────────────
+    issues: list[str] = []
+    if not diag.get("env_vars", {}).get("ODDSPRO_BASE_URL"):
+        issues.append("ODDSPRO_BASE_URL not set — full_sweep will be skipped")
+    if not diag.get("env_vars", {}).get("SUPABASE_URL"):
+        issues.append("SUPABASE_URL not set — DB writes will fail")
+    if not diag.get("env_vars", {}).get("SUPABASE_KEY"):
+        issues.append("SUPABASE_KEY not set — DB writes will fail")
+    if not diag.get("oddspro_connector", {}).get("enabled"):
+        issues.append("OddsPro connector is disabled")
+    if not diag.get("db", {}).get("ok"):
+        issues.append("DB connectivity check failed")
+    if not diag.get("scheduler", {}).get("running"):
+        issues.append("Scheduler is not running — no automatic data refresh")
+    _sched_ok = diag.get("scheduler", {}).get("last_full_sweep_ok")
+    if _sched_ok is False:
+        issues.append("Last full_sweep returned ok=False — check scheduler.last_error")
+    _stored = diag.get("scheduler", {}).get("last_full_sweep_races_stored")
+    if _stored is not None and _stored == 0 and diag.get("today_data", {}).get("total_races", 0) == 0:
+        issues.append("Last sweep stored 0 races and DB has no races today — data pipeline not working")
+    if _env.is_test and not diag.get("env_vars", {}).get("SUPABASE_TEST_URL"):
+        issues.append("DP_ENV=TEST without SUPABASE_TEST_URL — test data written to main DB with test_ prefix")
+
+    diag["issues"] = issues
+    diag["issues_count"] = len(issues)
+
+    return jsonify(diag)
+
+
 # ---------------------------------------------------------------------------
 # PHASE 3 — INTELLIGENCE LAYER ADMIN HOOKS
 # ---------------------------------------------------------------------------
