@@ -258,6 +258,10 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     _discovery_diag: dict = {}
     if _needs_discovery:
         try:
+            log.info(
+                f"[ODDSPRO] DISCOVERY start: /api/meetings location=domestic"
+                f" — resolving numeric meeting IDs for {meetings_found} meetings"
+            )
             for dm in conn.fetch_meetings_discovery():
                 if not isinstance(dm, dict):
                     continue
@@ -268,8 +272,8 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                     _disc_by_track[dm_track] = dm
             _discovery_diag = dict(getattr(conn, "_last_discovery_diag", {}))
             log.info(
-                f"full_sweep: discovery loaded {len(_disc_by_track)} meetings "
-                f"(meetings from /external/meetings lacked embedded races and numeric IDs)"
+                f"[ODDSPRO] DISCOVERY complete: loaded {len(_disc_by_track)} meetings"
+                f" from /api/meetings"
             )
         except Exception as _disc_exc:
             _discovery_failed = True
@@ -378,12 +382,22 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                 races_stored += 1
                 if not stored_ok:
                     races_blocked += 1
+                else:
+                    log.debug(
+                        f"[ODDSPRO] RACE_INSERTED race_uid={race.race_uid}"
+                        f" track={race.track!r} race_num={race.race_num}"
+                        f" code={race.code!r} country={getattr(race, 'country', 'au')!r}"
+                    )
 
                 # Store runners associated with this race
                 race_runners = runners_by_race.get(race.race_uid, [])
                 if race_runners:
                     stored = _store_runners_for_race(race.race_uid, race_runners)
                     runners_stored += stored
+                    log.debug(
+                        f"[ODDSPRO] RUNNERS_INSERTED race_uid={race.race_uid}"
+                        f" runners_stored={stored}"
+                    )
 
         except Exception as e:
             meeting_details_failed += 1
@@ -877,6 +891,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
 
     log.info(
         f"[FORMFAV] SYNC START date={td} total_active_races={len(races)}"
+        f" — processing eligibility filters (AU/NZ, race_code, track/race_num)"
     )
 
     races_enriched = 0
@@ -899,8 +914,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         if not _is_au_nz_race(race):
             country_val = race.get("country") or race.get("state") or "unknown"
             log.info(
-                f"[FORMFAV] SKIPPED {_log_id}: international race excluded"
-                f" (country={country_val!r})"
+                f"[FORMFAV] SKIPPED race_uid={_log_id}"
+                f" reason=international_excluded country={country_val!r}"
             )
             skipped_international += 1
             continue
@@ -908,7 +923,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         # --- Validate required fields ---
         if not race_uid:
             log.info(
-                f"[FORMFAV] SKIPPED {_log_id}: missing race_uid"
+                f"[FORMFAV] SKIPPED race_uid={_log_id} reason=missing_race_uid"
             )
             skipped_missing_fields += 1
             continue
@@ -923,7 +938,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
 
         if ff_code not in _FF_VALID_CODES:
             log.info(
-                f"[FORMFAV] SKIPPED {race_uid}: invalid/unrecognized code {raw_code!r}"
+                f"[FORMFAV] SKIPPED race_uid={race_uid}"
+                f" reason=invalid_code code={raw_code!r}"
                 f" (expected HORSE, HARNESS or GREYHOUND)"
             )
             skipped_invalid_code += 1
@@ -935,7 +951,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
 
         if not track or not race_num:
             log.info(
-                f"[FORMFAV] SKIPPED {race_uid}: missing track={track!r} or race_num={race_num}"
+                f"[FORMFAV] SKIPPED race_uid={race_uid}"
+                f" reason=missing_track_or_race_num track={track!r} race_num={race_num}"
             )
             skipped_missing_fields += 1
             continue
@@ -945,12 +962,17 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
 
         # --- Issue FormFav API call ---
-        # The connector also logs the actual HTTP call at INFO level.
         log.info(
-            f"[FORMFAV] CALL url={_FF_BASE_URL}/v1/form"
-            f" params={{date={race_date!r}, track={track!r}, race={race_num},"
-            f" race_code={mapped_race_code!r}, country={ff_country!r}}}"
-            f" race_uid={race_uid!r}"
+            f"[FORMFAV] ELIGIBLE race_uid={race_uid}"
+            f" track={track!r} race_num={race_num} code={ff_code!r}"
+            f" ff_code={mapped_race_code!r} country={ff_country!r}"
+        )
+        log.info(
+            f"[FORMFAV] CALL"
+            f" url={_FF_BASE_URL}/v1/form"
+            f" params=date={race_date}&track={track}&race={race_num}"
+            f"&race_code={mapped_race_code}&country={ff_country}"
+            f" race_uid={race_uid}"
         )
 
         try:
@@ -985,6 +1007,10 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 "fetched_at":        fetched_at,
             }
             upsert_formfav_race_enrichment(race_payload)
+            log.debug(
+                f"[FORMFAV] DB_WRITE race_enrichment race_uid={race_uid}"
+                f" track={track!r} race_num={race_num}"
+            )
             races_enriched += 1
 
             # Store each runner's enrichment
@@ -1028,7 +1054,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                     race_runners_enriched += 1
 
             log.info(
-                f"[FORMFAV] SUCCESS {race_uid!r}"
+                f"[FORMFAV] SUCCESS race_uid={race_uid}"
                 f" track={track!r} race_num={race_num}"
                 f" runners_enriched={race_runners_enriched}"
             )
@@ -1044,10 +1070,10 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 except Exception:
                     pass
             log.warning(
-                f"[FORMFAV] FAILED {race_uid!r}"
+                f"[FORMFAV] FAILED race_uid={race_uid}"
                 f" track={track!r} race_num={race_num} code={ff_code!r}"
-                f" country={ff_country!r} http_status={status_code}"
-                f" response_body={resp_body!r} error={e}"
+                f" country={ff_country!r} status={status_code}"
+                f" body={resp_body!r} error={e}"
             )
             errors += 1
             continue
@@ -1066,6 +1092,13 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         f" skipped_missing_fields={skipped_missing_fields}"
         f" skipped_invalid_code={skipped_invalid_code}"
     )
+    if races_enriched > 0:
+        log.info(
+            f"[FORMFAV] READBACK enriched_races_today={races_enriched}"
+            f" — stored in formfav_race_enrichment table,"
+            f" readable via GET /api/formfav/status"
+            f" and attached to race items via GET /api/board"
+        )
     # Mandatory pipeline validation output
     log.info(
         f"PIPELINE VALIDATION: date={td} "
