@@ -48,136 +48,28 @@ from urllib.parse import quote
 
 import requests
 
+from core.domestic_tracks import AU_TRACKS, DOMESTIC_TRACKS, NZ_TRACKS, normalize_track
+
 log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# COUNTRY HELPERS
+# TRACK-BASED COUNTRY HELPERS
 # ---------------------------------------------------------------------------
-
-# NZ region/state identifiers that may appear in the `state`, `location`,
-# or `region` fields of OddsPro API responses.  Used to infer country='nz'
-# when the API does not return an explicit country field for NZ meetings/races.
-_NZ_STATE_IDS: frozenset[str] = frozenset({
-    "nz", "nzl", "new zealand", "new-zealand",
-    "auckland", "wellington", "christchurch", "otago", "canterbury",
-    "hawkes bay", "hawkes-bay", "hawke's bay", "waikato", "manawatu",
-    "northland", "taranaki", "southland", "nelson", "marlborough",
-    "wanganui", "whanganui", "bay of plenty", "gisborne", "westland",
-})
-
-# Australian state/territory identifiers that may appear in the `state`,
-# `location`, or `region` fields of OddsPro API responses.  Used to confirm
-# country='au' via state when the API does not return an explicit country.
-_AU_STATE_IDS: frozenset[str] = frozenset({
-    "vic", "nsw", "qld", "sa", "wa", "tas", "act", "nt",
-    "victoria", "new south wales", "queensland", "south australia",
-    "western australia", "tasmania", "australian capital territory",
-    "northern territory",
-    # Country-level strings sometimes placed in the state/location field
-    "au", "aus", "australia",
-})
-
-
-def _country_from_state(state: str) -> str:
-    """
-    Return 'au' when *state* matches a known Australian state/territory, 'nz'
-    when it matches a known NZ region, or '' (empty) when the value is not
-    recognised as either — callers must apply their own fallback.
-
-    This two-direction check is the primary defence against foreign tracks that
-    OddsPro returns without an explicit `country` field: if the state/location
-    value does not resolve to AU or NZ, the caller should NOT default to 'au'.
-    """
-    s = (state or "").strip().lower()
-    if s in _NZ_STATE_IDS:
-        return "nz"
-    if s in _AU_STATE_IDS:
-        return "au"
-    return ""
-
-
-# Known AU/NZ track names after _clean_track() normalisation (lowercased,
-# spaces → hyphens).  Used as tier-3 country resolver in the connector when
-# both explicit country and state fields are absent.
-# NOTE: A parallel copy (_AU_TRACKS / _NZ_TRACKS) lives in data_engine.py.
-# Keep both sets in sync when adding new venues.
-_AU_TRACK_IDS: frozenset[str] = frozenset({
-    # NSW thoroughbred
-    "rosehill", "randwick", "warwick-farm", "canterbury", "newcastle",
-    "gosford", "wyong", "kembla-grange", "hawkesbury", "muswellbrook",
-    "armidale", "goulburn", "tamworth", "grafton", "lismore", "coffs-harbour",
-    "taree", "scone", "cessnock", "wagga-wagga", "albury", "orange",
-    "bathurst", "dubbo", "moruya", "nowra", "queanbeyan", "mudgee",
-    # VIC thoroughbred
-    "flemington", "caulfield", "moonee-valley", "sandown", "mornington",
-    "ballarat", "bendigo", "hamilton", "cranbourne", "pakenham",
-    "sale", "geelong", "seymour", "echuca", "swan-hill", "horsham",
-    "warracknabeal", "donald", "stawell", "avoca", "mildura", "wangaratta",
-    "wodonga", "benalla", "shepparton", "traralgon", "bairnsdale",
-    # QLD thoroughbred
-    "doomben", "eagle-farm", "gold-coast", "ipswich", "sunshine-coast",
-    "toowoomba", "warwick", "rockhampton", "mackay", "townsville",
-    "cairns", "bundaberg", "hervey-bay", "gympie", "beaudesert",
-    # SA thoroughbred
-    "morphettville", "victoria-park", "gawler", "mount-gambier",
-    "port-augusta", "port-lincoln", "naracoorte", "murray-bridge", "oakbank",
-    # WA thoroughbred
-    "ascot", "belmont-park", "bunbury", "pinjarra", "northam",
-    "kalgoorlie", "geraldton", "albany", "esperance",
-    # TAS thoroughbred
-    "elwick", "mowbray", "devonport", "launceston",
-    # ACT thoroughbred
-    "thoroughbred-park",
-    # NT thoroughbred
-    "darwin", "alice-springs",
-    # Greyhound tracks (AU)
-    "angle-park", "albion-park-greyhound", "albion-park", "cannington",
-    "dapto", "sandown-park", "the-meadows", "temora", "wentworth-park",
-    "richmond", "lismore-greyhound", "townsville-greyhound",
-    "ipswich-greyhound", "gold-coast-greyhound", "capalaba",
-    "bundaberg-greyhound", "rockhampton-greyhound", "mackay-greyhound",
-    "cairns-greyhound", "hobart-greyhound", "launceston-greyhound",
-    "alice-springs-greyhound",
-    # Harness tracks (AU)
-    "albion-park-harness", "menangle", "penrith", "bankstown",
-    "newcastle-harness", "tabcorp-park-menangle", "gloucester-park",
-    "wayville", "melton",
-})
-
-_NZ_TRACK_IDS: frozenset[str] = frozenset({
-    # Thoroughbred
-    "ellerslie", "te-rapa", "taupo", "hastings", "hawkes-bay",
-    "rotorua", "wanganui", "whanganui", "otaki", "awapuni", "riccarton",
-    "ashburton", "timaru", "gore", "winton", "invercargill",
-    "ruakaka", "matamata", "cambridge", "pukekohe", "new-plymouth",
-    "palmerston-north", "feilding", "foxton", "masterton",
-    "levin", "woodville", "waverley", "marton", "wairoa",
-    "napier", "gisborne", "tauranga", "huntly",
-    "dargaville", "whangarei",
-    # Greyhound (NZ)
-    "auckland-dogs", "manukau", "manawatu-dogs", "christchurch-dogs",
-    "invercargill-dogs",
-    # Harness (NZ)
-    "cambridge-harness", "addington", "forbury-park", "hutt-park",
-    "alexandra-park", "teretonga",
-})
-
+# Country and state fields from OddsPro API responses are unreliable.
+# Track name membership in AU_TRACKS / NZ_TRACKS is the sole authority.
+# ---------------------------------------------------------------------------
 
 def _country_from_track(track: str) -> str:
     """
-    Return 'au' when *track* matches a known Australian venue, 'nz' for a
-    known New Zealand venue, or '' when not recognised.
-
-    Track names must already be normalised (lowercased, spaces → hyphens) as
-    produced by _clean_track().  This is the tier-3 country resolver — only
-    used when both the explicit ``country`` field and the ``state`` field are
-    absent.
+    Return 'au' for a known Australian venue, 'nz' for a known New Zealand
+    venue, or '' when not recognised.  Uses the DOMESTIC_TRACKS whitelist
+    from core.domestic_tracks as the sole authority.
     """
-    t = (track or "").strip().lower()
-    if t in _AU_TRACK_IDS:
+    t = normalize_track(track)
+    if t in AU_TRACKS:
         return "au"
-    if t in _NZ_TRACK_IDS:
+    if t in NZ_TRACKS:
         return "nz"
     return ""
 
@@ -872,16 +764,11 @@ class OddsProConnector:
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
                         state=_item_state_field(item),
-                        country=str(
-                            item.get("country")
-                            or _country_from_state(_item_state_field(item))
-                            or _country_from_track(self._clean_track(
-                                item.get("track") or item.get("meetingTrack")
-                                or item.get("venue") or item.get("name")
-                                or item.get("meetingName") or ""
-                            ))
-                            or ""
-                        ).lower(),
+                        country=_country_from_track(self._clean_track(
+                            item.get("track") or item.get("meetingTrack")
+                            or item.get("venue") or item.get("name")
+                            or item.get("meetingName") or ""
+                        )),
                         extra={"raw": item},
                     )
                 )
@@ -930,16 +817,11 @@ class OddsProConnector:
                         ),
                         meeting_date=str(item.get("date") or target_date or ""),
                         state=_item_state_field(item),
-                        country=str(
-                            item.get("country")
-                            or _country_from_state(_item_state_field(item))
-                            or _country_from_track(self._clean_track(
-                                item.get("track") or item.get("meetingTrack")
-                                or item.get("venue") or item.get("name")
-                                or item.get("meetingName") or ""
-                            ))
-                            or ""
-                        ).lower(),
+                        country=_country_from_track(self._clean_track(
+                            item.get("track") or item.get("meetingTrack")
+                            or item.get("venue") or item.get("name")
+                            or item.get("meetingName") or ""
+                        )),
                         extra={"raw": item},
                     )
                 )
@@ -1022,12 +904,7 @@ class OddsProConnector:
             track=self._clean_track(item.get("track") or item.get("venue") or ""),
             meeting_date=str(item.get("date") or ""),
             state=_item_state_field(item),
-            country=str(
-                item.get("country")
-                or _country_from_state(_item_state_field(item))
-                or _country_from_track(self._clean_track(item.get("track") or item.get("venue") or ""))
-                or ""
-            ).lower(),
+            country=_country_from_track(self._clean_track(item.get("track") or item.get("venue") or "")),
             extra={"raw": item},
         )
 
@@ -1680,15 +1557,7 @@ class OddsProConnector:
             code=code,
             source=self.source_name,
             state=str(_item_state_field(item) or (meeting.state if meeting else "") or ""),
-            country=str(
-                item.get("country")
-                or _country_from_state(
-                    _item_state_field(item) or (meeting.state if meeting else "") or ""
-                )
-                or (meeting.country if meeting else None)
-                or _country_from_track(track)
-                or ""
-            ).lower(),
+            country=_country_from_track(track),
             race_name=str(item.get("raceName") or item.get("name") or ""),
             distance=str(item.get("distance") or ""),
             grade=str(item.get("grade") or item.get("raceClass") or ""),
