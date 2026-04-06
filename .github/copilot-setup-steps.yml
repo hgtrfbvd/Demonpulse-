@@ -1,0 +1,5 @@
+# Allow the Copilot coding agent to reach the live API hosts used by DemonPulse
+# so it can test the OddsPro / FormFav integration end-to-end during implementation.
+allowed_network_hostnames:
+  - oddspro.com.au
+  - api.formfav.com
