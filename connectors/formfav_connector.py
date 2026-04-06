@@ -165,8 +165,8 @@ class FormFavConnector:
             "country": (country or self.country).lower(),
         }
         url = f"{BASE_URL}/v1/form"
-        log.debug(
-            "[FORMFAV] CALL → url=%s params=%s api_key_present=%s",
+        log.info(
+            "[FORMFAV] CALL url=%s params=%s api_key_present=%s",
             url,
             params,
             bool(self.api_key),
@@ -204,8 +204,8 @@ class FormFavConnector:
             "country": (country or self.country).lower(),
         }
         url = f"{BASE_URL}/v1/predictions"
-        log.debug(
-            "[FORMFAV] CALL → url=%s params=%s api_key_present=%s",
+        log.info(
+            "[FORMFAV] CALL url=%s params=%s api_key_present=%s",
             url,
             params,
             bool(self.api_key),
@@ -237,8 +237,8 @@ class FormFavConnector:
             "country": self.country,
         }
         url = f"{BASE_URL}/v1/form/meetings"
-        log.debug(
-            "[FORMFAV] CALL → url=%s params=%s api_key_present=%s",
+        log.info(
+            "[FORMFAV] CALL url=%s params=%s api_key_present=%s",
             url,
             params,
             bool(self.api_key),
