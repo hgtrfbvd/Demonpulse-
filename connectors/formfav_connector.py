@@ -166,10 +166,9 @@ class FormFavConnector:
         }
         url = f"{BASE_URL}/v1/form"
         log.info(
-            "[FORMFAV] CALL url=%s params=%s api_key_present=%s",
+            "[FORMFAV] HTTP url=%s params=%s",
             url,
             params,
-            bool(self.api_key),
         )
 
         response = requests.get(
@@ -205,10 +204,9 @@ class FormFavConnector:
         }
         url = f"{BASE_URL}/v1/predictions"
         log.info(
-            "[FORMFAV] CALL url=%s params=%s api_key_present=%s",
+            "[FORMFAV] HTTP url=%s params=%s",
             url,
             params,
-            bool(self.api_key),
         )
 
         try:
@@ -238,10 +236,9 @@ class FormFavConnector:
         }
         url = f"{BASE_URL}/v1/form/meetings"
         log.info(
-            "[FORMFAV] CALL url=%s params=%s api_key_present=%s",
+            "[FORMFAV] HTTP url=%s params=%s",
             url,
             params,
-            bool(self.api_key),
         )
 
         try:
