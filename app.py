@@ -44,6 +44,40 @@ def startup():
     if _started:
         return
 
+    # ── Startup env-var validation ────────────────────────────────────────────
+    # Log clearly when critical env vars are missing so operators know immediately
+    # why the live environment has no data, without having to dig through logs.
+    _missing_vars: list[str] = []
+    if not os.environ.get("ODDSPRO_BASE_URL"):
+        _missing_vars.append("ODDSPRO_BASE_URL")
+    if not os.environ.get("SUPABASE_URL"):
+        _missing_vars.append("SUPABASE_URL")
+    if not os.environ.get("SUPABASE_KEY"):
+        _missing_vars.append("SUPABASE_KEY")
+
+    if _missing_vars:
+        log.warning(
+            f"[STARTUP] MISSING ENV VARS: {', '.join(_missing_vars)}"
+            f" — data ingestion and/or DB writes will be skipped until these are set."
+            f" In LIVE mode this means the board will be empty."
+        )
+    else:
+        log.info("[STARTUP] Core env vars present: ODDSPRO_BASE_URL, SUPABASE_URL, SUPABASE_KEY")
+
+    if env.is_test and not os.environ.get("SUPABASE_TEST_URL"):
+        log.warning(
+            "[STARTUP] DP_ENV=TEST but SUPABASE_TEST_URL is not set."
+            " Test writes will go to the main DB with 'test_' table prefix."
+            " Set SUPABASE_TEST_URL to use a dedicated test database."
+        )
+
+    if not os.environ.get("FORMFAV_API_KEY"):
+        log.info(
+            "[STARTUP] FORMFAV_API_KEY not set — FormFav enrichment will be disabled."
+            " OddsPro data will still be ingested."
+        )
+    # ─────────────────────────────────────────────────────────────────────────
+
     try:
         from scheduler import start_scheduler
         start_scheduler()
