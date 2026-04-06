@@ -97,6 +97,89 @@ def _country_from_state(state: str) -> str:
     return ""
 
 
+# Known AU/NZ track names after _clean_track() normalisation (lowercased,
+# spaces → hyphens).  Used as tier-3 country resolver in the connector when
+# both explicit country and state fields are absent.
+_AU_TRACK_IDS: frozenset[str] = frozenset({
+    # NSW thoroughbred
+    "rosehill", "randwick", "warwick-farm", "canterbury", "newcastle",
+    "gosford", "wyong", "kembla-grange", "hawkesbury", "muswellbrook",
+    "armidale", "goulburn", "tamworth", "grafton", "lismore", "coffs-harbour",
+    "taree", "scone", "cessnock", "wagga-wagga", "albury", "orange",
+    "bathurst", "dubbo", "moruya", "nowra", "queanbeyan", "mudgee",
+    # VIC thoroughbred
+    "flemington", "caulfield", "moonee-valley", "sandown", "mornington",
+    "ballarat", "bendigo", "hamilton", "cranbourne", "pakenham",
+    "sale", "geelong", "seymour", "echuca", "swan-hill", "horsham",
+    "warracknabeal", "donald", "stawell", "avoca", "mildura", "wangaratta",
+    "wodonga", "benalla", "shepparton", "traralgon", "bairnsdale",
+    # QLD thoroughbred
+    "doomben", "eagle-farm", "gold-coast", "ipswich", "sunshine-coast",
+    "toowoomba", "warwick", "rockhampton", "mackay", "townsville",
+    "cairns", "bundaberg", "hervey-bay", "gympie", "beaudesert",
+    # SA thoroughbred
+    "morphettville", "victoria-park", "gawler", "mount-gambier",
+    "port-augusta", "port-lincoln", "naracoorte", "murray-bridge", "oakbank",
+    # WA thoroughbred
+    "ascot", "belmont-park", "bunbury", "pinjarra", "northam",
+    "kalgoorlie", "geraldton", "albany", "esperance",
+    # TAS thoroughbred
+    "elwick", "mowbray", "devonport", "launceston",
+    # ACT thoroughbred
+    "thoroughbred-park",
+    # NT thoroughbred
+    "darwin", "alice-springs",
+    # Greyhound tracks (AU)
+    "angle-park", "albion-park-greyhound", "albion-park", "cannington",
+    "dapto", "sandown-park", "the-meadows", "temora", "wentworth-park",
+    "richmond", "lismore-greyhound", "townsville-greyhound",
+    "ipswich-greyhound", "gold-coast-greyhound", "capalaba",
+    "bundaberg-greyhound", "rockhampton-greyhound", "mackay-greyhound",
+    "cairns-greyhound", "hobart-greyhound", "launceston-greyhound",
+    "alice-springs-greyhound",
+    # Harness tracks (AU)
+    "albion-park-harness", "menangle", "penrith", "bankstown",
+    "newcastle-harness", "tabcorp-park-menangle", "gloucester-park",
+    "wayville", "melton",
+})
+
+_NZ_TRACK_IDS: frozenset[str] = frozenset({
+    # Thoroughbred
+    "ellerslie", "te-rapa", "taupo", "hastings", "hawkes-bay",
+    "rotorua", "wanganui", "whanganui", "otaki", "awapuni", "riccarton",
+    "ashburton", "timaru", "gore", "winton", "invercargill",
+    "ruakaka", "matamata", "cambridge", "pukekohe", "new-plymouth",
+    "palmerston-north", "feilding", "foxton", "masterton",
+    "levin", "woodville", "waverley", "marton", "wairoa",
+    "napier", "gisborne", "tauranga", "huntly",
+    "dargaville", "whangarei",
+    # Greyhound (NZ)
+    "auckland-dogs", "manukau", "manawatu-dogs", "christchurch-dogs",
+    "invercargill-dogs",
+    # Harness (NZ)
+    "cambridge-harness", "addington", "forbury-park", "hutt-park",
+    "alexandra-park", "teretonga",
+})
+
+
+def _country_from_track(track: str) -> str:
+    """
+    Return 'au' when *track* matches a known Australian venue, 'nz' for a
+    known New Zealand venue, or '' when not recognised.
+
+    Track names must already be normalised (lowercased, spaces → hyphens) as
+    produced by _clean_track().  This is the tier-3 country resolver — only
+    used when both the explicit ``country`` field and the ``state`` field are
+    absent.
+    """
+    t = (track or "").strip().lower()
+    if t in _AU_TRACK_IDS:
+        return "au"
+    if t in _NZ_TRACK_IDS:
+        return "nz"
+    return ""
+
+
 def _item_state_field(item: dict) -> str:
     """
     Extract the state/region/location value from an OddsPro item dict.
@@ -790,6 +873,11 @@ class OddsProConnector:
                         country=str(
                             item.get("country")
                             or _country_from_state(_item_state_field(item))
+                            or _country_from_track(self._clean_track(
+                                item.get("track") or item.get("meetingTrack")
+                                or item.get("venue") or item.get("name")
+                                or item.get("meetingName") or ""
+                            ))
                             or ""
                         ).lower(),
                         extra={"raw": item},
@@ -843,6 +931,11 @@ class OddsProConnector:
                         country=str(
                             item.get("country")
                             or _country_from_state(_item_state_field(item))
+                            or _country_from_track(self._clean_track(
+                                item.get("track") or item.get("meetingTrack")
+                                or item.get("venue") or item.get("name")
+                                or item.get("meetingName") or ""
+                            ))
                             or ""
                         ).lower(),
                         extra={"raw": item},
@@ -930,6 +1023,7 @@ class OddsProConnector:
             country=str(
                 item.get("country")
                 or _country_from_state(_item_state_field(item))
+                or _country_from_track(self._clean_track(item.get("track") or item.get("venue") or ""))
                 or ""
             ).lower(),
             extra={"raw": item},
@@ -1590,6 +1684,7 @@ class OddsProConnector:
                     _item_state_field(item) or (meeting.state if meeting else "") or ""
                 )
                 or (meeting.country if meeting else None)
+                or _country_from_track(track)
                 or ""
             ).lower(),
             race_name=str(item.get("raceName") or item.get("name") or ""),
