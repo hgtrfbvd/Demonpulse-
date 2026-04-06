@@ -28,6 +28,11 @@ _state: dict[str, Any] = {
     "total_races_discovered": 0,
     "total_domestic_races": 0,
     "total_international_filtered": 0,
+    # Merge-stage FormFav counters (full_sweep / data_engine)
+    "formfav_merge_called": 0,
+    "formfav_merge_matched": 0,
+    "formfav_merge_failed": 0,
+    # Sync-stage FormFav counters (formfav_sync)
     "total_formfav_eligible": 0,
     "total_formfav_called": 0,
     "total_formfav_success": 0,
@@ -45,6 +50,11 @@ _COUNTER_KEYS = (
     "total_races_discovered",
     "total_domestic_races",
     "total_international_filtered",
+    # Merge-stage
+    "formfav_merge_called",
+    "formfav_merge_matched",
+    "formfav_merge_failed",
+    # Sync-stage
     "total_formfav_eligible",
     "total_formfav_called",
     "total_formfav_success",
@@ -128,7 +138,7 @@ def record_formfav_eligible(race_uid: str) -> None:
 
 
 def record_formfav_called(race_uid: str) -> None:
-    """Called when a FormFav API call is issued for a race."""
+    """Called when a FormFav API call is issued for a race (sync stage)."""
     with _lock:
         _state["total_formfav_called"] += 1
         entry = _find_entry(race_uid)
@@ -137,7 +147,7 @@ def record_formfav_called(race_uid: str) -> None:
 
 
 def record_formfav_success(race_uid: str) -> None:
-    """Called when a FormFav API call succeeds and enrichment is stored."""
+    """Called when a FormFav API call succeeds and enrichment is stored (sync stage)."""
     with _lock:
         _state["total_formfav_success"] += 1
         entry = _find_entry(race_uid)
@@ -146,7 +156,7 @@ def record_formfav_success(race_uid: str) -> None:
 
 
 def record_formfav_failed(race_uid: str) -> None:
-    """Called when a FormFav API call fails."""
+    """Called when a FormFav API call fails (sync stage)."""
     with _lock:
         _state["total_formfav_failed"] += 1
         entry = _find_entry(race_uid)
@@ -154,13 +164,46 @@ def record_formfav_failed(race_uid: str) -> None:
             entry["status"] = "failed"
 
 
+# ---------------------------------------------------------------------------
+# MERGE-STAGE FormFav counters (full_sweep / data_engine)
+# ---------------------------------------------------------------------------
+
+def record_formfav_merge_called(track: str) -> None:
+    """Called for each FormFav race fetched during full_sweep merge stage."""
+    with _lock:
+        _state["formfav_merge_called"] += 1
+    log.info(f"[FORMFAV][MERGE] CALLED track={track!r}")
+
+
+def record_formfav_merge_matched(race_uid: str) -> None:
+    """Called when a FormFav race matches an OddsPro race during merge stage."""
+    with _lock:
+        _state["formfav_merge_matched"] += 1
+    log.info(f"[FORMFAV][MERGE] MATCHED race_uid={race_uid!r}")
+
+
+def record_formfav_merge_failed(race_uid: str) -> None:
+    """Called when a FormFav merge-stage race fails to be stored."""
+    with _lock:
+        _state["formfav_merge_failed"] += 1
+
+
 def get_state() -> dict[str, Any]:
     """Return a snapshot of the current pipeline state (thread-safe copy)."""
     with _lock:
-        return {
-            **_state,
-            "recent_races": [dict(e) for e in _recent_races],
-        }
+        snap = {**_state, "recent_races": [dict(e) for e in _recent_races]}
+    # Add structured stage views for easy consumption by the debug endpoint
+    snap["merge_stage"] = {
+        "called":  snap["formfav_merge_called"],
+        "matched": snap["formfav_merge_matched"],
+        "failed":  snap["formfav_merge_failed"],
+    }
+    snap["sync_stage"] = {
+        "called":  snap["total_formfav_called"],
+        "success": snap["total_formfav_success"],
+        "failed":  snap["total_formfav_failed"],
+    }
+    return snap
 
 
 def persist_snapshot() -> None:
@@ -177,6 +220,9 @@ def persist_snapshot() -> None:
         f" total_races_discovered={snapshot['total_races_discovered']}"
         f" total_domestic_races={snapshot['total_domestic_races']}"
         f" total_international_filtered={snapshot['total_international_filtered']}"
+        f" formfav_merge_called={snapshot['formfav_merge_called']}"
+        f" formfav_merge_matched={snapshot['formfav_merge_matched']}"
+        f" formfav_merge_failed={snapshot['formfav_merge_failed']}"
         f" total_formfav_eligible={snapshot['total_formfav_eligible']}"
         f" total_formfav_called={snapshot['total_formfav_called']}"
         f" total_formfav_success={snapshot['total_formfav_success']}"

@@ -611,6 +611,28 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     # ----------------------------------------------------------------
     merged_races = _merge_race_datasets(_oddspro_dicts, _formfav_raw)
 
+    # MERGE-STAGE FormFav tracking: record counters for all FormFav races
+    # fetched and for those that matched an OddsPro race.
+    if _pipeline_state is not None:
+        for _ff_race in _formfav_raw:
+            _ff_track = (_ff_race.get("track") or "").strip()
+            _pipeline_state.record_formfav_merge_called(_ff_track)
+        for _mr in merged_races:
+            if "formfav" in (_mr.get("_merge_sources") or []):
+                if "oddspro" in (_mr.get("_merge_sources") or []):
+                    _pipeline_state.record_formfav_merge_matched(
+                        _mr.get("race_uid") or _mr.get("_canonical_race_id") or ""
+                    )
+    else:
+        # Logging only (no pipeline_state available)
+        for _ff_race in _formfav_raw:
+            _ff_track = (_ff_race.get("track") or "").strip()
+            log.info(f"[FORMFAV][MERGE] CALLED track={_ff_track!r}")
+        for _mr in merged_races:
+            if "formfav" in (_mr.get("_merge_sources") or []) and "oddspro" in (_mr.get("_merge_sources") or []):
+                _mr_uid = _mr.get("race_uid") or _mr.get("_canonical_race_id") or ""
+                log.info(f"[FORMFAV][MERGE] MATCHED race_uid={_mr_uid!r}")
+
     # ----------------------------------------------------------------
     # STEPS 7-8 — BUILD FINAL BOARD + DOMESTIC FILTER (AFTER MERGE)
     # ----------------------------------------------------------------
@@ -1318,6 +1340,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             f"&race_code={mapped_race_code}&country={ff_country}"
             f" race_uid={race_uid}"
         )
+        log.info(f"[FORMFAV][SYNC] CALLED race_uid={race_uid}")
         if _pipeline_state is not None:
             _pipeline_state.record_formfav_called(race_uid)
 
@@ -1404,6 +1427,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" track={track!r} race_num={race_num}"
                 f" runners_enriched={race_runners_enriched}"
             )
+            log.info(f"[FORMFAV][SYNC] UPDATED race_uid={race_uid}")
             if _pipeline_state is not None:
                 _pipeline_state.record_formfav_success(race_uid)
 

@@ -1446,6 +1446,11 @@ CREATE TABLE IF NOT EXISTS formfav_debug_stats (
     total_races_discovered      INTEGER NOT NULL DEFAULT 0,
     total_domestic_races        INTEGER NOT NULL DEFAULT 0,
     total_international_filtered INTEGER NOT NULL DEFAULT 0,
+    -- Merge-stage FormFav counters (full_sweep / data_engine)
+    formfav_merge_called        INTEGER NOT NULL DEFAULT 0,
+    formfav_merge_matched       INTEGER NOT NULL DEFAULT 0,
+    formfav_merge_failed        INTEGER NOT NULL DEFAULT 0,
+    -- Sync-stage FormFav counters (formfav_sync)
     total_formfav_eligible      INTEGER NOT NULL DEFAULT 0,
     total_formfav_called        INTEGER NOT NULL DEFAULT 0,
     total_formfav_success       INTEGER NOT NULL DEFAULT 0,
