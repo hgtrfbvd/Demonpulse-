@@ -110,22 +110,26 @@
         if (!items.length) {
             el.boardRows.innerHTML = `
                 <tr>
-                    <td colspan="9" class="board-empty">No races available for this filter.</td>
+                    <td colspan="10" class="board-empty">No races available for this filter.</td>
                 </tr>
             `;
             return;
         }
 
-        el.boardRows.innerHTML = items.map(item => {
+        el.boardRows.innerHTML = items.map((item, idx) => {
             const code = normaliseCode(item.code);
             const signal = item.signal || "—";
             const confidence = item.confidence || "—";
-            const actionHref = item.race_uid
+            const liveHref = item.race_uid
                 ? `/live?race_uid=${encodeURIComponent(item.race_uid)}`
                 : "/live";
+            const raceHref = item.race_uid
+                ? `/race?race_uid=${encodeURIComponent(item.race_uid)}`
+                : "/race";
+            const detailId = `home-detail-${idx}`;
 
             return `
-                <tr>
+                <tr class="home-board-row" data-detail="${detailId}" style="cursor:pointer;" title="Click to expand timing detail">
                     <td><span class="code-badge ${codeClass(code)}">${code}</span></td>
                     <td>${item.track || "—"}</td>
                     <td>R${item.race_num || "—"}</td>
@@ -134,10 +138,42 @@
                     <td><span class="status-pill">${(item.status || "upcoming").toUpperCase()}</span></td>
                     <td><span class="signal-pill ${signalClass(signal)}">${signal}</span></td>
                     <td>${confidence}</td>
-                    <td><a class="dp-btn dp-btn-small" href="${actionHref}">Open Live</a></td>
+                    <td>
+                        <a class="dp-btn dp-btn-small" href="${liveHref}">Live</a>
+                        <a class="dp-btn dp-btn-small" href="${raceHref}" style="margin-left:4px;">Race View</a>
+                    </td>
+                    <td style="width:24px;text-align:center;color:var(--text-dim);font-size:12px;">▶</td>
+                </tr>
+                <tr class="home-detail-row" id="${detailId}" style="display:none;">
+                    <td colspan="10">
+                        <div class="home-detail-panel">
+                            <div class="home-detail-grid">
+                                <div class="home-detail-item"><span class="home-detail-key">race_uid</span><span class="home-detail-val">${item.race_uid || "—"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">source jump</span><span class="home-detail-val">${item.source_jump_time || item.jump_time || "—"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">parsed jump</span><span class="home-detail-val">${item.jump_time || "—"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">timezone</span><span class="home-detail-val">${item.timezone || "AEST"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">status</span><span class="home-detail-val">${item.status || "—"}</span></div>
+                                <div class="home-detail-item"><span class="home-detail-key">country</span><span class="home-detail-val">${item.country || "—"}</span></div>
+                            </div>
+                        </div>
+                    </td>
                 </tr>
             `;
         }).join("");
+
+        // bind expand/collapse
+        document.querySelectorAll(".home-board-row").forEach(row => {
+            row.addEventListener("click", (e) => {
+                if (e.target.closest("a")) return;
+                const detailId = row.dataset.detail;
+                const detail = document.getElementById(detailId);
+                const arrow = row.querySelector("td:last-child");
+                if (!detail) return;
+                const open = detail.style.display !== "none";
+                detail.style.display = open ? "none" : "table-row";
+                if (arrow) arrow.textContent = open ? "▶" : "▼";
+            });
+        });
     }
 
     function renderQuickFeed(items) {

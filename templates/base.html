@@ -34,6 +34,7 @@
                 <nav class="top-nav">
                     <a href="/home" class="top-nav-link {% if request.path in ['/', '/home'] %}active{% endif %}">Home</a>
                     <a href="/live" class="top-nav-link {% if request.path == '/live' %}active{% endif %}">Live</a>
+                    <a href="/race" class="top-nav-link {% if request.path == '/race' %}active{% endif %}">Race View</a>
                     <a href="/simulator" class="top-nav-link {% if request.path == '/simulator' %}active{% endif %}">Simulator</a>
                     <a href="/betting" class="top-nav-link {% if request.path == '/betting' %}active{% endif %}">Betting</a>
                     <a href="/reports" class="top-nav-link {% if request.path == '/reports' %}active{% endif %}">Reports</a>
@@ -55,9 +56,19 @@
                         <span class="status-chip-value" id="envBadge">—</span>
                     </div>
 
-                    <div class="status-chip">
-                        <span class="status-chip-label">SHADOW</span>
-                        <span class="status-chip-value" id="shadowStatus">—</span>
+                    <div class="status-chip" id="headerCountsChip" title="Greyhound / Horse / Harness">
+                        <span class="status-chip-label">GH/H/HR</span>
+                        <span class="status-chip-value" id="headerCounts">—</span>
+                    </div>
+
+                    <div class="status-chip" id="headerNextUpChip" title="Next race to jump">
+                        <span class="status-chip-label">NEXT</span>
+                        <span class="status-chip-value" id="headerNextUp">—</span>
+                    </div>
+
+                    <div class="status-chip" id="headerDataStatusChip" title="Data feed status">
+                        <span class="status-chip-label">DATA</span>
+                        <span class="status-chip-value" id="headerDataStatus">—</span>
                     </div>
                 </div>
             </div>
