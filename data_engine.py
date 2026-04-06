@@ -434,34 +434,35 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     # location=domestic filter at the API level so international_found should
     # always be 0, but we count explicitly here so any leakage is visible in
     # the logs rather than hidden behind "international excluded: 0 (API filter)".
-    _au_country_codes = {"au", "aus", "australia"}
-    _nz_country_codes = {"nz", "nzl", "new zealand", "new-zealand"}
     _domestic_races = 0
     _international_races = 0
     for m in meetings:
         country = (m.country or "").strip().lower()
         state = (m.state or "").strip().lower()
-        if country in _au_country_codes or country in _nz_country_codes:
+        if country in _AU_COUNTRY_CODES or country in _NZ_COUNTRY_CODES:
             _domestic_races += 1
-        elif not country:
-            # No country on the meeting record — check state for AU codes
-            _au_states = {
-                "vic", "nsw", "qld", "sa", "wa", "tas", "act", "nt",
-                "au", "aus", "australia",
-            }
-            _nz_codes = {"nz", "nzl", "new zealand", "new-zealand"}
-            if state in _au_states or state in _nz_codes:
-                _domestic_races += 1
-            else:
-                # Unknown — assume domestic since location=domestic was requested
-                _domestic_races += 1
-        else:
+        elif country:
+            # Explicit non-AU/NZ country → international
             _international_races += 1
             log.warning(
                 f"full_sweep: international meeting detected despite location=domestic "
                 f"filter — track={m.track!r} country={m.country!r} state={m.state!r}. "
                 f"Review OddsPro domestic filter or ODDSPRO_COUNTRY env var."
             )
+        elif state in _AU_STATES or state in _NZ_IDENTIFIERS:
+            # Inferred domestic via state
+            _domestic_races += 1
+        elif state:
+            # Unrecognised state — flag as potential international leak
+            _international_races += 1
+            log.warning(
+                f"full_sweep: unrecognised state on meeting (possible international leak) "
+                f"— track={m.track!r} country='' state={m.state!r}. "
+                f"Race(s) will be blocked by the domestic gate."
+            )
+        else:
+            # Both empty — assume domestic (location=domestic requested)
+            _domestic_races += 1
 
     log.info(
         f"full_sweep complete: {meetings_found} meetings found, {meetings_fetched} fetched, "
@@ -892,6 +893,14 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     """
     ff = _get_formfav()
     if not ff.is_enabled():
+        log.info(
+            "[FORMFAV] SKIPPED all: connector not enabled (FORMFAV_API_KEY not configured)"
+            " — no FormFav API calls will be made for this cycle"
+        )
+        # Persist snapshot so the debug endpoint reflects real state (counters from
+        # the current full_sweep run) even when FormFav is disabled.
+        if _pipeline_state is not None:
+            _pipeline_state.persist_snapshot()
         return {"ok": False, "reason": "formfav_not_enabled", "races_enriched": 0, "runners_enriched": 0}
 
     td = target_date or date.today().isoformat()
@@ -909,6 +918,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     races = get_active_races(td)
     if not races:
         log.info(f"[FORMFAV] SKIPPED all: no active races for {td}")
+        if _pipeline_state is not None:
+            _pipeline_state.persist_snapshot()
         return {"ok": True, "races_enriched": 0, "runners_enriched": 0, "date": td}
 
     log.info(
@@ -1203,19 +1214,59 @@ def _store_with_pipeline(race: Any) -> bool:
         race_uid = race_dict.get("race_uid") or "(no uid)"
 
         # Step 0 — Domestic failsafe (HARD GATE — no international race enters the DB)
-        _country = (race_dict.get("country") or "au").strip().lower()
-        if _country not in _AU_COUNTRY_CODES and _country not in _NZ_COUNTRY_CODES:
-            log.warning(
-                f"[ODDSPRO] EXCLUDED race_uid={race_uid}"
-                f" reason=non_domestic_guard country={_country!r}"
-            )
-            if _pipeline_state is not None:
-                _pipeline_state.record_race_excluded(race_uid, "non_domestic_guard")
-            return False
+        #
+        # Priority order for country resolution:
+        #   1. Explicit `country` field from the connector (authoritative if non-empty)
+        #   2. `state` field as secondary indicator — checked against known AU/NZ sets
+        #   3. Truly unknown (both empty) — allow through since location=domestic was
+        #      requested; assume domestic and let OddsPro's feed-level filter carry the
+        #      responsibility of excluding non-AU/NZ meetings.
+        _country = (race_dict.get("country") or "").strip().lower()
+        _state   = (race_dict.get("state") or "").strip().lower()
+
+        if _country:
+            # Explicit country present: must be AU or NZ; normalise to canonical code
+            if _country in _AU_COUNTRY_CODES:
+                _effective_country = "au"
+            elif _country in _NZ_COUNTRY_CODES:
+                _effective_country = "nz"
+            else:
+                log.warning(
+                    f"[ODDSPRO] EXCLUDED race_uid={race_uid}"
+                    f" reason=non_domestic_guard country={_country!r} state={_state!r}"
+                )
+                if _pipeline_state is not None:
+                    _pipeline_state.record_race_excluded(race_uid, "non_domestic_guard")
+                return False
+        elif _state:
+            # No explicit country — use state to classify
+            if _state in _AU_STATES:
+                _effective_country = "au"
+            elif _state in _NZ_IDENTIFIERS:
+                _effective_country = "nz"
+            else:
+                # Unrecognised state — this race came in via the domestic feed but
+                # its state does not match any known AU or NZ identifier.  Block it
+                # as a foreign track that slipped through OddsPro's location filter.
+                log.warning(
+                    f"[ODDSPRO] EXCLUDED race_uid={race_uid}"
+                    f" reason=non_domestic_guard_state country='' state={_state!r}"
+                )
+                if _pipeline_state is not None:
+                    _pipeline_state.record_race_excluded(race_uid, "non_domestic_guard_state")
+                return False
+        else:
+            # Both country and state are empty — assume domestic (location=domestic
+            # should exclude non-AU/NZ meetings at the OddsPro API level).
+            _effective_country = "au"
+
+        # Persist the resolved country so downstream (formfav_sync etc.) uses the
+        # confirmed domestic country rather than a blank or stale value.
+        race_dict["country"] = _effective_country
 
         log.info(
             f"[ODDSPRO] INCLUDED race_uid={race_uid}"
-            f" reason=domestic_source country={_country!r}"
+            f" reason=domestic_source country={_effective_country!r}"
         )
         if _pipeline_state is not None:
             _pipeline_state.record_race_included(race_uid)

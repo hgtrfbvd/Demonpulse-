@@ -389,16 +389,30 @@ def api_debug_formfav():
                 today = _date.today().isoformat()
                 all_races = get_races_for_date(today)
                 _au_nz_codes = {"au", "aus", "australia", "nz", "nzl", "new zealand", "new-zealand"}
-                _domestic = [r for r in all_races if (r.get("country") or "au").strip().lower() in _au_nz_codes]
+                _domestic = [r for r in all_races if (r.get("country") or "").strip().lower() in _au_nz_codes]
                 _intl = len(all_races) - len(_domestic)
                 ff_rows = get_formfav_enrichments_for_date(today)
                 _ff_success = len([r for r in ff_rows if r.get("raw_response")])
                 _ff_total = len(ff_rows)
+
+                # Apply the same eligibility checks as formfav_sync so
+                # total_formfav_eligible reflects the real eligible pool and is
+                # strictly ≤ total_domestic_races (not inflated to equal
+                # total_races_discovered as it was with the old formula).
+                _ff_valid_codes_live = {"HORSE", "HARNESS", "GREYHOUND", "GALLOPS"}
+                _eligible = [
+                    r for r in _domestic
+                    if (r.get("race_uid") or "") != ""
+                    and (r.get("code") or "").upper() in _ff_valid_codes_live
+                    and (r.get("track") or "") != ""
+                    and int(r.get("race_num") or 0) > 0
+                ]
+
                 live_counts = {
                     "total_races_discovered":       len(all_races),
                     "total_domestic_races":         len(_domestic),
                     "total_international_filtered": _intl,
-                    "total_formfav_eligible":       len(_domestic),
+                    "total_formfav_eligible":       len(_eligible),
                     "total_formfav_called":         _ff_total,
                     "total_formfav_success":        _ff_success,
                     "total_formfav_failed":         _ff_total - _ff_success,
@@ -409,6 +423,19 @@ def api_debug_formfav():
 
         def _final(key: str) -> int:
             return int(live_counts.get(key) or _val(key) or 0)
+
+        # Report whether the FormFav connector is enabled so operators can
+        # immediately see why total_formfav_called might be 0.
+        _formfav_enabled: bool = False
+        _formfav_disabled_reason: str | None = None
+        try:
+            from connectors.formfav_connector import FormFavConnector as _FFC
+            _ff_conn = _FFC()
+            _formfav_enabled = _ff_conn.is_enabled()
+            if not _formfav_enabled:
+                _formfav_disabled_reason = "FORMFAV_API_KEY not configured"
+        except Exception:
+            pass
 
         return jsonify({
             "ok": True,
@@ -424,6 +451,8 @@ def api_debug_formfav():
             "last_reset":                   mem_state.get("last_reset"),
             "snapshot_recorded_at":         db_row.get("recorded_at"),
             "counter_source":               counter_source,
+            "formfav_enabled":              _formfav_enabled,
+            "formfav_disabled_reason":      _formfav_disabled_reason,
         })
     except Exception as e:
         log.exception(f"/api/debug/formfav failed: {e}")

@@ -66,14 +66,34 @@ _NZ_STATE_IDS: frozenset[str] = frozenset({
     "wanganui", "whanganui", "bay of plenty", "gisborne", "westland",
 })
 
+# Australian state/territory identifiers that may appear in the `state`,
+# `location`, or `region` fields of OddsPro API responses.  Used to confirm
+# country='au' via state when the API does not return an explicit country.
+_AU_STATE_IDS: frozenset[str] = frozenset({
+    "vic", "nsw", "qld", "sa", "wa", "tas", "act", "nt",
+    "victoria", "new south wales", "queensland", "south australia",
+    "western australia", "tasmania", "australian capital territory",
+    "northern territory",
+    # Country-level strings sometimes placed in the state/location field
+    "au", "aus", "australia",
+})
+
 
 def _country_from_state(state: str) -> str:
     """
-    Return 'nz' when *state* matches a known NZ region/state identifier,
-    otherwise return '' (empty — caller should fall back to its own default).
+    Return 'au' when *state* matches a known Australian state/territory, 'nz'
+    when it matches a known NZ region, or '' (empty) when the value is not
+    recognised as either — callers must apply their own fallback.
+
+    This two-direction check is the primary defence against foreign tracks that
+    OddsPro returns without an explicit `country` field: if the state/location
+    value does not resolve to AU or NZ, the caller should NOT default to 'au'.
     """
-    if (state or "").strip().lower() in _NZ_STATE_IDS:
+    s = (state or "").strip().lower()
+    if s in _NZ_STATE_IDS:
         return "nz"
+    if s in _AU_STATE_IDS:
+        return "au"
     return ""
 
 
@@ -770,8 +790,8 @@ class OddsProConnector:
                         country=str(
                             item.get("country")
                             or _country_from_state(_item_state_field(item))
-                            or self.country
-                        ),
+                            or ""
+                        ).lower(),
                         extra={"raw": item},
                     )
                 )
@@ -823,8 +843,8 @@ class OddsProConnector:
                         country=str(
                             item.get("country")
                             or _country_from_state(_item_state_field(item))
-                            or self.country
-                        ),
+                            or ""
+                        ).lower(),
                         extra={"raw": item},
                     )
                 )
@@ -910,8 +930,8 @@ class OddsProConnector:
             country=str(
                 item.get("country")
                 or _country_from_state(_item_state_field(item))
-                or self.country
-            ),
+                or ""
+            ).lower(),
             extra={"raw": item},
         )
 
@@ -1570,8 +1590,7 @@ class OddsProConnector:
                     _item_state_field(item) or (meeting.state if meeting else "") or ""
                 )
                 or (meeting.country if meeting else None)
-                or self.country
-                or "au"
+                or ""
             ).lower(),
             race_name=str(item.get("raceName") or item.get("name") or ""),
             distance=str(item.get("distance") or ""),
