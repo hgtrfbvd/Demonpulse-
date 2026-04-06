@@ -99,7 +99,8 @@ NZ_TRACKS: frozenset[str] = frozenset({
     "invercargill-dogs",
     # Harness (NZ)
     "cambridge-harness", "addington", "forbury-park", "hutt-park",
-    "alexandra-park", "teretonga", "motukarara",
+    "alexandra-park", "teretonga",
+    "motukarara",  # Canterbury harness; previously missing from whitelist
 })
 
 # ---------------------------------------------------------------------------
