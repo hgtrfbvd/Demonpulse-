@@ -396,6 +396,40 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                 }
             log.error(f"full_sweep: failed for meeting {meeting.meeting_id}: {e}")
 
+    # Tally domestic vs international races from the parsed meetings to verify
+    # the domestic-only filter is working end-to-end.  OddsPro applies the
+    # location=domestic filter at the API level so international_found should
+    # always be 0, but we count explicitly here so any leakage is visible in
+    # the logs rather than hidden behind "international excluded: 0 (API filter)".
+    _au_country_codes = {"au", "aus", "australia"}
+    _nz_country_codes = {"nz", "nzl", "new zealand", "new-zealand"}
+    _domestic_races = 0
+    _international_races = 0
+    for m in meetings:
+        country = (m.country or "").strip().lower()
+        state = (m.state or "").strip().lower()
+        if country in _au_country_codes or country in _nz_country_codes:
+            _domestic_races += 1
+        elif not country:
+            # No country on the meeting record — check state for AU codes
+            _au_states = {
+                "vic", "nsw", "qld", "sa", "wa", "tas", "act", "nt",
+                "au", "aus", "australia",
+            }
+            _nz_codes = {"nz", "nzl", "new zealand", "new-zealand"}
+            if state in _au_states or state in _nz_codes:
+                _domestic_races += 1
+            else:
+                # Unknown — assume domestic since location=domestic was requested
+                _domestic_races += 1
+        else:
+            _international_races += 1
+            log.warning(
+                f"full_sweep: international meeting detected despite location=domestic "
+                f"filter — track={m.track!r} country={m.country!r} state={m.state!r}. "
+                f"Review OddsPro domestic filter or ODDSPRO_COUNTRY env var."
+            )
+
     log.info(
         f"full_sweep complete: {meetings_found} meetings found, {meetings_fetched} fetched, "
         f"ids_found={meeting_ids_found} ids_missing={meeting_ids_missing} "
@@ -406,13 +440,17 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     )
     log.info(
         f"LOCATION FILTER: domestic-only feed applied at OddsPro source "
-        f"(location=domestic) — races discovered: {races_found} "
-        f"races stored: {races_stored} international excluded: 0 (filtered at API source)"
+        f"(location=domestic) — meetings_domestic={_domestic_races} "
+        f"meetings_international_detected={_international_races} "
+        f"races_discovered={races_found} "
+        f"races_stored={races_stored} international_excluded={_international_races}"
     )
     # Mandatory pipeline validation output
     log.info(
         f"PIPELINE VALIDATION: date={today} "
         f"races_loaded={races_stored} "
+        f"races_domestic={_domestic_races} "
+        f"races_international_excluded={_international_races} "
         f"runners_inserted={runners_stored} "
         f"runners_skipped=0"
     )
@@ -433,9 +471,10 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "runners_stored": runners_stored,
         "races_blocked": races_blocked,
         "races_passed": races_stored - races_blocked,
-        # International races are excluded at the OddsPro API source via location=domestic.
-        # This field is always 0 because no international races enter the pipeline.
-        "international_excluded": 0,
+        # International meetings detected in the domestic-only pipeline.
+        # Should always be 0; non-zero means the OddsPro location=domestic
+        # filter is not being applied correctly or ODDSPRO_COUNTRY is wrong.
+        "international_excluded": _international_races,
         "discovery_failed": _discovery_failed,
         "discovery_diag": _discovery_diag,
         "first_detail_error": _first_detail_error,
@@ -844,7 +883,10 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     runners_enriched = 0
     requests_made = 0
     errors = 0
-    skipped = 0
+    # Separate counters per skip reason so the summary is unambiguous.
+    skipped_international = 0   # country is not AU or NZ
+    skipped_missing_fields = 0  # race_uid / track / race_num absent
+    skipped_invalid_code = 0    # code is not HORSE, HARNESS, GREYHOUND
     fetched_at = datetime.now(timezone.utc).isoformat()
 
     for race in races:
@@ -857,9 +899,10 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         if not _is_au_nz_race(race):
             country_val = race.get("country") or race.get("state") or "unknown"
             log.info(
-                f"[FORMFAV] SKIPPED {_log_id}: not AU/NZ (country={country_val!r})"
+                f"[FORMFAV] SKIPPED {_log_id}: international race excluded"
+                f" (country={country_val!r})"
             )
-            skipped += 1
+            skipped_international += 1
             continue
 
         # --- Validate required fields ---
@@ -867,7 +910,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             log.info(
                 f"[FORMFAV] SKIPPED {_log_id}: missing race_uid"
             )
-            skipped += 1
+            skipped_missing_fields += 1
             continue
 
         # Map OddsPro canonical code to FormFav code.
@@ -883,7 +926,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f"[FORMFAV] SKIPPED {race_uid}: invalid/unrecognized code {raw_code!r}"
                 f" (expected HORSE, HARNESS or GREYHOUND)"
             )
-            skipped += 1
+            skipped_invalid_code += 1
             continue
 
         track = race.get("track") or ""
@@ -894,7 +937,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             log.info(
                 f"[FORMFAV] SKIPPED {race_uid}: missing track={track!r} or race_num={race_num}"
             )
-            skipped += 1
+            skipped_missing_fields += 1
             continue
 
         # Determine the correct country to send to FormFav (au or nz).
@@ -1009,34 +1052,44 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             errors += 1
             continue
 
+    _total_skipped = skipped_international + skipped_missing_fields + skipped_invalid_code
+    _au_nz_eligible = len(races) - skipped_international
+
     log.info(
         f"[FORMFAV] SYNC COMPLETE date={td}"
-        f" total_races={len(races)} au_nz_eligible={len(races) - skipped}"
+        f" total_races={len(races)}"
+        f" au_nz_eligible={_au_nz_eligible}"
+        f" international_excluded={skipped_international}"
         f" requests_made={requests_made}"
         f" races_enriched={races_enriched} runners_enriched={runners_enriched}"
-        f" errors={errors} skipped={skipped}"
+        f" errors={errors}"
+        f" skipped_missing_fields={skipped_missing_fields}"
+        f" skipped_invalid_code={skipped_invalid_code}"
     )
     # Mandatory pipeline validation output
     log.info(
         f"PIPELINE VALIDATION: date={td} "
-        f"formfav_au_nz_eligible={len(races) - skipped} "
+        f"formfav_total_active={len(races)} "
+        f"formfav_au_nz_eligible={_au_nz_eligible} "
+        f"formfav_international_excluded={skipped_international} "
         f"formfav_requests_made={requests_made} "
         f"formfav_races_enriched={races_enriched} "
         f"formfav_runners_enriched={runners_enriched} "
-        f"formfav_skipped={skipped}"
+        f"formfav_skipped_missing_fields={skipped_missing_fields} "
+        f"formfav_skipped_invalid_code={skipped_invalid_code}"
     )
     return {
         "ok": True,
         "date": td,
-        "au_nz_eligible": len(races) - skipped,
+        "au_nz_eligible": _au_nz_eligible,
         "requests_made": requests_made,
         "races_enriched": races_enriched,
         "runners_enriched": runners_enriched,
         "errors": errors,
-        # kept for backward compat: skipped_international now counts ALL skipped
-        # races (non-AU/NZ, missing fields, invalid codes), not just international ones
-        "skipped_international": skipped,
-        "skipped": skipped,
+        "skipped_international": skipped_international,
+        "skipped_missing_fields": skipped_missing_fields,
+        "skipped_invalid_code": skipped_invalid_code,
+        "skipped": _total_skipped,
         "source": "formfav",
     }
 

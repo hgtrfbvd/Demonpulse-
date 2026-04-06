@@ -313,12 +313,17 @@ class OddsProConnector:
     # PRIMARY ENDPOINTS
     # -----------------------------------------------------------------------
 
-    def fetch_meetings_discovery(self) -> list[dict[str, Any]]:
+    def fetch_meetings_discovery(self, location: str | None = "domestic") -> list[dict[str, Any]]:
         """
         GET /api/meetings
         Simple discovery endpoint — returns all meetings with their race IDs.
         This is the first step in the discovery flow and does not require
         date or type filters.
+
+        Parameters:
+          location - location filter passed to the API (default: "domestic").
+                     Keeps the discovery result set consistent with the
+                     domestic-only pipeline. Pass None to fetch all locations.
 
         Response shape: {"data": [...], "meta": {...}} or bare list.
         Returns the raw list of meeting dicts from the response.
@@ -330,6 +335,8 @@ class OddsProConnector:
         """
         url_requested = f"{self.base_url}/api/meetings"
         params: dict[str, Any] = {"country": self.country}
+        if location:
+            params["location"] = location
 
         self._last_discovery_diag = {
             "final_url": url_requested,
