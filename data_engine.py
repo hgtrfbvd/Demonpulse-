@@ -154,7 +154,8 @@ def _normalize_race_code(code: str) -> str:
         return "HARNESS"
     if key in ("GREYHOUND", "DOGS", "G"):
         return "GREYHOUND"
-    return key or "HORSE"
+    # Unrecognised code — default to HORSE (thoroughbred) as the safest fallback
+    return "HORSE"
 
 
 def _build_canonical_race_id(
@@ -278,6 +279,12 @@ def _merge_race_datasets(
                 if k.startswith("_"):
                     continue
                 existing_val = existing.get(k)
+                # OddsPro priority: only fill in FormFav value when OddsPro value is
+                # absent (None) or empty-string ("").  Both represent "no data" for
+                # structured API fields — empty string is treated the same as None
+                # because OddsPro omits a field by leaving it blank, not by setting it
+                # to a non-empty string.  This matches the Step 6 rule: "Never
+                # overwrite valid data with empty/null".
                 if (existing_val is None or existing_val == "") and (v is not None and v != ""):
                     existing[k] = v
             # Always capture FormFav runners for enrichment storage
@@ -673,6 +680,11 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                         number = rr.get("number")
                         if number is None:
                             number = rr.get("box_num")
+                            if number is not None:
+                                log.debug(
+                                    f"full_sweep: FF runner {rr.get('name')!r} in race"
+                                    f" {race_uid} — using box_num={number} (number field absent)"
+                                )
                         if number is not None:
                             upsert_formfav_runner_enrichment({
                                 "race_uid": race_uid,

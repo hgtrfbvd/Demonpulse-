@@ -44,94 +44,62 @@ def normalize_track(track: str) -> str:
 # Values: canonical slug that MUST exist in AU_TRACKS or NZ_TRACKS
 # ---------------------------------------------------------------------------
 TRACK_ALIASES: dict[str, str] = {
-    # Mt Druitt (NSW greyhound)
-    "mount-druitt":       "mt-druitt",
-    "mt-druitt":          "mt-druitt",
-    # The Meadows (VIC greyhound)
-    "the-meadows":        "the-meadows",
-    "meadows":            "the-meadows",
-    # Wentworth Park (NSW greyhound)
-    "wentworth-park":     "wentworth-park",
-    "wentworthpark":      "wentworth-park",
-    # Albion Park (QLD harness / greyhound)
-    "albion-park":        "albion-park",
-    "albion-park-raceway": "albion-park",
-    # Sandown (VIC thoroughbred / greyhound)
-    "sandown":            "sandown",
-    "sandown-racecourse": "sandown",
-    "sandown-park":       "sandown-park",
-    # Gold Coast (QLD thoroughbred / greyhound)
-    "gold-coast":         "gold-coast",
-    "gold-coast-turf":    "gold-coast",
-    # Flemington
-    "flemington":         "flemington",
-    "flemington-racecourse": "flemington",
-    # Eagle Farm
-    "eagle-farm":         "eagle-farm",
-    "eagle-farm-racecourse": "eagle-farm",
-    # Moonee Valley
-    "moonee-valley":      "moonee-valley",
-    "moonee-valley-racecourse": "moonee-valley",
-    # Rosehill
-    "rosehill":           "rosehill",
-    "rosehill-gardens":   "rosehill",
-    # Randwick
-    "randwick":           "randwick",
-    "royal-randwick":     "randwick",
-    # Hawkesbury
-    "hawkesbury":         "hawkesbury",
-    "hawkesbury-racecourse": "hawkesbury",
-    # Canterbury
-    "canterbury":         "canterbury",
-    "canterbury-park":    "canterbury",
-    # Caulfield
-    "caulfield":          "caulfield",
-    "caulfield-racecourse": "caulfield",
-    # Morphettville (SA)
-    "morphettville":      "morphettville",
-    "morphettville-parks": "morphettville",
-    # Ascot (WA)
-    "ascot":              "ascot",
-    "ascot-racecourse":   "ascot",
-    # Ellerslie (NZ)
-    "ellerslie":          "ellerslie",
-    "ellerslie-racecourse": "ellerslie",
-    # Te Rapa (NZ)
-    "te-rapa":            "te-rapa",
-    "terapa":             "te-rapa",
-    # Addington (NZ harness)
-    "addington":          "addington",
-    "addington-raceway":  "addington",
-    # Whanganui / Wanganui (NZ)
-    "wanganui":           "whanganui",
-    "whanganui":          "whanganui",
-    # Palmerston North (NZ)
-    "palmerston-north":   "palmerston-north",
-    "palmy":              "palmerston-north",
-    # Gloucester Park (WA harness)
-    "gloucester-park":    "gloucester-park",
-    "gloucesterpark":     "gloucester-park",
-    # Menangle (NSW harness)
-    "menangle":           "menangle",
-    "tabcorp-park-menangle": "tabcorp-park-menangle",
-    # Angle Park (SA greyhound)
-    "angle-park":         "angle-park",
-    "anglepark":          "angle-park",
-    # Cannington (WA greyhound)
-    "cannington":         "cannington",
-    "cannington-raceway": "cannington",
-    # Dapto (NSW greyhound)
-    "dapto":              "dapto",
-    "dapto-dogs":         "dapto",
-    # Richmond (VIC greyhound)
-    "richmond":           "richmond",
-    "richmond-raceway":   "richmond",
-    # Wagga Wagga
-    "wagga-wagga":        "wagga-wagga",
-    "wagga":              "wagga-wagga",
-    # Albury
-    "albury":             "albury",
-    "albury-racecourse":  "albury",
+    # Mt Druitt (NSW greyhound): "mount druitt" / "mt druitt" → "mt-druitt"
+    "mount-druitt":              "mt-druitt",
+    # The Meadows (VIC greyhound): "meadows" → "the-meadows"
+    "meadows":                   "the-meadows",
+    # Wentworth Park (NSW greyhound): no-space variant
+    "wentworthpark":             "wentworth-park",
+    # Albion Park: API may return "Albion Park Raceway"
+    "albion-park-raceway":       "albion-park",
+    # Sandown (VIC thoroughbred): "Sandown Racecourse" → "sandown"
+    "sandown-racecourse":        "sandown",
+    # Gold Coast: "Gold Coast Turf" → "gold-coast"
+    "gold-coast-turf":           "gold-coast",
+    # Flemington: long form
+    "flemington-racecourse":     "flemington",
+    # Eagle Farm: long form
+    "eagle-farm-racecourse":     "eagle-farm",
+    # Moonee Valley: long form
+    "moonee-valley-racecourse":  "moonee-valley",
+    # Rosehill: "Rosehill Gardens" → "rosehill"
+    "rosehill-gardens":          "rosehill",
+    # Randwick: "Royal Randwick" → "randwick"
+    "royal-randwick":            "randwick",
+    # Hawkesbury: long form
+    "hawkesbury-racecourse":     "hawkesbury",
+    # Canterbury: "Canterbury Park" → "canterbury"
+    "canterbury-park":           "canterbury",
+    # Caulfield: long form
+    "caulfield-racecourse":      "caulfield",
+    # Morphettville: "Morphettville Parks" → "morphettville"
+    "morphettville-parks":       "morphettville",
+    # Ascot (WA): long form
+    "ascot-racecourse":          "ascot",
+    # Ellerslie (NZ): long form
+    "ellerslie-racecourse":      "ellerslie",
+    # Te Rapa (NZ): no-hyphen variant
+    "terapa":                    "te-rapa",
+    # Addington (NZ harness): "Addington Raceway" → "addington"
+    "addington-raceway":         "addington",
+    # Whanganui / Wanganui (NZ): both spellings resolve to canonical "whanganui"
+    "wanganui":                  "whanganui",
+    # Palmerston North (NZ): common abbreviation
+    "palmy":                     "palmerston-north",
+    # Gloucester Park (WA harness): no-space variant
+    "gloucesterpark":            "gloucester-park",
+    # Angle Park (SA greyhound): no-hyphen variant
+    "anglepark":                 "angle-park",
+    # Cannington (WA greyhound): "Cannington Raceway" → "cannington"
+    "cannington-raceway":        "cannington",
+    # Dapto (NSW greyhound): "Dapto Dogs" → "dapto"
+    "dapto-dogs":                "dapto",
+    # Richmond (VIC greyhound): "Richmond Raceway" → "richmond"
+    "richmond-raceway":          "richmond",
+    # Wagga Wagga: short form
+    "wagga":                     "wagga-wagga",
+    # Albury: long form
+    "albury-racecourse":         "albury",
 }
 
 
