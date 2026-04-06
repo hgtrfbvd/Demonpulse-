@@ -4,29 +4,43 @@ core/domestic_tracks.py
 Authoritative track-based whitelist for AU + NZ domestic racing venues.
 
 This module provides:
-  1. Track-based whitelists (AU_TRACKS, NZ_TRACKS, DOMESTIC_TRACKS) used as a
-     fallback when OddsPro location fields are absent.
-  2. State/region identifier sets (AU_STATE_IDS, NZ_STATE_IDS) for country
-     resolution from OddsPro country/state/region API fields.
+  1. Race-code-specific track whitelists (HORSE_AU_TRACKS, HORSE_NZ_TRACKS,
+     GREYHOUND_AU_TRACKS, GREYHOUND_NZ_TRACKS, HARNESS_AU_TRACKS,
+     HARNESS_NZ_TRACKS) — the primary domestic classification mechanism.
+  2. Convenience union sets (AU_TRACKS, NZ_TRACKS, DOMESTIC_TRACKS) retained
+     for backward-compatibility with existing callers.
+  3. State/region identifier sets (AU_STATE_IDS, NZ_STATE_IDS) kept for any
+     legacy callers; they are NOT used in domestic classification logic.
 
-Classification priority (enforced in connectors and data_engine):
-  TIER 1 — Explicit country field from OddsPro API ('au', 'nz', 'gb', etc.)
-  TIER 2 — State/region field from OddsPro API (resolved via AU_STATE_IDS / NZ_STATE_IDS)
-  TIER 3 — Track name whitelist (AU_TRACKS / NZ_TRACKS) — used ONLY when
-            BOTH country and state fields are absent/empty.
+Classification (enforced in data_engine):
+  Country is determined SOLELY by track membership in the race-code-specific
+  sets.  No API country/state fields are consulted.
 
-If all three tiers fail → race is classified UNKNOWN and excluded.
+  IF code == HORSE:     check HORSE_AU_TRACKS / HORSE_NZ_TRACKS
+  IF code == GREYHOUND: check GREYHOUND_AU_TRACKS / GREYHOUND_NZ_TRACKS
+  IF code == HARNESS:   check HARNESS_AU_TRACKS / HARNESS_NZ_TRACKS
+
+  Not found in the correct set → EXCLUDE (not domestic).
+
+Primary entry point:
+  classify_track_by_code(track, race_code)
+      → 'au' | 'nz' | None
 
 Structure:
-  AU_STATE_IDS    - frozenset of normalised AU state/territory identifiers
-  NZ_STATE_IDS    - frozenset of normalised NZ region/country identifiers
-  AU_TRACKS       - frozenset of all known Australian venue slugs
-  NZ_TRACKS       - frozenset of all known New Zealand venue slugs
-  DOMESTIC_TRACKS - union of AU_TRACKS | NZ_TRACKS (the gate set)
-  TRACK_ALIASES   - dict mapping track name variants to canonical slugs
+  HORSE_AU_TRACKS      - Australian thoroughbred venues
+  HORSE_NZ_TRACKS      - New Zealand thoroughbred venues
+  GREYHOUND_AU_TRACKS  - Australian greyhound venues
+  GREYHOUND_NZ_TRACKS  - New Zealand greyhound venues
+  HARNESS_AU_TRACKS    - Australian harness venues
+  HARNESS_NZ_TRACKS    - New Zealand harness venues
+  AU_TRACKS            - union of all AU code-specific sets (compat)
+  NZ_TRACKS            - union of all NZ code-specific sets (compat)
+  DOMESTIC_TRACKS      - AU_TRACKS | NZ_TRACKS (compat gate set)
+  TRACK_ALIASES        - dict mapping track name variants to canonical slugs
 
-  normalize_track(track)     - canonical normalisation for lookup
-  apply_track_alias(track)   - normalise then resolve via TRACK_ALIASES
+  normalize_track(track)                  - canonical normalisation for lookup
+  apply_track_alias(track)                - normalise then resolve via TRACK_ALIASES
+  classify_track_by_code(track, code)     - primary classification function
 """
 
 import re
@@ -187,6 +201,52 @@ TRACK_ALIASES: dict[str, str] = {
     "alexandra-park-raceway":    "alexandra-park",
     # Rangiora (NZ): long form
     "rangiora-raceway":          "rangiora",
+    # Belmont (WA thoroughbred): short form → "belmont-park"
+    "belmont":                   "belmont-park",
+    # Wanganui / Whanganui (NZ): also map whanganui back as identity
+    # (primary alias wanganui → whanganui already above)
+    # Trentham (NZ thoroughbred): long form
+    "trentham-racecourse":       "trentham",
+    # Oamaru (NZ thoroughbred): no common variants; listed for explicitness
+    # Wingatui (NZ thoroughbred): Dunedin venue, no common variants
+    # Warrnambool (VIC thoroughbred): long form
+    "warrnambool-racecourse":    "warrnambool",
+    # Kensington (WA thoroughbred): sometimes listed as "Kensington Park"
+    "kensington-park":           "kensington",
+    # Shepparton (VIC greyhound / harness): no-hyphen variant
+    "shepparton-raceway":        "shepparton",
+    # Warragul (VIC greyhound): "Warragul Greyhounds" → "warragul"
+    "warragul-greyhounds":       "warragul",
+    # Murray Bridge (SA greyhound): "Murray Bridge Greyhound" → "murray-bridge"
+    "murray-bridge-greyhound":   "murray-bridge",
+    # Mandurah (WA greyhound): "Mandurah Greyhound" → "mandurah"
+    "mandurah-greyhound":        "mandurah",
+    # Casino (NSW greyhound): "Casino Greyhounds" → "casino"
+    "casino-greyhound":          "casino",
+    # Cambridge (NZ harness/greyhound): "Cambridge Raceway" → "cambridge"
+    "cambridge-raceway":         "cambridge",
+    # Kilmore (VIC harness): "Kilmore Raceway" → "kilmore"
+    "kilmore-raceway":           "kilmore",
+    # Redcliffe (QLD harness): "Redcliffe Paceway" → "redcliffe"
+    "redcliffe-paceway":         "redcliffe",
+    # Marburg (QLD harness): "Marburg Paceway" → "marburg"
+    "marburg-paceway":           "marburg",
+    # Port Pirie (SA harness): "Port Pirie Raceway" → "port-pirie"
+    "port-pirie-raceway":        "port-pirie",
+    # Methven (NZ harness): "Methven Raceway" → "methven"
+    "methven-raceway":           "methven",
+    # Manawatu (NZ harness): "Manawatu Raceway" → "manawatu"
+    "manawatu-raceway":          "manawatu",
+    # Invercargill (NZ harness): "Invercargill Raceway" → "invercargill"
+    "invercargill-raceway":      "invercargill",
+    # Forbury Park (NZ harness): "Forbury Park Raceway" → "forbury-park"
+    "forbury-park-raceway":      "forbury-park",
+    # Hobart (TAS): "Hobart Racecourse" → "hobart"
+    "hobart-racecourse":         "hobart",
+    # Menangle (NSW harness): "Tabcorp Park Menangle" → "menangle"
+    "tabcorp-park-menangle":     "menangle",
+    # Melton (VIC harness): "Tabcorp Park Melton" → "melton"
+    "tabcorp-park-melton":       "melton",
 }
 
 
@@ -202,7 +262,145 @@ def apply_track_alias(track: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# RACE-CODE-SPECIFIC HARDCODED TRACK SETS
+# ---------------------------------------------------------------------------
+# These are the PRIMARY classification sets.  Country is determined SOLELY
+# by track membership in the appropriate code-specific set — no API country
+# or state fields are consulted.
+#
+# Track names are stored as normalised slugs (lowercase, spaces → hyphens).
+# All lookup must go through apply_track_alias() first so that aliases
+# (e.g. "belmont" → "belmont-park", "wanganui" → "whanganui") are resolved
+# before the membership check.
+# ---------------------------------------------------------------------------
+
+#: Australian thoroughbred venues.
+HORSE_AU_TRACKS: frozenset[str] = frozenset({
+    # NSW
+    "randwick", "rosehill", "canterbury", "warwick-farm", "kensington",
+    "newcastle", "wyong", "gosford", "kembla-grange", "hawkesbury",
+    # VIC
+    "flemington", "caulfield", "moonee-valley", "sandown", "mornington",
+    "ballarat", "bendigo", "geelong", "sale", "warrnambool", "traralgon",
+    # QLD
+    "eagle-farm", "doomben", "sunshine-coast", "gold-coast",
+    # SA
+    "morphettville", "oakbank", "gawler", "port-lincoln",
+    # WA
+    "ascot", "belmont-park", "pinjarra", "bunbury", "geraldton",
+    # TAS
+    "launceston", "hobart", "devonport",
+})
+
+#: New Zealand thoroughbred venues.
+HORSE_NZ_TRACKS: frozenset[str] = frozenset({
+    "ellerslie", "te-rapa", "pukekohe", "taupo", "tauranga", "ruakaka",
+    "new-plymouth", "whanganui", "woodville", "otaki", "trentham",
+    "riccarton", "ashburton", "timaru", "oamaru", "wingatui", "riverton",
+})
+
+#: Australian greyhound venues.
+GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
+    # VIC
+    "the-meadows", "sandown-park", "sale", "ballarat", "bendigo", "geelong",
+    "traralgon", "shepparton", "warragul",
+    # SA
+    "angle-park", "gawler", "murray-bridge",
+    # VIC/NSW
+    "richmond", "wentworth-park", "dapto",
+    # NSW
+    "casino", "lismore", "dubbo",
+    # TAS
+    "hobart", "launceston", "devonport",
+    # WA
+    "cannington", "mandurah", "northam",
+})
+
+#: New Zealand greyhound venues.
+GREYHOUND_NZ_TRACKS: frozenset[str] = frozenset({
+    "addington", "whanganui", "manukau", "cambridge",
+})
+
+#: Australian harness venues.
+HARNESS_AU_TRACKS: frozenset[str] = frozenset({
+    # NSW
+    "menangle", "menangle-park", "tabcorp-park-menangle", "newcastle", "bathurst", "wagga-wagga",
+    # VIC
+    "melton", "tabcorp-park-melton", "ballarat", "bendigo", "kilmore", "shepparton", "geelong",
+    # WA
+    "gloucester-park", "pinjarra", "bunbury",
+    # QLD
+    "albion-park", "redcliffe", "marburg",
+    # SA
+    "angle-park", "port-pirie",
+    # TAS
+    "launceston", "hobart", "devonport",
+})
+
+#: New Zealand harness venues.
+HARNESS_NZ_TRACKS: frozenset[str] = frozenset({
+    "addington", "ashburton", "rangiora", "methven",
+    "alexandra-park", "cambridge", "manawatu",
+    "motukarara", "forbury-park", "invercargill",
+})
+
+# ---------------------------------------------------------------------------
+# CLASSIFY BY CODE — primary entry point for domestic classification
+# ---------------------------------------------------------------------------
+
+# Internal map from race code to (AU set, NZ set) for O(1) lookup.
+_CODE_TO_SETS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "HORSE":     (HORSE_AU_TRACKS,     HORSE_NZ_TRACKS),
+    "GREYHOUND": (GREYHOUND_AU_TRACKS, GREYHOUND_NZ_TRACKS),
+    "HARNESS":   (HARNESS_AU_TRACKS,   HARNESS_NZ_TRACKS),
+}
+
+
+def classify_track_by_code(track: str, race_code: str) -> str | None:
+    """
+    Classify a track as domestic AU/NZ using only the hardcoded race-code-
+    specific sets.  No API country or state fields are consulted.
+
+    Parameters
+    ----------
+    track:
+        Raw track name (mixed-case, may have spaces).  Normalised internally
+        via apply_track_alias() before lookup.
+    race_code:
+        OddsPro canonical race code: 'HORSE', 'GREYHOUND', or 'HARNESS'.
+        'GALLOPS' is accepted as a legacy alias for 'HORSE'.
+
+    Returns
+    -------
+    'au'   — track found in the AU set for the given race code
+    'nz'   — track found in the NZ set for the given race code
+    None   — track NOT found in either set (exclude; not domestic)
+    """
+    code = (race_code or "").upper()
+    if code == "GALLOPS":
+        code = "HORSE"
+
+    sets = _CODE_TO_SETS.get(code)
+    if sets is None:
+        # Unknown race code — cannot classify
+        return None
+
+    slug = apply_track_alias(track)
+    au_set, nz_set = sets
+    if slug in au_set:
+        return "au"
+    if slug in nz_set:
+        return "nz"
+    return None
+
+
+
+# ---------------------------------------------------------------------------
 # AUSTRALIAN TRACKS (all codes: thoroughbred, harness, greyhound)
+# ---------------------------------------------------------------------------
+# Backward-compatibility union — union of all AU code-specific sets plus
+# additional historical entries.  New classification code should use
+# classify_track_by_code() instead of this set directly.
 # ---------------------------------------------------------------------------
 AU_TRACKS: frozenset[str] = frozenset({
     # NSW thoroughbred
@@ -228,11 +426,15 @@ AU_TRACKS: frozenset[str] = frozenset({
     "ascot", "belmont-park", "bunbury", "pinjarra", "northam",
     "kalgoorlie", "geraldton", "albany", "esperance",
     # TAS thoroughbred
-    "elwick", "mowbray", "devonport", "launceston",
+    "elwick", "mowbray", "devonport", "launceston", "hobart",
     # ACT thoroughbred
     "thoroughbred-park",
     # NT thoroughbred
     "darwin", "alice-springs",
+    # WA thoroughbred — additional
+    "kensington",
+    # VIC thoroughbred — additional
+    "warrnambool",
     # Greyhound (AU)
     "angle-park", "albion-park-greyhound", "albion-park", "cannington",
     "dapto", "sandown-park", "the-meadows", "temora", "wentworth-park",
@@ -242,6 +444,8 @@ AU_TRACKS: frozenset[str] = frozenset({
     "bundaberg-greyhound", "rockhampton-greyhound", "mackay-greyhound",
     "cairns-greyhound", "hobart-greyhound", "launceston-greyhound",
     "alice-springs-greyhound",
+    # Greyhound (AU) — additional
+    "shepparton", "warragul", "murray-bridge", "casino", "mandurah",
     # Harness (AU)
     "albion-park-harness", "menangle", "penrith", "bankstown",
     "newcastle-harness", "tabcorp-park-menangle", "gloucester-park",
@@ -256,6 +460,8 @@ AU_TRACKS: frozenset[str] = frozenset({
     "tabcorp-park-melton",
     "pinjarra-harness",
     "bunbury-harness",
+    # Harness (AU) — additional
+    "kilmore", "redcliffe", "marburg", "port-pirie",
 })
 
 # ---------------------------------------------------------------------------
@@ -281,12 +487,24 @@ NZ_TRACKS: frozenset[str] = frozenset({
     # Additional NZ harness venues
     "rangiora", "feilding-harness", "ashburton-harness",
     "invercargill-harness", "gore-harness",
+    # NZ thoroughbred — additional
+    "trentham", "oamaru", "wingatui", "riverton",
+    # NZ harness — additional
+    "methven", "manawatu", "invercargill",
 })
 
 # ---------------------------------------------------------------------------
 # MASTER WHITELIST — union of all domestic AU + NZ venues
 # ---------------------------------------------------------------------------
-DOMESTIC_TRACKS: frozenset[str] = AU_TRACKS | NZ_TRACKS
+# Includes all code-specific sets plus legacy AU_TRACKS / NZ_TRACKS entries.
+# New classification code should use classify_track_by_code() instead.
+# ---------------------------------------------------------------------------
+DOMESTIC_TRACKS: frozenset[str] = (
+    AU_TRACKS | NZ_TRACKS
+    | HORSE_AU_TRACKS | HORSE_NZ_TRACKS
+    | GREYHOUND_AU_TRACKS | GREYHOUND_NZ_TRACKS
+    | HARNESS_AU_TRACKS | HARNESS_NZ_TRACKS
+)
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ data_engine.py - DemonPulse Data Engine
 =========================================
 10-step pipeline architecture: both OddsPro and FormFav are fetched as
 independent full datasets, merged by canonical race_id, and classified
-using OddsPro location metadata AFTER the merge.
+using hardcoded race-code-specific track whitelists AFTER the merge.
 
 Core functions:
   full_sweep()          - 10-step pipeline: fetch OddsPro + FormFav → normalize
@@ -19,16 +19,16 @@ Core functions:
 Architecture rules enforced here:
   - full_sweep fetches ALL races from BOTH sources before any filtering
   - OddsPro = base layer; FormFav = enrichment (Steps 5-6 merge priority)
-  - Domestic classification (Step 8) uses 3-tier resolution:
-      TIER 1 — OddsPro explicit country field ('au'/'nz' → domestic)
-      TIER 2 — OddsPro state/location/region field (AU_STATE_IDS / NZ_STATE_IDS)
-      TIER 3 — Track name whitelist (DOMESTIC_TRACKS) — fallback only
-      Any race that does not resolve to AU or NZ is EXCLUDED.
-  - CODE_GATED_TRACKS applied for race_code-aware disambiguation (Tier 3)
+  - Domestic classification (Step 8) uses classify_track_by_code():
+      IF code == HORSE:     check HORSE_AU_TRACKS / HORSE_NZ_TRACKS
+      IF code == GREYHOUND: check GREYHOUND_AU_TRACKS / GREYHOUND_NZ_TRACKS
+      IF code == HARNESS:   check HARNESS_AU_TRACKS / HARNESS_NZ_TRACKS
+      Country is determined SOLELY from set membership — NO API fields.
+      Any race not found in the correct set is EXCLUDED.
   - Domestic filter applied ONLY after the full merged dataset is built
   - EXCLUDED races are NEVER written to any database table (no upsert, no touch)
   - _store_with_pipeline() enforces a hard domestic gate before any DB write
-  - FormFav processes all active races (no AU/NZ pre-filter in formfav_sync)
+  - FormFav called ONLY when classify_track_by_code() returns a country
   - FormFav persistent data stored in separate enrichment tables
   - FormFav provisional overlays stored in-memory (near-jump only)
   - NTJ calculated from stored jump_time (race_status.compute_ntj)
@@ -49,6 +49,7 @@ from core.domestic_tracks import (
     CODE_GATED_TRACKS, DOMESTIC_COUNTRY_CODES, DOMESTIC_TRACKS,
     NZ_COUNTRY_CODES, NZ_STATE_IDS, NZ_TRACKS,
     normalize_track, apply_track_alias,
+    classify_track_by_code,
     resolve_formfav_track,
 )
 
@@ -637,72 +638,24 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         _track = (race_dict.get("track") or "").strip()
         track_key = apply_track_alias(_track)
 
-        # Step 8 — DOMESTIC CLASSIFICATION (3-tier)
-        # TIER 1: OddsPro explicit country field (set by connector from API response)
-        # TIER 2: State/location/region field (AU_STATE_IDS / NZ_STATE_IDS)
-        # TIER 3: Track name whitelist (DOMESTIC_TRACKS) — fallback only
-        is_domestic = False
-        effective_country = ""
-        country_source = "unknown"
-        _filter_logged = False
+        # Step 8 — DOMESTIC CLASSIFICATION
+        # Country is determined SOLELY from classify_track_by_code():
+        # checks track membership in the appropriate code-specific hardcoded
+        # set (HORSE_AU/NZ, GREYHOUND_AU/NZ, HARNESS_AU/NZ).
+        # No API country or state fields are consulted.
+        race_code = (race_dict.get("code") or "").upper()
+        # GALLOPS is a legacy alias for HORSE in some older OddsPro builds
+        if race_code == "GALLOPS":
+            race_code = "HORSE"
 
-        api_country = (race_dict.get("country") or "").strip().lower()
-
-        if api_country in AU_COUNTRY_CODES:
-            # TIER 1: API explicitly confirmed AU
-            is_domestic = True
-            effective_country = "au"
-            country_source = "api_country"
-        elif api_country in NZ_COUNTRY_CODES:
-            # TIER 1: API explicitly confirmed NZ
-            is_domestic = True
-            effective_country = "nz"
-            country_source = "api_country"
-        elif api_country:
-            # TIER 1: API provides an explicit non-AU/NZ country — exclude
-            is_domestic = False
-            country_source = "api_country_international"
-        else:
-            # TIER 2: Check state/location/region from API (via race_dict fields)
-            # The connector may store the raw state in 'state' field of the race dict
-            raw_state = (race_dict.get("state") or "").strip().lower()
-            if raw_state in AU_STATE_IDS:
-                is_domestic = True
-                effective_country = "au"
-                country_source = "api_state"
-            elif raw_state in NZ_STATE_IDS:
-                is_domestic = True
-                effective_country = "nz"
-                country_source = "api_state"
-            elif raw_state:
-                # Non-empty state that does not match AU or NZ — exclude
-                is_domestic = False
-                country_source = "api_state_unrecognised"
-            else:
-                # TIER 3: No location data from API — use track whitelist as fallback
-                is_domestic = track_key in DOMESTIC_TRACKS
-                if is_domestic:
-                    effective_country = "nz" if track_key in NZ_TRACKS else "au"
-                country_source = "track_whitelist" if is_domestic else "track_whitelist_miss"
-
-        # CODE_GATED_TRACKS check (applies regardless of tier; some tracks are
-        # only domestic for specific race codes regardless of location data)
-        if is_domestic and track_key in CODE_GATED_TRACKS:
-            race_code = (race_dict.get("code") or "").upper()
-            if race_code not in CODE_GATED_TRACKS[track_key]:
-                is_domestic = False
-                _filter_logged = True
-                log.info(
-                    f"[FILTER] EXCLUDED track={_track!r} code={race_code!r}"
-                    f" (code not valid for this venue; expected one of"
-                    f" {sorted(CODE_GATED_TRACKS[track_key])!r})"
-                )
+        effective_country = classify_track_by_code(_track, race_code) or ""
+        is_domestic = bool(effective_country)
+        country_source = "track_code_set" if is_domestic else "track_code_set_miss"
 
         race_uid_for_log = race_dict.get("race_uid") or ""
         log.info(
             f"[COUNTRY_RESOLVED] race_uid={race_uid_for_log}"
-            f" track={_track!r} source={country_source!r}"
-            f" api_country={api_country!r}"
+            f" track={_track!r} code={race_code!r} source={country_source!r}"
             f" effective_country={effective_country!r}"
             f" is_domestic={is_domestic}"
         )
@@ -713,8 +666,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             log.info(f"[FILTER] INCLUDED track={_track!r} country={effective_country!r}")
         else:
             international_count += 1
-            if not _filter_logged:
-                log.info(f"[FILTER] EXCLUDED track={_track!r} source={country_source!r}")
+            log.info(f"[FILTER] EXCLUDED track={_track!r} code={race_code!r} source={country_source!r}")
 
         # Step 9 — Storage
         if is_domestic:
@@ -1132,10 +1084,8 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # AU/NZ RACE DETECTION — FormFav compatibility helper
 # ---------------------------------------------------------------------------
-# Uses 3-tier resolution:
-#   TIER 1 — race dict 'country' field (set by connector from OddsPro API)
-#   TIER 2 — race dict 'state' field (AU_STATE_IDS / NZ_STATE_IDS)
-#   TIER 3 — track name whitelist (DOMESTIC_TRACKS) — fallback only
+# Uses classify_track_by_code() — track membership in hardcoded race-code-
+# specific sets.  No API country or state fields are consulted.
 
 
 def _is_au_nz_race(race: dict[str, Any]) -> bool:
@@ -1143,57 +1093,31 @@ def _is_au_nz_race(race: dict[str, Any]) -> bool:
     Return True when a race is an Australian or New Zealand race eligible
     for FormFav enrichment.
 
-    Uses 3-tier classification:
-      TIER 1 — 'country' field from race dict (set by OddsPro connector from API)
-      TIER 2 — 'state' field from race dict (AU_STATE_IDS / NZ_STATE_IDS)
-      TIER 3 — track name whitelist (DOMESTIC_TRACKS) — fallback only
+    Uses classify_track_by_code(): checks track membership in the hardcoded
+    race-code-specific sets (HORSE/GREYHOUND/HARNESS × AU/NZ).
+    No API country or state fields are consulted.
     """
-    country = (race.get("country") or "").strip().lower()
-    if country in DOMESTIC_COUNTRY_CODES:
-        return True
-    if country:
-        # Explicitly set to a non-AU/NZ country → international
-        return False
-    # Tier 2: state field
-    state = (race.get("state") or "").strip().lower()
-    if state in AU_STATE_IDS or state in NZ_STATE_IDS:
-        return True
-    if state:
-        return False
-    # Tier 3: track whitelist
-    track_key = apply_track_alias(race.get("track") or "")
-    return track_key in DOMESTIC_TRACKS
+    raw_code = (race.get("code") or "HORSE").upper()
+    ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
+    track = race.get("track") or ""
+    return classify_track_by_code(track, ff_code) is not None
 
 
 def _get_formfav_country(race: dict[str, Any]) -> str:
     """
     Return the FormFav country code ('au' or 'nz') for a race.
 
-    Uses 3-tier resolution to determine if the race is NZ or AU:
-      TIER 1 — 'country' field from race dict
-      TIER 2 — 'state' field from race dict
-      TIER 3 — track name whitelist
-
-    Returns 'au' as the default for any race confirmed as domestic.
+    Uses classify_track_by_code() to determine country from track membership
+    in the hardcoded race-code-specific sets.  Returns 'au' as the default
+    for any domestic race where the lookup unexpectedly returns None.
 
     NOTE: This function should only be called after _is_au_nz_race() returns True.
     """
-    country = (race.get("country") or "").strip().lower()
-    if country in NZ_COUNTRY_CODES:
-        return "nz"
-    if country in AU_COUNTRY_CODES:
-        return "au"
-
-    state = (race.get("state") or "").strip().lower()
-    if state in NZ_STATE_IDS:
-        return "nz"
-    if state in AU_STATE_IDS:
-        return "au"
-
-    track_key = apply_track_alias(race.get("track") or "")
-    if track_key in NZ_TRACKS:
-        return "nz"
-    return "au"
+    raw_code = (race.get("code") or "HORSE").upper()
+    ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
+    track = race.get("track") or ""
+    country = classify_track_by_code(track, ff_code)
+    return country if country else "au"
 
 
 # Maps OddsPro canonical race codes to FormFav race_code labels for logging.
@@ -1323,27 +1247,24 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 _pipeline_state.record_formfav_skipped(race_uid, "missing_track_or_race_num")
             continue
 
-        # Determine the correct country to send to FormFav (au or nz).
-        ff_country = _get_formfav_country(race)
-        mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
-
-        # --- FormFav track/country validation ---
-        # resolve_formfav_track() normalises the track slug and checks it
-        # against the FormFav-supported venue whitelist.  This is a separate
-        # gate from domestic classification: a race can be classified as AU/NZ
-        # yet still not be in FormFav's database (e.g. small country meetings,
-        # or tracks that OddsPro incorrectly labels with country='au').
-        ff_track = resolve_formfav_track(track, ff_country)
-        if ff_track is None:
+        # --- FormFav track/country gate ---
+        # Validate using classify_track_by_code(): only call FormFav when the
+        # track exists in the correct code-specific hardcoded AU/NZ set.
+        # This prevents wrong FormFav calls (e.g. Mohawk, international tracks).
+        ff_country = classify_track_by_code(track, ff_code)
+        if ff_country is None:
             log.info(
                 f"[FORMFAV] SKIPPED race_uid={race_uid}"
-                f" reason=unsupported_track_or_country"
-                f" track={track!r} country={ff_country!r}"
+                f" reason=not_supported_track"
+                f" track={track!r} code={ff_code!r}"
             )
             skipped_unsupported_track += 1
             if _pipeline_state is not None:
-                _pipeline_state.record_formfav_skipped(race_uid, "unsupported_track_or_country")
+                _pipeline_state.record_formfav_skipped(race_uid, "not_supported_track")
             continue
+
+        ff_track = apply_track_alias(track)
+        mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
 
         # --- Issue FormFav API call ---
         log.info(
@@ -1537,8 +1458,8 @@ def _store_with_pipeline(race: Any) -> bool:
     """
     Enforce pipeline order before storing a race record:
       1. Domestic gate (hard block — excluded races NEVER reach the DB)
-         (a) Explicit country check: non-AU/NZ country → block immediately
-         (b) Track whitelist: when country is empty, require track in DOMESTIC_TRACKS
+         Uses classify_track_by_code(): track must exist in the correct
+         code-specific hardcoded AU/NZ set for the race type.
       2. Normalize  (already done by connector / merge engine)
       3. Validate   (log warning; data is stored regardless)
       4. Integrity  (if blocked, mark before storing)
@@ -1567,46 +1488,27 @@ def _store_with_pipeline(race: Any) -> bool:
         # ----------------------------------------------------------------
         # Step 1 — HARD DOMESTIC GATE
         # Excluded races must NEVER be written to any DB table.
-        # Two-part check:
-        #   (a) Explicit country field: if set to a non-AU/NZ value, block immediately.
-        #   (b) Track whitelist fallback: when country is empty, require track in DOMESTIC_TRACKS.
+        # Classification uses classify_track_by_code(): country is determined
+        # SOLELY from track membership in the correct code-specific set.
+        # No API country or state fields are consulted.
         # ----------------------------------------------------------------
         _track = (race_dict.get("track") or "").strip()
-        track_key = apply_track_alias(_track)
+        raw_code = (race_dict.get("code") or "").upper()
+        if raw_code == "GALLOPS":
+            raw_code = "HORSE"
 
-        # (a) Explicit country gate — blocks races where connector resolved a
-        #     non-AU/NZ country from OddsPro API fields.
-        stored_country = (race_dict.get("country") or "").strip().lower()
-        if stored_country and stored_country not in DOMESTIC_COUNTRY_CODES:
+        gate_country = classify_track_by_code(_track, raw_code)
+        if gate_country is None:
             log.info(
-                f"[FILTER] EXCLUDED track={_track!r} country={stored_country!r}"
-                f" race_uid={race_uid} (international country; hard gate in _store_with_pipeline — no DB write)"
-            )
-            return False
-
-        # (b) Track whitelist gate (applied when country is empty or already au/nz)
-        gate_pass = track_key in DOMESTIC_TRACKS
-        if gate_pass and track_key in CODE_GATED_TRACKS:
-            race_code = (race_dict.get("code") or "").upper()
-            if race_code not in CODE_GATED_TRACKS[track_key]:
-                gate_pass = False
-
-        if not gate_pass:
-            log.info(
-                f"[FILTER] EXCLUDED track={_track!r}"
-                f" race_uid={race_uid} (hard gate in _store_with_pipeline — no DB write)"
+                f"[FILTER] EXCLUDED track={_track!r} code={raw_code!r}"
+                f" race_uid={race_uid} (not in domestic track set; hard gate in _store_with_pipeline — no DB write)"
             )
             return False
 
         # Ensure canonical country is set (full_sweep sets this before calling us;
         # rolling_refresh / near_jump_refresh pass raw OddsPro objects so we set it here).
         if not race_dict.get("country"):
-            if track_key in NZ_TRACKS:
-                race_dict["country"] = "nz"
-            elif track_key in AU_TRACKS:
-                race_dict["country"] = "au"
-            # track_key is guaranteed to be in DOMESTIC_TRACKS at this point
-            # (enforced by the hard gate above), so one of the two branches will match.
+            race_dict["country"] = gate_country
 
         log.debug(
             f"[PIPELINE] STORING race_uid={race_uid}"
