@@ -187,3 +187,20 @@ NZ_TRACKS: frozenset[str] = frozenset({
 # MASTER WHITELIST — union of all domestic AU + NZ venues
 # ---------------------------------------------------------------------------
 DOMESTIC_TRACKS: frozenset[str] = AU_TRACKS | NZ_TRACKS
+
+
+# ---------------------------------------------------------------------------
+# CODE-GATED TRACKS — track + race_code aware classification
+# ---------------------------------------------------------------------------
+# Some track slugs are shared between AU venues and overseas venues of the
+# same name.  These tracks are ONLY classified as domestic when the race_code
+# matches the expected code for the AU venue.
+#
+# dict: normalized_slug → frozenset of valid OddsPro race codes
+# A track that appears here is domestic ONLY when the race's code is in the set.
+# ---------------------------------------------------------------------------
+CODE_GATED_TRACKS: dict[str, frozenset[str]] = {
+    # "sandown-park" is the Sandown Park greyhound venue in Melbourne, VIC.
+    # UK's "Sandown Park" is a thoroughbred (HORSE) venue — must be excluded.
+    "sandown-park": frozenset({"GREYHOUND"}),
+}
