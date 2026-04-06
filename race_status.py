@@ -64,6 +64,7 @@ STATUS_AWAITING_RESULT = "awaiting_result"   # 30+ min past jump, still no resul
 STATUS_RESULT_POSTED = "result_posted"       # OddsPro result confirmed and written
 STATUS_BLOCKED = "blocked"                   # hard-blocked by integrity filter
 STATUS_STALE_UNKNOWN = "stale_unknown"       # no/unparseable jump_time, data stale
+STATUS_INTERNATIONAL = "international"       # stored but excluded from betting pipeline
 
 # Statuses that indicate a race is still live (may appear on board)
 LIVE_STATUSES = {
@@ -83,7 +84,7 @@ SETTLED_STATUSES = {STATUS_FINAL, STATUS_PAYING, STATUS_ABANDONED, STATUS_RESULT
 FINAL_STATES = {STATUS_FINAL, STATUS_PAYING, STATUS_ABANDONED}
 
 # All statuses known to Phase 2
-ALL_STATUSES = LIVE_STATUSES | SETTLED_STATUSES | {STATUS_BLOCKED, STATUS_STALE_UNKNOWN}
+ALL_STATUSES = LIVE_STATUSES | SETTLED_STATUSES | {STATUS_BLOCKED, STATUS_STALE_UNKNOWN, STATUS_INTERNATIONAL}
 
 
 def parse_jump_time(jump_time: str | None, race_date: str | None = None) -> datetime | None:
