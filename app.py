@@ -695,7 +695,8 @@ def api_ai_learning_status():
             "active": True,
         })
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        log.error(f"/api/ai/learning/status failed: {e}")
+        return jsonify({"ok": False, "error": "Learning status unavailable"}), 500
 
 
 # ------------------------------------------------------------

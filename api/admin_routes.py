@@ -913,11 +913,19 @@ def admin_routes_list():
 # USER MANAGEMENT ROUTES
 # ---------------------------------------------------------------
 
+import logging as _log
+_admin_log = _log.getLogger(__name__)
+
+
 @admin_bp.route("/users", methods=["GET"])
 @require_role("admin")
 def list_users():
     from users import get_all_users
-    return jsonify({"ok": True, "users": get_all_users()})
+    try:
+        return jsonify({"ok": True, "users": get_all_users()})
+    except Exception as e:
+        _admin_log.error(f"/api/admin/users GET failed: {e}")
+        return jsonify({"ok": False, "error": "Failed to list users"}), 500
 
 
 @admin_bp.route("/users/create", methods=["POST"])
@@ -939,7 +947,8 @@ def create_user_route():
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        _admin_log.error(f"/api/admin/users/create failed: {e}")
+        return jsonify({"ok": False, "error": "Failed to create user"}), 500
 
 
 @admin_bp.route("/users/<user_id>", methods=["PATCH"])
@@ -952,8 +961,11 @@ def update_user_route(user_id):
     try:
         update_user_profile(user_id, actor.get("username", "admin") if actor else "admin", **data)
         return jsonify({"ok": True})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        _admin_log.error(f"/api/admin/users/{user_id} PATCH failed: {e}")
+        return jsonify({"ok": False, "error": "Failed to update user"}), 500
 
 
 @admin_bp.route("/users/<user_id>", methods=["DELETE"])
@@ -968,7 +980,8 @@ def delete_user_route(user_id):
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        _admin_log.error(f"/api/admin/users/{user_id} DELETE failed: {e}")
+        return jsonify({"ok": False, "error": "Failed to delete user"}), 500
 
 
 @admin_bp.route("/users/<user_id>/reset-password", methods=["POST"])
@@ -984,6 +997,8 @@ def reset_user_password(user_id):
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        _admin_log.error(f"/api/admin/users/{user_id}/reset-password failed: {e}")
+        return jsonify({"ok": False, "error": "Failed to reset password"}), 500
+
 
 
