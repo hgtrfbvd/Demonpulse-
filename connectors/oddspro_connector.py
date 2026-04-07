@@ -660,7 +660,7 @@ class OddsProConnector:
         self,
         target_date: str | None = None,
         type_: str | None = None,
-        location: str | None = None,
+        location: str | None = "domestic",
     ) -> list[MeetingRecord]:
         """
         GET /api/external/meetings

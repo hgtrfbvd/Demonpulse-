@@ -375,7 +375,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     # ----------------------------------------------------------------
     log.info(f"[FETCH] ODDSPRO start date={today} (no location pre-filter)")
     try:
-        meetings = conn.fetch_meetings(today)
+        meetings = conn.fetch_meetings(today, location="domestic")
     except _requests_lib.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else None
         reason = f"oddspro_http_{status_code}" if status_code else "oddspro_request_exception"
