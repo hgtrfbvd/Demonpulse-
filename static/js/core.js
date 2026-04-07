@@ -12,6 +12,22 @@ function formatCountdown(seconds) {
     return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function formatNextUp(item) {
+    if (!item) return "—";
+    const track = (item.track || "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    const raceNum = `R${item.race_num || "?"}`;
+    if (item.jump_dt_iso) {
+        const dt = new Date(item.jump_dt_iso);
+        if (!isNaN(dt.getTime())) {
+            const timeStr = dt.toLocaleTimeString("en-AU", {
+                hour: "2-digit", minute: "2-digit", timeZone: "Australia/Sydney"
+            });
+            return `${track} ${raceNum} ${timeStr}`;
+        }
+    }
+    return `${track} ${raceNum} ${item.jump_time || ""}`;
+}
+
 function updateTopClock() {
     const el = document.getElementById("topClockValue");
     if (!el) return;
@@ -58,20 +74,19 @@ async function loadHeaderStats() {
 
         // Next up
         const sorted = [...items].sort((a, b) => {
-            const parseT = (t) => {
-                if (!t) return Infinity;
-                const parts = String(t).split(":");
+            const parseT = (i) => {
+                if (i.seconds_to_jump != null) return i.seconds_to_jump;
+                if (i.jump_dt_iso) return (new Date(i.jump_dt_iso).getTime() - Date.now()) / 1000;
+                const parts = String(i.jump_time || "").split(":");
                 if (parts.length < 2) return Infinity;
                 return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
             };
-            return parseT(a.jump_time) - parseT(b.jump_time);
+            return parseT(a) - parseT(b);
         });
         const next = sorted[0];
         const nextEl = document.getElementById("headerNextUp");
         if (nextEl) {
-            nextEl.textContent = next
-                ? `${next.track || "—"} R${next.race_num || "?"} ${next.jump_time || ""}`
-                : "—";
+            nextEl.textContent = next ? formatNextUp(next) : "—";
         }
 
         const statusEl = document.getElementById("headerDataStatus");

@@ -1,12 +1,4 @@
 (function () {
-    const tabs = document.querySelectorAll("[data-learn-tab]");
-    const sections = {
-        overview: document.getElementById("learn-overview"),
-        reverse: document.getElementById("learn-reverse"),
-        filters: document.getElementById("learn-filters"),
-        promotions: document.getElementById("learn-promotions"),
-    };
-
     const q = (id) => document.getElementById(id);
 
     function setText(id, value) {
@@ -14,40 +6,50 @@
         if (el) el.textContent = value ?? "—";
     }
 
+    // -------------------------------------------------------
+    // Tab switching (Section 7d fix)
+    // -------------------------------------------------------
+
     function bindTabs() {
+        const tabs = document.querySelectorAll("[data-learn-tab]");
         tabs.forEach(tab => {
             tab.addEventListener("click", () => {
                 tabs.forEach(t => t.classList.remove("active"));
                 tab.classList.add("active");
-                Object.values(sections).forEach(s => s.style.display = "none");
-                sections[tab.dataset.learnTab].style.display = "block";
+                document.querySelectorAll(".learning-section").forEach(s => s.style.display = "none");
+                const target = document.getElementById(`learn-${tab.dataset.learnTab}`);
+                if (target) target.style.display = "block";
             });
         });
     }
+
+    // -------------------------------------------------------
+    // Render helpers
+    // -------------------------------------------------------
 
     function renderOverview(data) {
         setText("learnEdgeCount", data.edge_count ?? 0);
         setText("learnErrorCount", data.error_count ?? 0);
         setText("learnPromotionCount", data.promotion_count ?? 0);
         setText("learnShadowStatus", data.shadow_active ? "ON" : "OFF");
-
         setText("learnTopFinding", data.top_finding || "—");
         setText("learnWeakestArea", data.weakest_area || "—");
         setText("learnBestEdgeType", data.best_edge_type || "—");
         setText("learnFocusArea", data.focus_area || "—");
-        setText("learnOverviewText", data.summary || "No learning summary loaded yet.");
+
+        const overviewText = q("learnOverviewText");
+        if (overviewText) overviewText.textContent = data.summary || "No learning summary loaded yet.";
         setText("learnOverviewMeta", "Learning summary loaded");
     }
 
     function renderEdges(edges) {
         const rows = q("learnEdgeRows");
         if (!edges?.length) {
-            rows.innerHTML = `<tr><td colspan="5" class="board-empty">No edge data</td></tr>`;
+            if (rows) rows.innerHTML = `<tr><td colspan="5" class="board-empty">No edge data yet — accumulates as races are analysed.</td></tr>`;
             setText("learnEdgeMeta", "No data");
             return;
         }
-
-        rows.innerHTML = edges.map(e => `
+        if (rows) rows.innerHTML = edges.map(e => `
             <tr>
                 <td>${e.edge_type || "—"}</td>
                 <td>${e.samples ?? "—"}</td>
@@ -61,11 +63,11 @@
 
     function renderErrors(errors) {
         const wrap = q("learnErrorChips");
+        if (!wrap) return;
         if (!errors?.length) {
             wrap.innerHTML = `<div class="quick-feed-empty">No error tags loaded.</div>`;
             return;
         }
-
         wrap.innerHTML = errors.map(err => `
             <div class="learn-chip">
                 <div class="learn-chip-key">${err.tag || "—"}</div>
@@ -76,11 +78,11 @@
 
     function renderStatus(items) {
         const wrap = q("learnStatusList");
+        if (!wrap) return;
         if (!items?.length) {
             wrap.innerHTML = `<div class="sim-log-row"><div class="sim-log-main"><div class="sim-log-race">Status unavailable</div></div></div>`;
             return;
         }
-
         wrap.innerHTML = items.map(item => `
             <div class="sim-log-row">
                 <div class="sim-log-main">
@@ -102,12 +104,11 @@
     function renderFilters(filters) {
         const rows = q("learnFilterRows");
         if (!filters?.length) {
-            rows.innerHTML = `<tr><td colspan="5" class="board-empty">No filter candidates</td></tr>`;
+            if (rows) rows.innerHTML = `<tr><td colspan="5" class="board-empty">No filter candidates yet.</td></tr>`;
             setText("learnFilterMeta", "No filters loaded");
             return;
         }
-
-        rows.innerHTML = filters.map(f => `
+        if (rows) rows.innerHTML = filters.map(f => `
             <tr>
                 <td>${f.name || "—"}</td>
                 <td>${f.type || "—"}</td>
@@ -122,12 +123,11 @@
     function renderPromotions(promotions) {
         const rows = q("learnPromotionRows");
         if (!promotions?.length) {
-            rows.innerHTML = `<tr><td colspan="5" class="board-empty">No promotion data</td></tr>`;
+            if (rows) rows.innerHTML = `<tr><td colspan="5" class="board-empty">No promotion data yet.</td></tr>`;
             setText("learnPromotionMeta", "No promotions queued");
             return;
         }
-
-        rows.innerHTML = promotions.map(p => `
+        if (rows) rows.innerHTML = promotions.map(p => `
             <tr>
                 <td>${p.adjustment || "—"}</td>
                 <td>${p.direction || "—"}</td>
@@ -139,24 +139,64 @@
         setText("learnPromotionMeta", `${promotions.length} promotion rows`);
     }
 
-    async function loadLearning() {
-        try {
-            const data = await api("/api/learning/summary");
+    // -------------------------------------------------------
+    // Load from real API (Section 7a)
+    // -------------------------------------------------------
 
-            renderOverview(data.overview || {});
-            renderEdges(data.edges || []);
+    async function loadPerformance() {
+        try {
+            const data = await api("/api/predictions/performance");
+            // Map performance data to overview stats
+            const overview = {
+                edge_count: data.edge_patterns?.length ?? data.edge_count ?? 0,
+                error_count: data.error_count ?? 0,
+                promotion_count: data.promotion_count ?? 0,
+                shadow_active: data.shadow_active ?? false,
+                top_finding: data.top_finding || (data.edge_patterns?.[0]?.type) || "—",
+                weakest_area: data.weakest_area || "—",
+                best_edge_type: data.best_edge_type || (data.edge_patterns?.[0]?.type) || "—",
+                focus_area: data.focus_area || "—",
+                summary: data.summary || `Model version: ${data.model_version || "—"}. Total evaluated: ${data.total_evaluated ?? data.total_predictions ?? 0}. Correct: ${data.correct ?? 0}.`,
+            };
+            renderOverview(overview);
+            renderEdges(data.edge_patterns || data.edges || []);
             renderErrors(data.errors || []);
-            renderStatus(data.status || []);
+            renderStatus(data.status || [
+                { label: "Model Version", value: data.model_version || "—" },
+                { label: "Total Evaluated", value: String(data.total_evaluated ?? data.total_predictions ?? 0) },
+                { label: "Enrichment Rate", value: data.enrichment_rate || "—" },
+            ]);
             renderReverse(data.reverse || null);
             renderFilters(data.filters || []);
             renderPromotions(data.promotions || []);
-        } catch (error) {
-            console.error("Learning load failed:", error);
+        } catch (_) {
+            // No data yet — show placeholder messages
+            renderOverview({
+                summary: "No learning data yet — predictions run automatically after races are stored.",
+            });
+            renderEdges([]);
         }
     }
 
+    async function loadToday() {
+        try {
+            const data = await api("/api/predictions/today");
+            if (data.summary) {
+                const overviewText = q("learnOverviewText");
+                if (overviewText && overviewText.textContent === "No learning summary loaded yet.") {
+                    overviewText.textContent = data.summary;
+                }
+            }
+        } catch (_) {}
+    }
+
+    // -------------------------------------------------------
+    // Boot
+    // -------------------------------------------------------
+
     document.addEventListener("DOMContentLoaded", () => {
         bindTabs();
-        loadLearning();
+        loadPerformance();
+        loadToday();
     });
 })();

@@ -4,42 +4,25 @@
 {% block content %}
 <div class="page-shell betting-page">
 
-    <!-- HERO -->
-    <section class="bet-hero card">
-        <div class="bet-hero-left">
-            <div class="page-kicker">PAPER / LIVE EXECUTION</div>
-            <h1 class="page-title">Betting Terminal</h1>
-            <div class="page-subtitle">
-                Execute, track and manage all bets. Live page handles fast race bets — this is your full control panel.
-            </div>
+    <!-- Stats Bar (replaces hero) -->
+    <div class="page-stats-bar">
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Bank</span>
+            <span class="stats-bar-value" id="betBank">—</span>
         </div>
-
-        <div class="bet-hero-right">
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">BANK</div>
-                <div class="hero-stat-value" id="betBank">—</div>
-                <div class="hero-stat-sub">Current balance</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">EXPOSURE</div>
-                <div class="hero-stat-value" id="betExposure">—</div>
-                <div class="hero-stat-sub">Open risk</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">TODAY P/L</div>
-                <div class="hero-stat-value" id="betPL">—</div>
-                <div class="hero-stat-sub">Session performance</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">STRIKE</div>
-                <div class="hero-stat-value" id="betStrike">—</div>
-                <div class="hero-stat-sub">Win rate</div>
-            </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Today P/L</span>
+            <span class="stats-bar-value" id="betPL">—</span>
         </div>
-    </section>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Open Exposure</span>
+            <span class="stats-bar-value" id="betExposure">—</span>
+        </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Strike Rate</span>
+            <span class="stats-bar-value" id="betStrike">—</span>
+        </div>
+    </div>
 
     <!-- MAIN GRID -->
     <section class="bet-main-grid">
@@ -59,19 +42,18 @@
 
                 <div class="bet-form-grid">
 
-                    <div class="bet-field">
-                        <label class="bet-label">Race UID</label>
-                        <input id="betRaceUid" class="bet-input" placeholder="race_uid">
+                    <div class="bet-field" style="grid-column:1/-1;">
+                        <label class="bet-label">Race</label>
+                        <select id="betRaceSelect" class="bet-input">
+                            <option value="">Loading races…</option>
+                        </select>
                     </div>
 
-                    <div class="bet-field">
+                    <div class="bet-field" style="grid-column:1/-1;">
                         <label class="bet-label">Runner</label>
-                        <input id="betRunner" class="bet-input" placeholder="Runner name">
-                    </div>
-
-                    <div class="bet-field">
-                        <label class="bet-label">Box</label>
-                        <input id="betBox" class="bet-input" placeholder="Box">
+                        <select id="betRunnerSelect" class="bet-input">
+                            <option value="">Select race first…</option>
+                        </select>
                     </div>
 
                     <div class="bet-field">
@@ -81,7 +63,7 @@
 
                     <div class="bet-field">
                         <label class="bet-label">Stake</label>
-                        <input id="betStake" class="bet-input" placeholder="$">
+                        <input id="betStake" class="bet-input" type="number" placeholder="$">
                     </div>
 
                     <div class="bet-field">
@@ -93,11 +75,18 @@
                         </select>
                     </div>
 
+                    <div class="bet-field">
+                        <label class="bet-label">Returns</label>
+                        <div class="bet-input" id="betReturns" style="background:var(--bg-3);color:var(--green);font-weight:700;">—</div>
+                    </div>
+
                 </div>
 
                 <div class="inline-actions">
                     <button class="dp-btn dp-btn-primary" id="placeBetBtn">Place Bet</button>
                     <button class="dp-btn" id="clearBetBtn">Clear</button>
+                    <button class="dp-btn" id="resetBankBtn">Reset Bank</button>
+                    <button class="dp-btn" id="exportBetsBtn">Export CSV</button>
                 </div>
             </div>
 
@@ -120,11 +109,13 @@
                                 <th>Type</th>
                                 <th>Odds</th>
                                 <th>Stake</th>
+                                <th>Returns</th>
                                 <th>Status</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody id="openBetsRows">
-                            <tr><td colspan="6" class="board-empty">No open bets</td></tr>
+                            <tr><td colspan="8" class="board-empty">No open bets</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -161,21 +152,6 @@
                             <tr><td colspan="7" class="board-empty">No history</td></tr>
                         </tbody>
                     </table>
-                </div>
-            </div>
-
-            <!-- SESSION CONTROL -->
-            <div class="card bet-session-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">SESSION CONTROL</div>
-                        <h2 class="section-title">Bank / Reset</h2>
-                    </div>
-                </div>
-
-                <div class="inline-actions">
-                    <button class="dp-btn" id="resetBankBtn">Reset Bank</button>
-                    <button class="dp-btn" id="exportBetsBtn">Export</button>
                 </div>
             </div>
 

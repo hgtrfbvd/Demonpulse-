@@ -7,7 +7,7 @@
     }
 
     // -------------------------------------------------------
-    // Tab switching
+    // Tab switching (Section 5a fix: use document.getElementById via q())
     // -------------------------------------------------------
     function initTabs() {
         const tabs = document.querySelectorAll(".settings-tab");
@@ -20,16 +20,17 @@
                     sec.style.display = "none";
                 });
 
-                const target = q(`settings-${tab.dataset.tab}`);
+                const target = document.getElementById(`settings-${tab.dataset.tab}`);
                 if (target) target.style.display = "block";
 
                 if (tab.dataset.tab === "visibility") loadVisibility();
+                if (tab.dataset.tab === "data") loadSourceStatus();
             });
         });
     }
 
     // -------------------------------------------------------
-    // Load hero stats
+    // Load header stats bar
     // -------------------------------------------------------
     async function loadHeroStats() {
         try {
@@ -47,14 +48,15 @@
             if (items.length > 0) {
                 const sorted = [...items].sort((a, b) => {
                     const t = x => {
+                        if (x.seconds_to_jump != null) return x.seconds_to_jump;
                         const p = String(x.jump_time || "").split(":");
                         if (p.length < 2) return Infinity;
                         return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
                     };
-                    return t(a) - t(b);
+                    return t(b) - t(a); // descending to get furthest
                 });
-                const furthestRace = sorted[sorted.length - 1];
-                setText("settingsLastSync", furthestRace ? furthestRace.jump_time || "—" : "—");
+                const furthest = sorted[0];
+                setText("settingsLastSync", furthest ? furthest.jump_time || "—" : "—");
             }
         } catch (_) {
             setText("settingsDataStatus", "ERR");
@@ -62,7 +64,7 @@
     }
 
     // -------------------------------------------------------
-    // Load visibility / counters
+    // Load visibility / counters (Section 5c)
     // -------------------------------------------------------
     async function loadVisibility() {
         try {
@@ -88,6 +90,9 @@
             const pre = q("formfavDebugPre");
             if (pre) pre.textContent = JSON.stringify(ff, null, 2);
             setText("visFormfavSynced", ff.races_enriched ?? ff.enriched ?? "—");
+            setText("visDiscovered", ff.races_discovered ?? ff.total_races ?? "—");
+            setText("visDomestic", ff.domestic ?? ff.au_nz_eligible ?? "—");
+            setText("visIntlExcluded", ff.international_excluded ?? ff.skipped_international ?? "—");
         } catch (_) {
             const pre = q("formfavDebugPre");
             if (pre) pre.textContent = "FormFav debug not available.";
@@ -95,32 +100,49 @@
     }
 
     // -------------------------------------------------------
-    // Source status
+    // Source status (Section 5b)
     // -------------------------------------------------------
     async function loadSourceStatus() {
         try {
-            const health = await api("/api/health");
-            setText("srcOddsPro", health.oddspro_enabled ? "ENABLED" : "DISABLED");
-            setText("srcFormFav", health.formfav_enabled ? "ENABLED" : "DISABLED");
+            const health = await api("/api/health/connectors");
+            const op = health.oddspro || health.OddsPro || {};
+            const ff = health.formfav || health.FormFav || {};
+
+            const opStatus = op.status || (op.enabled ? "OK" : "DISABLED");
+            const opDetail = op.base_url ? ` — ${op.base_url}${op.authenticated ? " (auth)" : " (public)"}` : "";
+            setText("srcOddsPro", opStatus + opDetail);
+
+            const ffEnabled = ff.enabled ?? (ff.status === "OK");
+            setText("srcFormFav", ffEnabled ? "ENABLED" : "DISABLED");
+            setText("srcFormFavLastSync", ff.last_sync || ff.last_sync_time || "—");
         } catch (_) {
-            setText("srcOddsPro", "UNKNOWN");
-            setText("srcFormFav", "UNKNOWN");
+            // Fallback to generic health endpoint
+            try {
+                const h = await api("/api/health");
+                setText("srcOddsPro", h.oddspro_enabled ? "ENABLED" : "UNKNOWN");
+                setText("srcFormFav", h.formfav_enabled ? "ENABLED" : "UNKNOWN");
+            } catch (__) {
+                setText("srcOddsPro", "UNKNOWN");
+                setText("srcFormFav", "UNKNOWN");
+            }
         }
     }
 
     // -------------------------------------------------------
-    // Maintenance actions
+    // Maintenance actions (Section 5d)
     // -------------------------------------------------------
     function bindMaintenance() {
         const forceRefreshBtn = q("forceRefreshBtn");
         if (forceRefreshBtn) {
             forceRefreshBtn.addEventListener("click", async () => {
-                setText("forceRefreshMeta", "Running…");
+                setText("forceRefreshMeta", "Running sweep...");
                 try {
-                    const data = await api("/api/admin/force-refresh", { method: "POST" });
-                    setText("forceRefreshMeta", data.ok ? "Refresh triggered" : (data.error || "Failed"));
+                    const r = await api("/api/admin/sweep", { method: "POST" });
+                    setText("forceRefreshMeta", r.ok !== false
+                        ? `✓ Done — ${r.races_stored || 0} races stored`
+                        : `✗ Error: ${r.error || "Unknown"}`);
                 } catch (_) {
-                    setText("forceRefreshMeta", "Force refresh not available");
+                    setText("forceRefreshMeta", "✗ Sweep endpoint not available");
                 }
             });
         }
@@ -128,12 +150,14 @@
         const formfavSyncBtn = q("formfavSyncBtn");
         if (formfavSyncBtn) {
             formfavSyncBtn.addEventListener("click", async () => {
-                setText("formfavSyncMeta", "Running…");
+                setText("formfavSyncMeta", "Syncing...");
                 try {
-                    const data = await api("/api/admin/formfav-sync", { method: "POST" });
-                    setText("formfavSyncMeta", data.ok ? "Sync triggered" : (data.error || "Failed"));
+                    const r = await api("/api/formfav/sync", { method: "POST" });
+                    setText("formfavSyncMeta", r.ok !== false
+                        ? `✓ ${r.races_enriched || 0} races enriched`
+                        : `✗ ${r.error || "Failed"}`);
                 } catch (_) {
-                    setText("formfavSyncMeta", "FormFav sync not available");
+                    setText("formfavSyncMeta", "✗ FormFav sync not available");
                 }
             });
         }
@@ -144,14 +168,14 @@
                 setText("healthCheckMeta", "Checking…");
                 const pre = q("healthDetailPre");
                 try {
-                    const data = await api("/api/health");
-                    setText("healthCheckMeta", data.ok ? "Healthy" : "Issues found");
+                    const r = await api("/api/health/live");
                     if (pre) {
-                        pre.textContent = JSON.stringify(data, null, 2);
+                        pre.textContent = JSON.stringify(r, null, 2);
                         pre.style.display = "block";
                     }
+                    setText("healthCheckMeta", r.ok !== false ? "✓ Healthy" : "✗ Issues found");
                 } catch (_) {
-                    setText("healthCheckMeta", "Health check failed");
+                    setText("healthCheckMeta", "✗ Health check failed");
                     if (pre) {
                         pre.textContent = "Health endpoint not available.";
                         pre.style.display = "block";
@@ -169,7 +193,6 @@
     document.addEventListener("DOMContentLoaded", () => {
         initTabs();
         loadHeroStats();
-        loadSourceStatus();
         bindMaintenance();
     });
 })();
