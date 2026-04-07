@@ -444,7 +444,7 @@ class OddsProConnector:
                 "reason": "ODDSPRO_BASE_URL not set",
             }
         try:
-            resp = self._get("/api/external/tracks", params={"country": self.country})
+            resp = self._get("/api/external/tracks", params={})
             return {
                 "ok": True,
                 "source": self.source_name,
@@ -482,7 +482,7 @@ class OddsProConnector:
         _last_discovery_diag and as raised exceptions so callers can diagnose.
         """
         url_requested = f"{self.base_url}/api/meetings"
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if location:
             params["location"] = location
 
@@ -684,7 +684,7 @@ class OddsProConnector:
         first_item_keys, exception_message, sample_payload, http_status,
         content_type, final_url, redirected_url, response_length, response_preview.
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if target_date:
             params["date"] = target_date
         if type_:
@@ -995,10 +995,10 @@ class OddsProConnector:
 
         Response shape: {"data": {...}, "meta": {...}}
         """
-        params: dict[str, Any] = {"country": self.country}
-        if meeting_date:
-            params["date"] = meeting_date
-        path_id = quote(str(meeting_id), safe="")
+        params: dict[str, Any] = {}
+        if meeting.meeting_date:
+            params["date"] = meeting.meeting_date
+        path_id = quote(str(meeting.meeting_id), safe="")
         try:
             resp = self._get(f"/api/external/meeting/{path_id}", params=params)
             payload = resp.json()
@@ -1039,7 +1039,7 @@ class OddsProConnector:
         Response shape: {"data": {..., "races": [...]}, "meta": {...}}
         Also accepts: races / events / meetingsRaces as the race list key.
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if meeting.meeting_date:
             params["date"] = meeting.meeting_date
         path_id = quote(str(meeting.meeting_id), safe="")
@@ -1083,7 +1083,7 @@ class OddsProConnector:
         full_sweep can count them as meeting_details_failed and expose
         _last_detail_diag.
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if meeting.meeting_date:
             params["date"] = meeting.meeting_date
         path_id = quote(str(meeting.meeting_id), safe="")
@@ -1274,7 +1274,7 @@ class OddsProConnector:
 
         Response shape: {"data": [...], "meta": {...}}
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if target_date:
             params["date"] = target_date
         if type_:
@@ -1343,7 +1343,7 @@ class OddsProConnector:
           code     - race type code: T (thoroughbred), H (harness), G (greyhound)
           location - location filter (e.g. AUS, domestic)
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if code:
             params["code"] = code
         if location:

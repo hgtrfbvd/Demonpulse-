@@ -53,6 +53,7 @@ class RaceRecord:
     abandoned: bool = False
     number_of_runners: int = 0
     pace_scenario: str = ""
+    prize_money: str = ""
     raw_response: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -100,6 +101,20 @@ class RunnerRecord:
     model_rank: int | None = None
     confidence: str = ""
     model_version: str = ""
+    # Missing fields from FormFav API
+    last20_starts: str = ""              # last20Starts — 20-start summary
+    racing_colours: str = ""             # racingColours — jockey silks
+    gear_change: str = ""                # gearChange — equipment changes (VERY valuable)
+    # Expanded stats breakdown (currently stored as raw JSONB only)
+    stats_overall_starts: int | None = None
+    stats_overall_wins: int | None = None
+    stats_overall_places: int | None = None
+    stats_overall_seconds: int | None = None
+    stats_overall_thirds: int | None = None
+    stats_overall_win_pct: float | None = None
+    stats_overall_place_pct: float | None = None
+    stats_first_up: dict | None = None   # firstUp stats
+    stats_second_up: dict | None = None  # secondUp stats
 
     def __post_init__(self):
         if self.stats_json is None:
@@ -303,6 +318,7 @@ class FormFavConnector:
             abandoned=bool(payload.get("abandoned", False)),
             number_of_runners=int(payload.get("numberOfRunners") or len(payload.get("runners", []))),
             pace_scenario=payload.get("paceScenario") or "",
+            prize_money=payload.get("prizeMoney") or "",
             raw_response=payload,
         )
 
@@ -340,6 +356,19 @@ class FormFavConnector:
                     stats_distance=stats.get("distance") or None,
                     stats_condition=stats.get("condition") or None,
                     stats_track_distance=stats.get("trackDistance") or None,
+                    # New fields from FormFav API
+                    last20_starts=runner.get("last20Starts") or "",
+                    racing_colours=runner.get("racingColours") or "",
+                    gear_change=runner.get("gearChange") or "",
+                    stats_first_up=stats.get("firstUp") or None,
+                    stats_second_up=stats.get("secondUp") or None,
+                    stats_overall_starts=overall.get("starts"),
+                    stats_overall_wins=overall.get("wins"),
+                    stats_overall_places=overall.get("places"),
+                    stats_overall_seconds=overall.get("seconds"),
+                    stats_overall_thirds=overall.get("thirds"),
+                    stats_overall_win_pct=overall.get("winPercent"),
+                    stats_overall_place_pct=overall.get("placePercent"),
                 )
             )
 
@@ -541,6 +570,87 @@ class FormFavConnector:
                         continue
         return results
 
+
+    def fetch_track_bias(self, track: str, race_code: str = "gallops",
+                         window: int | None = 90) -> dict | None:
+        """GET /v1/stats/track-bias/{track} — barrier/box bias stats (Pro)."""
+        if not self.api_key:
+            return None
+        params: dict = {"race_code": race_code}
+        if window:
+            params["window"] = window
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/v1/stats/track-bias/{track}",
+                params=params, headers=self._headers(), timeout=self.timeout
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            log.debug(f"[FORMFAV] track-bias fetch failed {track}: {e}")
+            return None
+
+    def fetch_jockey_stats(self, jockey_name: str,
+                           race_code: str = "gallops") -> dict | None:
+        """GET /v1/stats/jockey/{name} — jockey career stats (Pro)."""
+        if not self.api_key:
+            return None
+        from urllib.parse import quote
+        params: dict = {"race_code": race_code}
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/v1/stats/jockey/{quote(jockey_name)}",
+                params=params, headers=self._headers(), timeout=self.timeout
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            log.debug(f"[FORMFAV] jockey stats fetch failed {jockey_name}: {e}")
+            return None
+
+    def fetch_trainer_stats(self, trainer_name: str,
+                            race_code: str = "gallops") -> dict | None:
+        """GET /v1/stats/trainer/{name} — trainer career stats (Pro)."""
+        if not self.api_key:
+            return None
+        from urllib.parse import quote
+        params: dict = {"race_code": race_code}
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/v1/stats/trainer/{quote(trainer_name)}",
+                params=params, headers=self._headers(), timeout=self.timeout
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            log.debug(f"[FORMFAV] trainer stats fetch failed {trainer_name}: {e}")
+            return None
+
+    def fetch_venues(self, race_type: str | None = None,
+                     country: str = "au") -> list[dict]:
+        """GET /v1/form/venues — get canonical venue/track names (Pro)."""
+        if not self.api_key:
+            return []
+        params: dict = {"country": country}
+        if race_type:
+            params["raceType"] = race_type
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/v1/form/venues",
+                params=params, headers=self._headers(), timeout=self.timeout
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("venues") or []
+        except Exception as e:
+            log.warning(f"[FORMFAV] fetch_venues failed: {e}")
+            return []
 
     def fetch_scratchings(self, target_date: str | None = None) -> dict[str, list[int]]:
         return {}
