@@ -1330,6 +1330,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 "abandoned":         ff_race.abandoned,
                 "number_of_runners": ff_race.number_of_runners,
                 "pace_scenario":     ff_race.pace_scenario,
+                "prize_money":       ff_race.prize_money,
                 "raw_response":      ff_race.raw_response,
                 "fetched_at":        fetched_at,
             }
@@ -1372,6 +1373,17 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                     "model_rank":         runner.model_rank,
                     "confidence":         runner.confidence,
                     "model_version":      runner.model_version,
+                    "last20_starts":           runner.last20_starts,
+                    "racing_colours":          runner.racing_colours,
+                    "gear_change":             runner.gear_change,
+                    "stats_first_up":          runner.stats_first_up,
+                    "stats_second_up":         runner.stats_second_up,
+                    "stats_overall_starts":    runner.stats_overall_starts,
+                    "stats_overall_wins":      runner.stats_overall_wins,
+                    "stats_overall_places":    runner.stats_overall_places,
+                    "stats_overall_win_pct":   runner.stats_overall_win_pct,
+                    "stats_overall_place_pct": runner.stats_overall_place_pct,
+                    "date":               race_date,
                     "fetched_at":         fetched_at,
                 }
                 # Only store runners with a valid number
@@ -1379,6 +1391,93 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                     upsert_formfav_runner_enrichment(runner_payload)
                     runners_enriched += 1
                     race_runners_enriched += 1
+
+            # --- Fetch track bias (once per track+code per sync cycle) ---
+            try:
+                if not hasattr(formfav_sync, "_bias_fetched"):
+                    formfav_sync._bias_fetched = set()
+                bias_key = f"{ff_track}_{mapped_race_code}"
+                if bias_key not in formfav_sync._bias_fetched:
+                    bias_data = ff.fetch_track_bias(ff_track, race_code=mapped_race_code)
+                    if bias_data:
+                        from database import upsert_track_bias
+                        upsert_track_bias(bias_data)
+                        formfav_sync._bias_fetched.add(bias_key)
+                        log.info(f"[FORMFAV] TRACK_BIAS stored track={ff_track}")
+            except Exception as _be:
+                log.debug(f"formfav_sync: track bias fetch failed: {_be}")
+
+            # --- Fetch jockey/trainer stats per runner (rate-limited) ---
+            try:
+                from database import upsert_runner_connection_stats
+                race_context = {
+                    "race_uid":  race_uid,
+                    "date":      race_date,
+                    "track":     track,
+                    "race_num":  race_num,
+                    "race_code": mapped_race_code,
+                }
+                for runner in ff_runners:
+                    runner_num = runner.number if runner.number is not None else runner.box_num
+                    if runner_num is None:
+                        continue
+                    ctx = {
+                        **race_context,
+                        "runner_name":   runner.name,
+                        "runner_number": runner_num,
+                    }
+                    if runner.jockey:
+                        try:
+                            jstats = ff.fetch_jockey_stats(runner.jockey, race_code=mapped_race_code)
+                            if jstats:
+                                track_stats = jstats.get("trackStats") or []
+                                this_track = next(
+                                    (t for t in track_stats
+                                     if (t.get("venue") or "").lower().replace(" ", "-") == track),
+                                    {}
+                                )
+                                upsert_runner_connection_stats({
+                                    **ctx,
+                                    "person_type":       "jockey",
+                                    "person_name":       runner.jockey,
+                                    "total_starts":      jstats.get("totalStarts"),
+                                    "total_wins":        jstats.get("totalWins"),
+                                    "overall_win_rate":  jstats.get("overallWinRate"),
+                                    "overall_place_rate":jstats.get("overallPlaceRate"),
+                                    "recent_win_rate":   (jstats.get("recentStats") or {}).get("winRate"),
+                                    "track_win_rate":    this_track.get("winRate"),
+                                    "track_starts":      this_track.get("totalStarts"),
+                                    "raw_response":      jstats,
+                                })
+                        except Exception as _je:
+                            log.debug(f"jockey stats fetch failed {runner.jockey}: {_je}")
+                    if runner.trainer:
+                        try:
+                            tstats = ff.fetch_trainer_stats(runner.trainer, race_code=mapped_race_code)
+                            if tstats:
+                                track_stats = tstats.get("trackStats") or []
+                                this_track = next(
+                                    (t for t in track_stats
+                                     if (t.get("venue") or "").lower().replace(" ", "-") == track),
+                                    {}
+                                )
+                                upsert_runner_connection_stats({
+                                    **ctx,
+                                    "person_type":       "trainer",
+                                    "person_name":       runner.trainer,
+                                    "total_starts":      tstats.get("totalStarts"),
+                                    "total_wins":        tstats.get("totalWins"),
+                                    "overall_win_rate":  tstats.get("overallWinRate"),
+                                    "overall_place_rate":tstats.get("overallPlaceRate"),
+                                    "recent_win_rate":   (tstats.get("recentStats") or {}).get("winRate"),
+                                    "track_win_rate":    this_track.get("winRate"),
+                                    "track_starts":      this_track.get("totalStarts"),
+                                    "raw_response":      tstats,
+                                })
+                        except Exception as _te:
+                            log.debug(f"trainer stats fetch failed {runner.trainer}: {_te}")
+            except Exception as _ce:
+                log.debug(f"formfav_sync: connection stats fetch failed: {_ce}")
 
             log.info(
                 f"[FORMFAV] SUCCESS race_uid={race_uid}"
@@ -1455,6 +1554,53 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         "skipped": _total_skipped,
         "source": "formfav",
     }
+
+
+def market_snapshot_sweep(target_date: str | None = None) -> dict:
+    """
+    Fetch OddsPro market intelligence: movers, drifters, top-favs.
+    Stores into market_snapshots table for display in the UI.
+    Called every 5 minutes alongside near_jump_refresh.
+    """
+    conn = _get_oddspro()
+    if not conn.is_enabled():
+        return {"ok": False, "reason": "oddspro_not_configured"}
+
+    today = target_date or date.today().isoformat()
+    stored = 0
+
+    try:
+        from database import upsert_market_snapshot
+
+        # Movers (price shortenings)
+        movers = conn.fetch_movers(location="domestic", date=today, limit=20)
+        for item in movers:
+            item["is_mover"] = True
+            item["date"] = today
+            upsert_market_snapshot(item)
+            stored += 1
+
+        # Drifters (price increases)
+        drifters = conn.fetch_drifters(location="domestic", date=today, limit=20)
+        for item in drifters:
+            item["is_drifter"] = True
+            item["date"] = today
+            upsert_market_snapshot(item)
+            stored += 1
+
+        # Top favs
+        favs = conn.fetch_top_favs(location="domestic", date=today, limit=10)
+        for item in favs:
+            item["date"] = today
+            upsert_market_snapshot(item)
+            stored += 1
+
+        log.info(f"[MARKET] snapshot_sweep: stored={stored} movers+drifters+favs")
+        return {"ok": True, "stored": stored, "date": today}
+
+    except Exception as e:
+        log.error(f"market_snapshot_sweep failed: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 # ------------------------------------------------------------

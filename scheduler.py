@@ -42,6 +42,7 @@ RESULT_CHECK_INTERVAL = 300     # 5 min — OddsPro result sweep
 RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
 FORMFAV_SYNC_INTERVAL = 300     # 5 min — FormFav persistent enrichment sync
+MARKET_SNAPSHOT_INTERVAL = 300  # 5 min — OddsPro movers/drifters/top-favs
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -76,6 +77,8 @@ _scheduler_status = {
     "last_health_snapshot_at": None,
     "last_formfav_sync_at": None,
     "last_formfav_sync_result": None,
+    "last_market_snapshot_at": None,
+    "last_market_snapshot_result": None,
     "last_error": None,
     "refresh_interval": REFRESH_INTERVAL,
     "near_jump_interval": NEAR_JUMP_INTERVAL,
@@ -83,6 +86,7 @@ _scheduler_status = {
     "race_state_interval": RACE_STATE_INTERVAL,
     "health_snapshot_interval": HEALTH_SNAPSHOT_INTERVAL,
     "formfav_sync_interval": FORMFAV_SYNC_INTERVAL,
+    "market_snapshot_interval": MARKET_SNAPSHOT_INTERVAL,
 }
 
 
@@ -356,6 +360,24 @@ def _run_formfav_sync():
         log.error(f"FormFav sync failed: {e}")
 
 
+def _run_market_snapshot():
+    """Fetch OddsPro movers/drifters/top-favs and store in market_snapshots."""
+    try:
+        from data_engine import market_snapshot_sweep
+        result = market_snapshot_sweep()
+        _set_status(
+            last_market_snapshot_at=_utc_now(),
+            last_market_snapshot_result=result,
+        )
+        stored = result.get("stored", 0)
+        if stored > 0:
+            log.info(f"scheduler: market_snapshot: stored={stored}")
+        else:
+            log.debug(f"scheduler: market_snapshot: {result.get('reason', 'nothing stored')}")
+    except Exception as e:
+        log.error(f"Market snapshot failed: {e}")
+
+
 # --------------------------------------------------------
 # BOARD REBUILD HELPERS
 # --------------------------------------------------------
@@ -405,6 +427,7 @@ def run_scheduler():
     last_race_state = now
     last_health_snapshot = now
     last_formfav_sync = now  # full_sweep triggers formfav_sync directly when races are stored
+    last_market_snapshot = now - MARKET_SNAPSHOT_INTERVAL  # run on first loop
 
     if FULL_SWEEP_ON_START:
         try:
@@ -457,6 +480,10 @@ def run_scheduler():
             if now - last_formfav_sync >= FORMFAV_SYNC_INTERVAL:
                 _run_formfav_sync()
                 last_formfav_sync = now
+
+            if now - last_market_snapshot >= MARKET_SNAPSHOT_INTERVAL:
+                _run_market_snapshot()
+                last_market_snapshot = now
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")

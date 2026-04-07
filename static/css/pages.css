@@ -2318,13 +2318,77 @@
 /* Section 2 — Runner decorator badges */
 .decorator-badges { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
 .decorator-badge {
-    font-size:0.68rem; font-weight:700; padding:3px 9px; border-radius:20px;
-    border:1px solid; background:transparent; letter-spacing:0.04em;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid;
+    letter-spacing: 0.03em;
+    cursor: default;
+    white-space: nowrap;
 }
+.decorator-pos { background: rgba(61, 214, 140, 0.1); }
+.decorator-neg { background: rgba(255, 45, 45, 0.08); }
+.decorator-neu { background: rgba(255, 179, 71, 0.08); }
+
+/* Runner summary row badges (compact) */
 .runner-badge {
-    font-size:0.6rem; font-weight:700; padding:1px 6px; border-radius:4px;
-    background:rgba(90,180,255,0.12); color:var(--blue);
-    margin-left:5px; vertical-align:middle;
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+.runner-badge-pos {
+    background: rgba(61, 214, 140, 0.15);
+    color: var(--green);
+    border: 1px solid rgba(61, 214, 140, 0.35);
+}
+.runner-badge-neg {
+    background: rgba(255, 45, 45, 0.12);
+    color: var(--red-1);
+    border: 1px solid rgba(255, 45, 45, 0.3);
+}
+.runner-badge-neu {
+    background: rgba(255, 179, 71, 0.12);
+    color: var(--amber);
+    border: 1px solid rgba(255, 179, 71, 0.3);
+}
+
+/* Decorator detail list (expanded runner section) */
+.decorator-detail-list {
+    margin: 4px 0 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.decorator-detail-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 0.78rem;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.decorator-detail-label {
+    font-weight: 700;
+    min-width: 80px;
+    flex-shrink: 0;
+}
+.decorator-detail-text {
+    color: var(--text-soft);
+}
+.decorator-detail-text em {
+    color: var(--text-dim);
+    font-style: normal;
+    margin-left: 4px;
 }
 
 /* Section 3 — Simulation result banner */

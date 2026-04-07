@@ -352,20 +352,31 @@ def api_live_race(race_uid: str):
 
         runners = get_runners_for_race(race_uid)
 
-        # Merge FormFav runner enrichment data
+        # Merge FormFav runner enrichment data — two-pass join (number then name)
         try:
             from database import get_formfav_runner_enrichments
             ff_runner_rows = get_formfav_runner_enrichments(race_uid)
-            ff_runner_map = {}
+            ff_by_number: dict = {}
+            ff_by_name: dict = {}
             for ff_r in ff_runner_rows:
-                key = ff_r.get("number") or ff_r.get("box_num")
-                if key is not None:
-                    ff_runner_map[int(key)] = ff_r
+                num = ff_r.get("number")
+                if num is not None:
+                    ff_by_number[int(num)] = ff_r
+                name = (ff_r.get("runner_name") or "").strip().lower()
+                if name:
+                    ff_by_name[name] = ff_r
 
             enriched_runners = []
             for r in runners:
+                # Pass 1: match by number (most reliable)
                 box = r.get("box_num") or r.get("number") or r.get("barrier")
-                ff = ff_runner_map.get(int(box)) if box is not None else {}
+                ff = ff_by_number.get(int(box)) if box is not None else None
+
+                # Pass 2: match by name if number lookup failed
+                if not ff:
+                    rname = (r.get("name") or r.get("runner_name") or "").strip().lower()
+                    ff = ff_by_name.get(rname)
+
                 merged = {**r}
                 if ff:
                     for field in ["form_string", "trainer", "jockey", "driver", "weight", "career",
@@ -385,6 +396,33 @@ def api_live_race(race_uid: str):
                     merged["ff_career_stats"]  = ff.get("stats_overall")
                 enriched_runners.append(merged)
             runners = enriched_runners
+        except Exception:
+            pass
+
+        # Attach jockey/trainer connection stats to runners
+        try:
+            from database import get_runner_connection_stats_for_race
+            conn_stats = get_runner_connection_stats_for_race(race_uid)
+            conn_by_runner: dict = {}
+            for cs in conn_stats:
+                num = cs.get("runner_number")
+                if num is not None:
+                    conn_by_runner.setdefault(int(num), []).append(cs)
+
+            for r in runners:
+                box = r.get("box_num") or r.get("number") or r.get("barrier")
+                if box is not None:
+                    stats_list = conn_by_runner.get(int(box), [])
+                    jockey_stat = next((s for s in stats_list if s.get("person_type") == "jockey"), None)
+                    trainer_stat = next((s for s in stats_list if s.get("person_type") == "trainer"), None)
+                    if jockey_stat:
+                        r["jockey_win_rate"]       = jockey_stat.get("overall_win_rate")
+                        r["jockey_track_win_rate"] = jockey_stat.get("track_win_rate")
+                        r["jockey_track_starts"]   = jockey_stat.get("track_starts")
+                    if trainer_stat:
+                        r["trainer_win_rate"]       = trainer_stat.get("overall_win_rate")
+                        r["trainer_track_win_rate"] = trainer_stat.get("track_win_rate")
+                        r["trainer_track_starts"]   = trainer_stat.get("track_starts")
         except Exception:
             pass
 

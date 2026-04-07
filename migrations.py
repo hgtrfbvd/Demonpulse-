@@ -883,6 +883,148 @@ def run_phase5_formfav_migrations(db_client: Any = None) -> dict[str, Any]:
     return results
 
 
+def run_pro_schema_migrations(db_client: Any = None) -> dict[str, Any]:
+    """
+    Pro schema migrations — adds new columns and tables introduced by the
+    Instructions.md Pro+ data expansion:
+      - formfav_runner_enrichment: last20_starts, racing_colours, gear_change,
+        stats_first_up, stats_second_up, stats_overall_*, date
+      - formfav_race_enrichment: prize_money
+      - runner_connection_stats: new table (jockey/trainer stats per runner per race)
+
+    Safe to re-run.
+    """
+    if db_client is None:
+        from db import get_db
+        db_client = get_db()
+
+    results: dict[str, Any] = {"applied": [], "skipped": [], "errors": []}
+
+    # Column additions
+    column_migrations = [
+        ("formfav_runner_enrichment", "last20_starts",          "TEXT",    "DEFAULT ''"),
+        ("formfav_runner_enrichment", "racing_colours",          "TEXT",    "DEFAULT ''"),
+        ("formfav_runner_enrichment", "gear_change",             "TEXT",    "DEFAULT ''"),
+        ("formfav_runner_enrichment", "stats_first_up",          "JSONB",   ""),
+        ("formfav_runner_enrichment", "stats_second_up",         "JSONB",   ""),
+        ("formfav_runner_enrichment", "stats_overall_starts",    "INTEGER", ""),
+        ("formfav_runner_enrichment", "stats_overall_wins",      "INTEGER", ""),
+        ("formfav_runner_enrichment", "stats_overall_places",    "INTEGER", ""),
+        ("formfav_runner_enrichment", "stats_overall_win_pct",   "NUMERIC", ""),
+        ("formfav_runner_enrichment", "stats_overall_place_pct", "NUMERIC", ""),
+        ("formfav_runner_enrichment", "date",                    "DATE",    ""),
+        ("formfav_race_enrichment",   "prize_money",             "TEXT",    "DEFAULT ''"),
+        # test mirrors
+        ("test_formfav_runner_enrichment", "last20_starts",          "TEXT",    "DEFAULT ''"),
+        ("test_formfav_runner_enrichment", "racing_colours",          "TEXT",    "DEFAULT ''"),
+        ("test_formfav_runner_enrichment", "gear_change",             "TEXT",    "DEFAULT ''"),
+        ("test_formfav_runner_enrichment", "stats_first_up",          "JSONB",   ""),
+        ("test_formfav_runner_enrichment", "stats_second_up",         "JSONB",   ""),
+        ("test_formfav_runner_enrichment", "stats_overall_starts",    "INTEGER", ""),
+        ("test_formfav_runner_enrichment", "stats_overall_wins",      "INTEGER", ""),
+        ("test_formfav_runner_enrichment", "stats_overall_places",    "INTEGER", ""),
+        ("test_formfav_runner_enrichment", "stats_overall_win_pct",   "NUMERIC", ""),
+        ("test_formfav_runner_enrichment", "stats_overall_place_pct", "NUMERIC", ""),
+        ("test_formfav_runner_enrichment", "date",                    "DATE",    ""),
+        ("test_formfav_race_enrichment",   "prize_money",             "TEXT",    "DEFAULT ''"),
+    ]
+
+    for table, column, sql_type, default_clause in column_migrations:
+        sql = (
+            f"ALTER TABLE {table} "
+            f"ADD COLUMN IF NOT EXISTS {column} {sql_type} {default_clause};"
+        ).strip()
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+            results["applied"].append(f"{table}.{column}")
+            log.info(f"migrations: pro applied {table}.{column}")
+        except Exception as e:
+            err_str = str(e)
+            if "already exists" in err_str.lower() or "duplicate" in err_str.lower():
+                results["skipped"].append(f"{table}.{column}")
+            else:
+                log.warning(f"migrations: pro could not apply {table}.{column}: {e}")
+                results["errors"].append({"migration": f"{table}.{column}", "error": err_str})
+
+    # Index for date column
+    index_sqls = [
+        "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_date ON formfav_runner_enrichment(date);",
+        "CREATE INDEX IF NOT EXISTS idx_test_formfav_runner_enrichment_date ON test_formfav_runner_enrichment(date);",
+    ]
+    for sql in index_sqls:
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+        except Exception as e:
+            log.debug(f"migrations: pro index skipped/failed: {e}")
+
+    # New table: runner_connection_stats
+    new_tables = [
+        (
+            "runner_connection_stats",
+            """
+            CREATE TABLE IF NOT EXISTS runner_connection_stats (
+                id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                race_uid        TEXT        NOT NULL,
+                date            DATE        NOT NULL,
+                track           TEXT        NOT NULL DEFAULT '',
+                race_num        INTEGER     NOT NULL,
+                runner_name     TEXT        NOT NULL DEFAULT '',
+                runner_number   INTEGER,
+                person_type     TEXT        NOT NULL,
+                person_name     TEXT        NOT NULL DEFAULT '',
+                race_code       TEXT        NOT NULL DEFAULT 'gallops',
+                total_starts    INTEGER,
+                total_wins      INTEGER,
+                overall_win_rate    NUMERIC,
+                overall_place_rate  NUMERIC,
+                recent_win_rate     NUMERIC,
+                track_win_rate      NUMERIC,
+                track_starts        INTEGER,
+                raw_response    JSONB,
+                fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (race_uid, runner_number, person_type)
+            )
+            """,
+        ),
+        (
+            "test_runner_connection_stats",
+            "CREATE TABLE IF NOT EXISTS test_runner_connection_stats ( LIKE runner_connection_stats INCLUDING ALL )",
+        ),
+    ]
+
+    for table_name, create_sql in new_tables:
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": create_sql.strip()}).execute()
+            results["applied"].append(table_name)
+            log.info(f"migrations: pro table ensured: {table_name}")
+        except Exception as e:
+            err_str = str(e)
+            if "already exists" in err_str.lower() or "duplicate" in err_str.lower():
+                results["skipped"].append(table_name)
+            else:
+                log.warning(f"migrations: pro could not create {table_name}: {e}")
+                results["errors"].append({"table": table_name, "error": err_str})
+
+    # Indexes for runner_connection_stats
+    rcs_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_runner_connection_race_uid ON runner_connection_stats(race_uid);",
+        "CREATE INDEX IF NOT EXISTS idx_runner_connection_person ON runner_connection_stats(person_name, person_type, race_code);",
+    ]
+    for sql in rcs_indexes:
+        try:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+        except Exception as e:
+            log.debug(f"migrations: pro index skipped/failed: {e}")
+
+    log.info(
+        f"migrations: run_pro_schema_migrations done — "
+        f"applied={len(results['applied'])} "
+        f"skipped={len(results['skipped'])} "
+        f"errors={len(results['errors'])}"
+    )
+    return results
+
+
 def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
     """
     Run all migration phases in order:
@@ -891,6 +1033,7 @@ def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
       3. Phase 4 feature-engine / sectionals table creation + column additions
       4. Phase 4.6 schema alignment (brings legacy supabase_schema.sql DBs to canonical)
       5. Phase 5 FormFav full-coverage enrichment tables
+      6. Pro schema migrations (new columns + runner_connection_stats table)
 
     Safe to re-run.
     """
@@ -904,6 +1047,7 @@ def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
         "phase4": {},
         "schema_alignment": {},
         "phase5_formfav": {},
+        "pro_schema": {},
     }
 
     combined["column_migrations"] = run_migrations(db_client)
@@ -911,6 +1055,7 @@ def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
     combined["phase4"] = run_phase4_migrations(db_client)
     combined["schema_alignment"] = run_schema_alignment(db_client)
     combined["phase5_formfav"] = run_phase5_formfav_migrations(db_client)
+    combined["pro_schema"] = run_pro_schema_migrations(db_client)
     ensure_meetings_code_constraint(db_client)
 
     log.info("migrations: run_all_migrations complete")

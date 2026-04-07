@@ -313,19 +313,48 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
 
     function buildDecoratorBadges(decorators) {
         if (!decorators || !decorators.length) return "";
-        const badgeColors = {
-            "In Form":    "var(--green)",
-            "Top Rated":  "var(--blue)",
-            "Fav":        "var(--amber)",
-            "Place Rate": "var(--blue)",
-        };
         const badges = Array.isArray(decorators) ? decorators : [];
         if (!badges.length) return "";
+
+        // Color by sentiment, not label
+        function sentimentColor(sentiment) {
+            if (sentiment === "+") return "var(--green)";
+            if (sentiment === "-") return "var(--red-1)";
+            return "var(--amber)";
+        }
+
+        // Category → icon prefix
+        function categoryIcon(category) {
+            const icons = {
+                "form":          "◆",
+                "specialization":"★",
+                "conditions":    "☁",
+                "fitness":       "⚡",
+                "running_style": "→",
+                "class":         "▲",
+                "barrier":       "▣",
+                "connections":   "👤",
+            };
+            return icons[category] || "";
+        }
+
         return `<div class="decorator-badges">${
             badges.map(d => {
-                const label = typeof d === "string" ? d : (d.label || d.name || JSON.stringify(d));
-                const color = badgeColors[label] || "var(--text-dim)";
-                return `<span class="decorator-badge" style="border-color:${color};color:${color}">${esc(label)}</span>`;
+                const label       = typeof d === "string" ? d : (d.label || "");
+                const shortLabel  = typeof d === "string" ? d : (d.shortLabel || d.label || "");
+                const sentiment   = typeof d === "object" ? (d.sentiment || "+") : "+";
+                const category    = typeof d === "object" ? (d.category || "") : "";
+                const description = typeof d === "object" ? (d.description || "") : "";
+                const detail      = typeof d === "object" ? (d.detail || "") : "";
+                const color       = sentimentColor(sentiment);
+                const icon        = categoryIcon(category);
+                const tooltip     = [description, detail].filter(Boolean).join(" — ");
+
+                return `<span class="decorator-badge decorator-${sentiment === "+" ? "pos" : sentiment === "-" ? "neg" : "neu"}"
+                    style="border-color:${color};color:${color}"
+                    title="${esc(tooltip || label)}"
+                    data-type="${esc(d.type || "")}"
+                    data-category="${esc(category)}">${icon ? icon + " " : ""}${esc(shortLabel)}</span>`;
             }).join("")
         }</div>`;
     }
@@ -422,9 +451,17 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             const recentRows = buildRecentStartsRows(r.form);
 
             // Top decorator badges for summary row
-            const topBadges = (r.ff_decorators || []).slice(0, 2).map(d => {
-                const label = typeof d === "string" ? d : (d.label || "");
-                return label ? `<span class="runner-badge">${esc(label)}</span>` : "";
+            const topBadges = (r.ff_decorators || []).slice(0, 4).map(d => {
+                const shortLabel = typeof d === "string" ? d : (d.shortLabel || d.label || "");
+                const sentiment  = typeof d === "object" ? (d.sentiment || "+") : "+";
+                const tooltip    = typeof d === "object"
+                    ? [d.description, d.detail].filter(Boolean).join(" — ")
+                    : "";
+                const cls = sentiment === "+" ? "runner-badge-pos"
+                          : sentiment === "-" ? "runner-badge-neg"
+                          : "runner-badge-neu";
+                if (!shortLabel) return "";
+                return `<span class="runner-badge ${cls}" title="${esc(tooltip || shortLabel)}">${esc(shortLabel)}</span>`;
             }).join("");
 
             return `
@@ -455,6 +492,22 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
 
                         ${buildExpandGrid(r)}
                         ${buildDecoratorBadges(r.ff_decorators)}
+                        ${(() => {
+                            const detailed = (r.ff_decorators || [])
+                                .filter(d => typeof d === "object" && (d.description || d.detail));
+                            if (!detailed.length) return "";
+                            return `<div class="decorator-detail-list">${
+                                detailed.map(d => {
+                                    const sentColor = d.sentiment === "+" ? "var(--green)"
+                                                    : d.sentiment === "-" ? "var(--red-1)"
+                                                    : "var(--amber)";
+                                    return `<div class="decorator-detail-row">
+                                        <span class="decorator-detail-label" style="color:${sentColor}">${esc(d.shortLabel || d.label)}</span>
+                                        <span class="decorator-detail-text">${esc(d.description || "")}${d.detail ? ` <em>${esc(d.detail)}</em>` : ""}</span>
+                                    </div>`;
+                                }).join("")
+                            }</div>`;
+                        })()}
 
                         <div class="expand-recent-starts">
                             <div class="expand-section-title">Recent Starts (form chars)</div>

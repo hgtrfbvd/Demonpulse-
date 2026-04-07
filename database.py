@@ -510,6 +510,7 @@ def upsert_formfav_race_enrichment(data: dict[str, Any]) -> dict[str, Any] | Non
         "abandoned":         bool(data.get("abandoned", False)),
         "number_of_runners": int(data.get("number_of_runners") or 0),
         "pace_scenario":     data.get("pace_scenario") or "",
+        "prize_money":       data.get("prize_money") or "",
         "raw_response":      _as_json(data.get("raw_response")),
         "fetched_at":        data.get("fetched_at") or datetime.now(timezone.utc).isoformat(),
         "updated_at":        datetime.now(timezone.utc).isoformat(),
@@ -567,6 +568,17 @@ def upsert_formfav_runner_enrichment(data: dict[str, Any]) -> dict[str, Any] | N
         "model_rank":         int(data["model_rank"]) if data.get("model_rank") is not None else None,
         "confidence":         data.get("confidence") or "",
         "model_version":      data.get("model_version") or "",
+        "last20_starts":      data.get("last20_starts") or "",
+        "racing_colours":     data.get("racing_colours") or "",
+        "gear_change":        data.get("gear_change") or "",
+        "stats_first_up":     _as_json(data.get("stats_first_up")),
+        "stats_second_up":    _as_json(data.get("stats_second_up")),
+        "stats_overall_starts":     data.get("stats_overall_starts"),
+        "stats_overall_wins":       data.get("stats_overall_wins"),
+        "stats_overall_places":     data.get("stats_overall_places"),
+        "stats_overall_win_pct":    data.get("stats_overall_win_pct"),
+        "stats_overall_place_pct":  data.get("stats_overall_place_pct"),
+        "date":               data.get("date") or date.today().isoformat(),
         "fetched_at":         data.get("fetched_at") or datetime.now(timezone.utc).isoformat(),
         "updated_at":         datetime.now(timezone.utc).isoformat(),
     }
@@ -698,3 +710,105 @@ def get_latest_formfav_debug_stats() -> dict[str, Any] | None:
         [],
     ) or []
     return rows[0] if rows else None
+
+
+# ---------------------------------------------------------------------------
+# RUNNER CONNECTION STATS (jockey/trainer stats anchored to race+runner)
+# ---------------------------------------------------------------------------
+
+def upsert_runner_connection_stats(data: dict[str, Any]) -> None:
+    """
+    Store jockey or trainer stats in the context of a specific race+runner.
+    Conflict key: (race_uid, runner_number, person_type).
+    """
+    race_uid = data.get("race_uid") or ""
+    runner_number = data.get("runner_number")
+    person_type = data.get("person_type") or ""
+    if not race_uid or runner_number is None or not person_type:
+        return
+    payload = {
+        "race_uid":          race_uid,
+        "date":              data.get("date") or date.today().isoformat(),
+        "track":             data.get("track") or "",
+        "race_num":          int(data.get("race_num") or 0),
+        "runner_name":       data.get("runner_name") or "",
+        "runner_number":     int(runner_number),
+        "person_type":       person_type,
+        "person_name":       data.get("person_name") or "",
+        "race_code":         data.get("race_code") or "gallops",
+        "total_starts":      data.get("total_starts"),
+        "total_wins":        data.get("total_wins"),
+        "overall_win_rate":  data.get("overall_win_rate"),
+        "overall_place_rate":data.get("overall_place_rate"),
+        "recent_win_rate":   data.get("recent_win_rate"),
+        "track_win_rate":    data.get("track_win_rate"),
+        "track_starts":      data.get("track_starts"),
+        "raw_response":      _as_json(data.get("raw_response")),
+        "fetched_at":        datetime.now(timezone.utc).isoformat(),
+    }
+    safe_query(
+        lambda: get_db()
+        .table(T("runner_connection_stats"))
+        .upsert(payload, on_conflict="race_uid,runner_number,person_type")
+        .execute()
+    )
+
+
+def get_runner_connection_stats_for_race(race_uid: str) -> list[dict[str, Any]]:
+    """Fetch all jockey/trainer connection stats rows for a given race_uid."""
+    return safe_query(
+        lambda: get_db()
+        .table(T("runner_connection_stats"))
+        .select("*")
+        .eq("race_uid", race_uid)
+        .execute()
+        .data,
+        [],
+    ) or []
+
+
+# ---------------------------------------------------------------------------
+# TRACK BIAS
+# ---------------------------------------------------------------------------
+
+def upsert_track_bias(data: dict[str, Any]) -> None:
+    """Store FormFav track bias data into track_profiles table."""
+    track = (data.get("venue") or "").lower().replace(" ", "-")
+    if not track:
+        return
+    race_type = data.get("raceType") or "R"
+    code = {"R": "HORSE", "H": "HARNESS", "G": "GREYHOUND"}.get(race_type, "HORSE")
+    barrier_stats = data.get("barrierStats") or []
+    inside = next((b for b in barrier_stats if b.get("barrierNumber") == 1), {})
+    payload = {
+        "track_name":       track,
+        "code":             code,
+        "inside_bias":      inside.get("advantage"),
+        "leader_win_pct":   inside.get("winRate"),
+        "updated_at":       datetime.now(timezone.utc).isoformat(),
+    }
+    safe_query(lambda: get_db().table(T("track_profiles"))
+        .upsert(payload, on_conflict="track_name,code").execute())
+
+
+# ---------------------------------------------------------------------------
+# MARKET SNAPSHOTS
+# ---------------------------------------------------------------------------
+
+def upsert_market_snapshot(data: dict[str, Any]) -> None:
+    """Store OddsPro movers/drifters/top-favs data into market_snapshots."""
+    payload = {
+        "race_uid":       data.get("race_uid") or "",
+        "date":           data.get("date") or date.today().isoformat(),
+        "track":          (data.get("track") or "").lower().replace(" ", "-"),
+        "race_num":       data.get("raceNumber") or data.get("race_num"),
+        "runner_name":    data.get("runnerName") or data.get("runner_name") or "",
+        "box_num":        data.get("runnerNumber") or data.get("box_num"),
+        "opening_price":  data.get("firstPrice") or data.get("opening_price"),
+        "analysis_price": data.get("currentBestOdds") or data.get("analysis_price"),
+        "price_movement": str(data.get("movementPercentage") or ""),
+        "steam_flag":     bool(data.get("is_mover", False)),
+        "drift_flag":     bool(data.get("is_drifter", False)),
+        "snapshot_time":  datetime.now(timezone.utc).isoformat(),
+    }
+    safe_query(lambda: get_db().table(T("market_snapshots")).insert(payload).execute())
