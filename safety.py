@@ -27,13 +27,9 @@ def check_betting_window(jump_time_str, anchor_time_str):
     try:
         jump_dt = parse_jump_time(jump_time_str)
         anchor_dt = parse_jump_time(anchor_time_str)
-        if jump_dt and anchor_dt:
-            diff = (jump_dt - anchor_dt).total_seconds() / 60
-        else:
-            # Fall back to simple HH:MM parsing for legacy callers
-            jh, jm = map(int, jump_time_str.split(":"))
-            ah, am = map(int, anchor_time_str.split(":"))
-            diff = (jh * 60 + jm) - (ah * 60 + am)
+        if not jump_dt or not anchor_dt:
+            return "UNKNOWN"
+        diff = (jump_dt - anchor_dt).total_seconds() / 60
         if diff < MIN_MINUTES_BEFORE_JUMP:
             return "TOO_LATE"
         elif diff > MAX_MINUTES_BEFORE_JUMP:

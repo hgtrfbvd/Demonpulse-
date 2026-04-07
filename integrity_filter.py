@@ -30,7 +30,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 # How old (in seconds) a race record may be before it is considered stale
-STALE_THRESHOLD_SECONDS = 7200  # 2 hours (rolling_refresh runs every 150 s; allow for failures)
+STALE_THRESHOLD_SECONDS = 28800  # 8 hours — covers a full racing day
 
 # Race statuses that hard-block a race from the board
 BLOCKED_STATUSES = {"abandoned", "invalid", "blocked", "cancelled", "void"}

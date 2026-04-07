@@ -244,6 +244,9 @@ TRACK_ALIASES: dict[str, str] = {
     "tabcorp-park-melton":       "melton",
     # "Tabcorp Park" (without suffix) → assume Menangle as the primary venue
     "tabcorp-park":              "menangle",
+    # Hatrick Straight (NZ greyhound): "Hatrick Straight Raceway" or "Hatrick" → "hatrick-straight"
+    "hatrick-straight-raceway":  "hatrick-straight",
+    "hatrick":                   "hatrick-straight",
 }
 
 
@@ -318,7 +321,14 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
 
 #: New Zealand greyhound venues.
 GREYHOUND_NZ_TRACKS: frozenset[str] = frozenset({
-    "addington", "whanganui", "manukau", "cambridge",
+    "addington",
+    "whanganui",
+    "manukau",
+    "cambridge",
+    "hatrick-straight",
+    "palmerston-north",
+    "invercargill",
+    "christchurch",
 })
 
 #: Australian harness venues.

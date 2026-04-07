@@ -26,6 +26,11 @@
         return raw;
     }
 
+    function formatTrack(track) {
+        if (!track) return "—";
+        return track.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+
     function codeClass(code) {
         const c = normaliseCode(code);
         if (c === "GREYHOUND") return "code-gh";
@@ -174,9 +179,9 @@
             return `
                 <tr class="home-board-row" data-detail="${detailId}" style="cursor:pointer;" title="Click to expand timing detail">
                     <td><span class="code-badge ${codeClass(code)}">${code}</span></td>
-                    <td>${item.track || "—"}</td>
+                    <td>${formatTrack(item.track)}</td>
                     <td>R${item.race_num || "—"}</td>
-                    <td>${jumpDisplay}</td>
+                    <td class="home-board-time">${jumpDisplay}</td>
                     <td class="countdown-cell" data-jump-iso="${jumpIso}" data-jump="${item.jump_time || ""}">${formatCountdownText(item.jump_dt_iso ? new Date(item.jump_dt_iso) : item.jump_time)}</td>
                     <td><span class="status-pill">${(item.status || "upcoming").toUpperCase()}</span></td>
                     <td><span class="signal-pill ${signalClass(signal)}">${signal}</span></td>
@@ -234,7 +239,7 @@
                 <a class="quick-feed-row" href="${item.race_uid ? `/live?race_uid=${encodeURIComponent(item.race_uid)}` : '/live'}">
                     <div class="quick-feed-main">
                         <span class="code-badge ${codeClass(code)}">${code}</span>
-                        <span class="quick-feed-track">${item.track || "—"} R${item.race_num || "—"}</span>
+                        <span class="quick-feed-track">${formatTrack(item.track)} R${item.race_num || "—"}</span>
                     </div>
                     <div class="quick-feed-side">
                         <span class="quick-feed-time">${item.jump_time || "—"}</span>
@@ -257,7 +262,7 @@
                 <span class="code-badge ${codeClass(hot.code)}">${normaliseCode(hot.code)}</span>
                 <span class="signal-pill ${signalClass(hot.signal)}">${hot.signal || "—"}</span>
             </div>
-            <div class="priority-race-line">${hot.track || "—"} R${hot.race_num || "—"}</div>
+            <div class="priority-race-line">${formatTrack(hot.track)} R${hot.race_num || "—"}</div>
             <div class="priority-sub-line">Jump ${hot.jump_time || "—"} • Confidence ${hot.confidence || "—"}</div>
             <a class="dp-btn dp-btn-primary priority-open-btn" href="${hot.race_uid ? `/live?race_uid=${encodeURIComponent(hot.race_uid)}` : '/live'}">Open Live Race</a>
         `;
@@ -288,7 +293,7 @@
         el.codeMixValue.textContent = `${ghCount} / ${horseCount} / ${harnessCount}`;
 
         if (next) {
-            el.nextUpMain.textContent = `${next.track || "—"} R${next.race_num || "—"}`;
+            el.nextUpMain.textContent = `${formatTrack(next.track)} R${next.race_num || "—"}`;
             const nextJump = (() => {
                 if (next.jump_dt_iso) {
                     const d = new Date(next.jump_dt_iso);
