@@ -198,9 +198,17 @@
     async function loadSchedulerStatus() {
         try {
             const data = await api("/api/admin/scheduler");
-            setText("settingSchedulerStatus", data.status || data.scheduler_status || "—");
+            const s = data.scheduler || {};
+            const running = s.running || s.thread_alive;
+            const label = running ? "Running" : "Stopped";
+            const since = s.started_at
+                ? " since " + new Date(s.started_at).toLocaleTimeString("en-AU",
+                    {timeZone:"Australia/Sydney",hour:"2-digit",minute:"2-digit"})
+                : "";
+            setText("settingSchedulerStatus", label + since);
+            if (s.last_error) setText("settingSchedulerStatus", "⚠ " + s.last_error);
         } catch (_) {
-            setText("settingSchedulerStatus", "—");
+            setText("settingSchedulerStatus", "Unavailable");
         }
     }
 

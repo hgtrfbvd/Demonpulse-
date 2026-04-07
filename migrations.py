@@ -911,6 +911,7 @@ def run_all_migrations(db_client: Any = None) -> dict[str, Any]:
     combined["phase4"] = run_phase4_migrations(db_client)
     combined["schema_alignment"] = run_schema_alignment(db_client)
     combined["phase5_formfav"] = run_phase5_formfav_migrations(db_client)
+    ensure_meetings_code_constraint(db_client)
 
     log.info("migrations: run_all_migrations complete")
     return combined
@@ -986,3 +987,24 @@ def _ensure_phase5_indexes(db_client: Any, results: dict[str, Any]) -> None:
             db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
         except Exception as e:
             log.debug(f"migrations: phase5 index skipped/failed: {e}")
+
+
+def ensure_meetings_code_constraint(db_client: Any = None) -> bool:
+    """Add HORSE to meetings code CHECK constraint so horse racing upserts succeed."""
+    if db_client is None:
+        from db import get_db
+        db_client = get_db()
+
+    stmts = [
+        "ALTER TABLE meetings DROP CONSTRAINT IF EXISTS meetings_code_check;",
+        "ALTER TABLE meetings ADD CONSTRAINT meetings_code_check "
+        "CHECK (code IN ('GREYHOUND', 'HARNESS', 'GALLOPS', 'HORSE'));",
+    ]
+    try:
+        for sql in stmts:
+            db_client.rpc("run_migration_sql", {"sql_statement": sql}).execute()
+        log.info("migrations: meetings_code_check constraint updated to include HORSE")
+        return True
+    except Exception as e:
+        log.warning(f"migrations: could not update meetings_code_check: {e}")
+        return False

@@ -1,5 +1,11 @@
 async function api(url, options = {}) {
-    const res = await fetch(url, options);
+    const token = localStorage.getItem("dp_token") || "";
+    const headers = { ...(options.headers || {}) };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (options.body && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+    }
+    const res = await fetch(url, { ...options, headers });
     if (!res.ok) {
         throw new Error(`API error (${res.status})`);
     }
@@ -83,7 +89,8 @@ async function loadHeaderStats() {
             };
             return parseT(a) - parseT(b);
         });
-        const next = sorted[0];
+        const future = sorted.filter(i => (i.seconds_to_jump ?? -1) > 0);
+        const next = future[0] || null;
         const nextEl = document.getElementById("headerNextUp");
         if (nextEl) {
             nextEl.textContent = next ? formatNextUp(next) : "—";

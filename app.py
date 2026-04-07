@@ -1,5 +1,6 @@
 import os
 import logging
+import requests as _requests
 from flask import Flask, jsonify, request, render_template, redirect, url_for
 
 from env import env, EnvViolation, env_violation_response
@@ -20,6 +21,7 @@ try:
     from api.market_routes import market_bp
     from api.external_routes import external_bp
     from api.formfav_routes import formfav_bp
+    from api.bet_routes import bet_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(race_bp)
     app.register_blueprint(board_bp)
@@ -28,6 +30,7 @@ try:
     app.register_blueprint(market_bp)
     app.register_blueprint(external_bp)
     app.register_blueprint(formfav_bp)
+    app.register_blueprint(bet_bp)
     log.info("API blueprints registered")
 except Exception as _bp_err:
     log.warning(f"Blueprint registration failed: {_bp_err}")
@@ -662,6 +665,36 @@ def api_health():
         "oddspro_enabled": oddspro_enabled,
         "formfav_enabled": formfav_enabled,
     })
+
+
+# ------------------------------------------------------------
+# AI COMMENTARY PROXY
+# ------------------------------------------------------------
+
+@app.route("/api/ai/commentary", methods=["POST"])
+def api_ai_commentary():
+    data = request.get_json(silent=True) or {}
+    prompt = data.get("prompt") or ""
+    if not prompt:
+        return jsonify({"ok": False, "error": "No prompt"}), 400
+    api_key = os.environ.get("CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
+    if not api_key:
+        return jsonify({"ok": False, "error": "AI not configured"}), 503
+    try:
+        resp = _requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "Content-Type": "application/json"},
+            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 150,
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        text = resp.json()["content"][0]["text"]
+        return jsonify({"ok": True, "text": text})
+    except Exception as e:
+        log.warning(f"AI commentary failed: {e}")
+        return jsonify({"ok": False, "error": "AI unavailable"}), 503
 
 
 # ------------------------------------------------------------

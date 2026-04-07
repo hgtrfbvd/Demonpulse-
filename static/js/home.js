@@ -54,6 +54,7 @@
 
     function countdownClass(secs) {
         if (secs == null) return "";
+        if (secs < 0)    return "jumped";
         if (secs < 120)  return "imminent";
         if (secs < 600)  return "near";
         return "";
@@ -61,6 +62,7 @@
 
     function chipClass(secs) {
         if (secs == null) return "ntj-upcoming";
+        if (secs < 0)    return "ntj-jumped";
         if (secs < 120)  return "ntj-imminent";
         if (secs < 600)  return "ntj-near";
         return "ntj-upcoming";
@@ -68,6 +70,7 @@
 
     function statusClass(secs) {
         if (secs == null) return "status-upcoming";
+        if (secs < 0)    return "status-jumped";
         if (secs < 120)  return "status-imminent";
         if (secs < 600)  return "status-near";
         return "status-upcoming";
@@ -75,6 +78,7 @@
 
     function statusLabel(secs) {
         if (secs == null) return "UPCOMING";
+        if (secs < 0)    return "Jumped";
         if (secs < 120)  return "IMMINENT";
         if (secs < 600)  return "NEAR";
         return "UPCOMING";

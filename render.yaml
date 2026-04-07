@@ -26,5 +26,7 @@ services:
         value: "0"
       - key: ODDSPRO_BASE_URL
         value: https://api.raceodds.pro
+      - key: ODDSPRO_API_KEY
+        sync: false
       - key: FORMFAV_API_KEY
         sync: false
