@@ -364,6 +364,7 @@ def upsert_result(result: dict[str, Any]) -> dict[str, Any] | None:
         "track": result.get("track") or "",
         "race_num": result.get("race_num"),
         "code": result.get("code") or "GREYHOUND",
+        "race_uid": result.get("race_uid") or "",
         "winner": result.get("winner") or "",
         "winner_box": result.get("winner_number"),
         "win_price": result.get("win_price"),
