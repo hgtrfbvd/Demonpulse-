@@ -165,8 +165,8 @@
         const ranked = [...runners]
             .filter(r => !r.scratched)
             .sort((a, b) => {
-                const aProb = probMap[a.number ?? a.box_num] ?? (a.price ? 100 / a.price : 0);
-                const bProb = probMap[b.number ?? b.box_num] ?? (b.price ? 100 / b.price : 0);
+                const aProb = probMap[a.number ?? a.box_num] ?? (a.price > 0 ? 100 / a.price : 0);
+                const bProb = probMap[b.number ?? b.box_num] ?? (b.price > 0 ? 100 / b.price : 0);
                 return bProb - aProb;
             });
         const rankMap = {};
@@ -185,7 +185,7 @@
             const isScratched = r.scratched;
             const boxNum = r.box_num ?? r.box ?? r.number ?? "?";
             const odds = r.price || r.win_odds;
-            const impliedProb = odds ? (100 / odds) : null;
+            const impliedProb = odds > 0 ? (100 / odds) : null;
             const aiProb = probMap[r.number ?? r.box_num];
             const winProb = aiProb ?? impliedProb ?? null;
             const rank = rankMap[r.number ?? r.box_num];
@@ -214,7 +214,7 @@
                 .filter(Boolean).join("  ");
 
             return `
-                <tr class="runner-row${isScratched ? " scratched" : ""}" data-runner-name="${r.name || ''}" data-runner-odds="${odds || ''}" onclick="selectRunnerRow(this)">
+                <tr class="runner-row${isScratched ? " scratched" : ""}" data-runner-name="${r.name || ''}" data-runner-odds="${odds || ''}" data-navigate="runner">
                     <td class="col-box"><div class="box-num">${boxNum}</div></td>
                     <td class="col-runner">
                         <div class="runner-name"${isScratched ? ' style="text-decoration:line-through"' : ''}>${r.name || "—"}</div>
@@ -291,7 +291,7 @@
         if (el) el.textContent = ret && parseFloat(ret) > 0 ? `$${ret}` : "—";
     }
 
-    window.selectRunnerRow = function(rowEl) {
+    function selectRunnerRow(rowEl) {
         if (rowEl.classList.contains("scratched")) return;
         document.querySelectorAll(".runner-row.selected").forEach(r => r.classList.remove("selected"));
         rowEl.classList.add("selected");
@@ -307,7 +307,7 @@
         }
         if (q("qbOdds") && odds) q("qbOdds").value = odds;
         calcReturns();
-    };
+    }
 
     async function placeBet() {
         const raceUid = getRaceUid();
@@ -472,6 +472,12 @@
 
         const placeBtn = q("qbPlaceBtn");
         if (placeBtn) placeBtn.addEventListener("click", placeBet);
+
+        // Event delegation for runner row selection
+        document.addEventListener("click", (e) => {
+            const row = e.target.closest("[data-navigate='runner']");
+            if (row) selectRunnerRow(row);
+        });
 
         loadLiveRace();
     });

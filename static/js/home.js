@@ -96,11 +96,6 @@
         return c.slice(0, 2);
     }
 
-    function openRace(el) {
-        const uid = el.dataset.raceUid;
-        if (uid) window.location.href = `/live?race_uid=${encodeURIComponent(uid)}`;
-    }
-
     // -------------------------------------------------------
     // Grouping
     // -------------------------------------------------------
@@ -148,7 +143,7 @@
             const cls = chipClass(secs);
             const uid = item.race_uid || "";
             return `
-                <div class="ntj-chip ${cls}" data-race-uid="${uid}" onclick="openRace(this)" title="${formatTrack(item.track)} R${item.race_num || '?'}">
+                <div class="ntj-chip ${cls}" data-race-uid="${uid}" data-navigate="race" title="${formatTrack(item.track)} R${item.race_num || '?'}">
                     <span class="ntj-track">${formatTrack(item.track)}</span>
                     <span class="ntj-race">R${item.race_num || "?"}</span>
                     <span class="ntj-time">${formatCountdown(secs)}</span>
@@ -184,7 +179,7 @@
                 const gradeDist = [race.grade, race.distance ? race.distance + "m" : null]
                     .filter(Boolean).join(" • ") || "—";
                 return `
-                    <div class="race-row" data-race-uid="${uid}" onclick="openRace(this)">
+                    <div class="race-row" data-race-uid="${uid}" data-navigate="race">
                         <div class="race-row-left">
                             <span class="race-num">R${race.race_num || "?"}</span>
                             <div class="race-details">
@@ -332,13 +327,18 @@
     // Boot
     // -------------------------------------------------------
 
-    // Make openRace globally accessible (used in onclick attrs)
-    window.openRace = openRace;
-
     document.addEventListener("DOMContentLoaded", () => {
         // Filter tab clicks
         document.querySelectorAll(".filter-tab").forEach(btn => {
             btn.addEventListener("click", () => setFilter(btn.dataset.code));
+        });
+
+        // Event delegation for race navigation (NTJ chips + race rows)
+        document.addEventListener("click", (e) => {
+            const target = e.target.closest("[data-navigate='race']");
+            if (!target) return;
+            const uid = target.dataset.raceUid;
+            if (uid) window.location.href = `/live?race_uid=${encodeURIComponent(uid)}`;
         });
 
         // Countdown refresh loop
