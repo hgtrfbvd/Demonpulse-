@@ -69,18 +69,20 @@
     }
 
     function statusClass(secs) {
-        if (secs == null) return "status-upcoming";
-        if (secs < 0)    return "status-jumped";
-        if (secs < 120)  return "status-imminent";
-        if (secs < 600)  return "status-near";
+        if (secs == null)  return "status-upcoming";
+        if (secs < -1800)  return "status-awaiting";
+        if (secs < 0)      return "status-pending";
+        if (secs < 120)    return "status-imminent";
+        if (secs < 600)    return "status-near";
         return "status-upcoming";
     }
 
     function statusLabel(secs) {
-        if (secs == null) return "UPCOMING";
-        if (secs < 0)    return "Jumped";
-        if (secs < 120)  return "IMMINENT";
-        if (secs < 600)  return "NEAR";
+        if (secs == null)  return "UPCOMING";
+        if (secs < -1800)  return "AWAITING";
+        if (secs < 0)      return "PENDING";
+        if (secs < 120)    return "IMMINENT";
+        if (secs < 600)    return "NEAR";
         return "UPCOMING";
     }
 
