@@ -684,7 +684,7 @@ class OddsProConnector:
         first_item_keys, exception_message, sample_payload, http_status,
         content_type, final_url, redirected_url, response_length, response_preview.
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if target_date:
             params["date"] = target_date
         if type_:
@@ -1083,7 +1083,7 @@ class OddsProConnector:
         full_sweep can count them as meeting_details_failed and expose
         _last_detail_diag.
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if meeting.meeting_date:
             params["date"] = meeting.meeting_date
         path_id = quote(str(meeting.meeting_id), safe="")
@@ -1274,7 +1274,7 @@ class OddsProConnector:
 
         Response shape: {"data": [...], "meta": {...}}
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if target_date:
             params["date"] = target_date
         if type_:
@@ -1343,7 +1343,7 @@ class OddsProConnector:
           code     - race type code: T (thoroughbred), H (harness), G (greyhound)
           location - location filter (e.g. AUS, domestic)
         """
-        params: dict[str, Any] = {"country": self.country}
+        params: dict[str, Any] = {}
         if code:
             params["code"] = code
         if location:
@@ -1791,11 +1791,56 @@ class OddsProConnector:
         except (TypeError, ValueError):
             return None
 
-        race_date = str(item.get("date") or "")
-        track = self._clean_track(item.get("track") or item.get("venue") or "")
-        code = self._normalise_code(item.get("type") or item.get("code") or "HORSE")
+        # Track and code are nested inside "meeting" sub-object in /results response
+        meeting_sub = item.get("meeting") or {}
+        track_raw = (
+            item.get("track") or item.get("venue")
+            or meeting_sub.get("track") or meeting_sub.get("venue") or ""
+        )
+        code_raw = (
+            item.get("type") or item.get("code") or item.get("raceType")
+            or meeting_sub.get("type") or meeting_sub.get("code") or "HORSE"
+        )
+        track = self._clean_track(track_raw)
+        code = self._normalise_code(code_raw)
+
+        race_date = str(item.get("date") or (item.get("startTime") or "")[:10] or "")
         race_uid = self._make_race_uid(race_date, code, track, race_num)
 
+        # Winner comes from results array (position=1), not top-level fields
+        results_arr = item.get("results") or []
+        raw_results = item.get("rawResults") or []
+
+        winner_name = ""
+        winner_number = None
+        place_2 = ""
+        place_3 = ""
+
+        # Parse from structured results array
+        if results_arr:
+            for r in results_arr:
+                pos = r.get("position")
+                name = str(r.get("runnerName") or r.get("name") or "")
+                num = r.get("runnerNumber") or r.get("number")
+                try:
+                    num = int(num) if num is not None else None
+                except (TypeError, ValueError):
+                    num = None
+                if pos == 1:
+                    winner_name = name
+                    winner_number = num
+                elif pos == 2:
+                    place_2 = name
+                elif pos == 3:
+                    place_3 = name
+        # Fallback: parse from rawResults [[box1], [box2], [box3]]
+        elif raw_results and len(raw_results) >= 1:
+            try:
+                winner_number = int(raw_results[0][0]) if raw_results[0] else None
+            except (TypeError, ValueError, IndexError):
+                winner_number = None
+
+        # win_price is not in the /results endpoint — comes from /api/races/:id/results
         win_price_raw = item.get("winPrice") or item.get("win_price")
         try:
             win_price = float(win_price_raw) if win_price_raw is not None else None
@@ -1821,11 +1866,11 @@ class OddsProConnector:
             track=track,
             race_num=race_num,
             code=code,
-            winner=str(item.get("winner") or item.get("winnerName") or ""),
-            winner_number=item.get("winnerNumber"),
+            winner=winner_name,
+            winner_number=winner_number,
             win_price=win_price,
-            place_2=str(item.get("place2") or item.get("second") or ""),
-            place_3=str(item.get("place3") or item.get("third") or ""),
+            place_2=place_2,
+            place_3=place_3,
             margin=margin,
             winning_time=winning_time,
             source=self.source_name,

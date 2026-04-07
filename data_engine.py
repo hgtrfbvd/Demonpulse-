@@ -413,6 +413,18 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     meetings_found = len(meetings)
     log.info(f"[FETCH] ODDSPRO meetings_found={meetings_found}")
 
+    try:
+        from database import write_source_log
+        write_source_log({
+            "date": today,
+            "url": f"{conn.base_url}/api/external/meetings",
+            "method": "GET",
+            "status": f"ok:{meetings_found}",
+            "rows_returned": meetings_found,
+        })
+    except Exception:
+        pass
+
     if not meetings_found:
         log.info(f"full_sweep: no meetings returned for {today}")
         return {
@@ -560,6 +572,21 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
 
             _oddspro_race_objects.extend(races)
 
+            # Persist meeting record
+            try:
+                from database import upsert_meeting
+                upsert_meeting({
+                    "date": meeting.meeting_date or today,
+                    "track": meeting.track or "",
+                    "code": meeting.code or "GREYHOUND",
+                    "state": meeting.state or "",
+                    "country": meeting.country or "au",
+                    "race_count": len(races),
+                    "source": "oddspro",
+                })
+            except Exception as _me:
+                log.debug(f"full_sweep: upsert_meeting skipped: {_me}")
+
             for race in races:
                 _race_country = getattr(race, "country", "") or ""
                 log.info(
@@ -696,6 +723,23 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
                     f"[ODDSPRO] RUNNERS_INSERTED race_uid={race_uid}"
                     f" runners_stored={stored}"
                 )
+            else:
+                # Runners not embedded in /meetings — fetch from /api/external/race/:id
+                oddspro_race_id = race_dict.get("oddspro_race_id") or ""
+                if oddspro_race_id and conn.is_enabled():
+                    try:
+                        _, fallback_runners = conn.fetch_race_with_runners(oddspro_race_id)
+                        if fallback_runners:
+                            for fr in fallback_runners:
+                                _oddspro_runners_by_race.setdefault(race_uid, []).append(fr)
+                            stored = _store_runners_for_race(race_uid, fallback_runners)
+                            runners_stored += stored
+                            log.info(
+                                f"[ODDSPRO] RUNNERS_FETCHED_FALLBACK race_uid={race_uid}"
+                                f" count={len(fallback_runners)}"
+                            )
+                    except Exception as _re:
+                        log.warning(f"full_sweep: runner fallback fetch failed for {race_uid}: {_re}")
 
             # Store FormFav enrichment if present in merged record
             _ff_runners = race_dict.get("_formfav_runners") or []
@@ -1030,6 +1074,19 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
         f"check_results: {written} results confirmed and written, "
         f"{skipped} skipped (no confirmation) for {today}"
     )
+
+    try:
+        from database import write_source_log
+        write_source_log({
+            "date": today,
+            "url": f"{conn.base_url}/api/external/results",
+            "method": "GET",
+            "status": f"ok:{written}",
+            "rows_returned": written,
+        })
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "date": today,
