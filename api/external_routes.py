@@ -26,8 +26,8 @@ external_bp = Blueprint("external", __name__)
 
 
 def _get_connector():
-    from connectors.oddspro_connector import OddsProConnector
-    return OddsProConnector()
+    from data_engine import get_oddspro_connector
+    return get_oddspro_connector()
 
 
 @external_bp.route("/api/meetings", methods=["GET"])

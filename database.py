@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, date, timezone
 from typing import Any
+import hashlib
 import json
 
 from db import get_db, safe_query, T
@@ -253,10 +254,6 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
     if not runners:
         return 0
 
-    # Per-race counter used only when all of box_num/barrier/number are absent.
-    # Fallback values start at 9001 to avoid collisions with real stall/box numbers.
-    _race_fallback_seq: dict[str, int] = {}
-
     rows = []
     for r in runners:
         race_uid = r.get("race_uid") or ""
@@ -283,15 +280,16 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
                 box_num = None
 
         if box_num is None:
-            # Generate a stable fallback box_num so no runner is ever skipped.
-            # Use 9000 + position within this race's fallback sequence to avoid
-            # conflicts with real barrier/box numbers (which are never > a few dozen).
-            _race_fallback_seq[race_uid] = _race_fallback_seq.get(race_uid, 0) + 1
-            box_num = 9000 + _race_fallback_seq[race_uid]
+            # Generate a stable fallback box_num so no runner is ever skipped,
+            # and the same runner always gets the same fallback across upsert calls.
+            # Use 9000 + (md5(race_uid:name) % 1000) for deterministic, stable identity.
+            _hash_key = f"{race_uid}:{r.get('name', '')}"
+            _hash_val = int(hashlib.md5(_hash_key.encode()).hexdigest(), 16)
+            box_num = 9000 + (_hash_val % 1000)
             log.info(
                 f"database.upsert_runners: runner missing box_num/barrier/number "
                 f"(race_uid={race_uid!r}, name={r.get('name')!r}) "
-                f"— assigned fallback box_num={box_num}"
+                f"— assigned stable fallback box_num={box_num}"
             )
         rows.append({
             "race_id": race_id_uuid,
@@ -387,11 +385,13 @@ def get_result(race_uid: str) -> dict[str, Any] | None:
     parts = (race_uid or "").split("_")
     if len(parts) < 4:
         return None
-    race_date, code, *track_parts_and_num = parts
-    if not track_parts_and_num:
-        return None
-    race_num_str = track_parts_and_num[-1]
-    track = "-".join(track_parts_and_num[:-1])
+    # Format: DATE_CODE_TRACK_RACENUM
+    # DATE (index 0) and CODE (index 1) are fixed; RACENUM is the last component;
+    # TRACK is everything between CODE and RACENUM (handles underscores in track names).
+    race_date = parts[0]
+    code = parts[1]
+    race_num_str = parts[-1]
+    track = "_".join(parts[2:-1]) if len(parts) > 3 else parts[2]
     try:
         race_num = int(race_num_str)
     except ValueError:

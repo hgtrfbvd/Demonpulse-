@@ -94,9 +94,9 @@ def record_bootstrap(*, ok: bool, result: dict[str, Any] | None = None) -> None:
         last_bootstrap_at=_now(),
         last_bootstrap_ok=ok,
         last_bootstrap_error=error_msg,
-        last_bootstrap_count=r.get("races", 0) if ok else 0,
+        last_bootstrap_count=r.get("races_stored", r.get("races", 0)) if ok else 0,
     )
-    log.debug(f"health_service: bootstrap recorded ok={ok} count={r.get('races', 0)} error={error_msg}")
+    log.debug(f"health_service: bootstrap recorded ok={ok} count={r.get('races_stored', r.get('races', 0))} error={error_msg}")
 
 
 def record_broad_refresh(*, ok: bool, races_refreshed: int = 0, error: str | None = None) -> None:

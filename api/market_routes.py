@@ -22,8 +22,8 @@ market_bp = Blueprint("market", __name__, url_prefix="/api/market")
 
 
 def _get_connector():
-    from connectors.oddspro_connector import OddsProConnector
-    return OddsProConnector()
+    from data_engine import get_oddspro_connector
+    return get_oddspro_connector()
 
 
 @market_bp.route("/top-favs", methods=["GET"])

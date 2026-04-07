@@ -37,9 +37,9 @@ def _load_scoring_settings() -> dict:
         "simulation_depth":     1000,
     }
     try:
-        from db import get_db, safe_query
+        from db import get_db, safe_query, T
         row = safe_query(
-            lambda: get_db().table("system_state").select(
+            lambda: get_db().table(T("system_state")).select(
                 "confidence_threshold,ev_threshold,tempo_weight,"
                 "traffic_penalty,closer_boost,fade_penalty,simulation_depth"
             ).eq("id", 1).single().execute().data

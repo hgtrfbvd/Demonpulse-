@@ -41,7 +41,7 @@ def build_board(
     blocked_tracks: set[str] | None = None,
     formfav_overlays: dict[str, dict[str, Any]] | None = None,
     include_blocked: bool = False,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """
     Build the live racing board from a list of OddsPro race records.
 
@@ -185,7 +185,14 @@ def build_board(
             f"blocked={blocked_count} rejected={rejected_count})"
         )
 
-    return board
+    stats = {
+        "settled_count": settled_count,
+        "expired_count": expired_count,
+        "invalid_time_count": invalid_time_count,
+        "blocked_count": blocked_count,
+        "validation_rejected_count": rejected_count,
+    }
+    return board, stats
 
 
 def _board_item(race: dict[str, Any], ntj: dict[str, Any], confidence: float) -> dict[str, Any]:
@@ -291,7 +298,7 @@ def get_board_for_today(
                 enriched_races.append(race)
             races = enriched_races
 
-        board = build_board(
+        board, build_stats = build_board(
             races,
             blocked_tracks=blocked_tracks,
             formfav_overlays=formfav_overlays,
@@ -300,17 +307,16 @@ def get_board_for_today(
         board_count = len(board)
         active_count = len(races)
         blocked_pre_stored = len(blocked_today)
-        # rejected_count: races that were active when passed to build_board but
-        # didn't make it to the final board. get_active_races() already excludes
-        # pre-stored blocked races, so this count reflects races blocked during
-        # the board build (integrity gate) or rejected by the validation gate.
-        rejected_count = max(active_count - board_count, 0)
 
         diagnostics: dict[str, Any] = {
             "stored_race_count_today": len(all_today),
             "active_race_count": active_count,
             "blocked_race_count": blocked_pre_stored,
-            "rejected_count": rejected_count,
+            "settled_count": build_stats["settled_count"],
+            "expired_count": build_stats["expired_count"],
+            "invalid_time_count": build_stats["invalid_time_count"],
+            "integrity_blocked_count": build_stats["blocked_count"],
+            "validation_rejected_count": build_stats["validation_rejected_count"],
             "formfav_enriched_count": len(ff_enrichment),
             "formfav_runner_enriched_count": sum(len(v) for v in ff_runner_enrichment.values()),
         }
