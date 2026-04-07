@@ -45,3 +45,49 @@ def place_bet():
     }
     result = safe_query(lambda: get_db().table(T("bet_log")).insert(row).execute().data)
     return jsonify({"ok": True, "bet": result[0] if result else row})
+
+
+@bet_bp.route("/open", methods=["GET"])
+def open_bets():
+    rows = safe_query(lambda: get_db().table(T("bet_log"))
+        .select("*").eq("result", "PENDING")
+        .order("created_at", desc=True).execute().data, []) or []
+    return jsonify({"ok": True, "bets": rows, "count": len(rows)})
+
+
+@bet_bp.route("/settle", methods=["POST"])
+def settle_bet():
+    from datetime import datetime, timezone
+    data = request.get_json(silent=True) or {}
+    bet_id  = data.get("bet_id") or ""
+    result  = (data.get("result") or "").upper()
+    if not bet_id or result not in ("WIN", "LOSE", "PLACE"):
+        return jsonify({"ok": False, "error": "bet_id and valid result required"}), 400
+    rows = safe_query(lambda: get_db().table(T("bet_log"))
+        .select("odds,stake").eq("id", bet_id).limit(1).execute().data, []) or []
+    if not rows:
+        return jsonify({"ok": False, "error": "Bet not found"}), 404
+    bet = rows[0]
+    odds  = float(bet.get("odds") or 0)
+    stake = float(bet.get("stake") or 0)
+    if result == "WIN":
+        pl = round(stake * odds - stake, 2)
+    elif result == "PLACE":
+        pl = round(stake * (odds / 4) - stake, 2)
+    else:
+        pl = round(-stake, 2)
+    safe_query(lambda: get_db().table(T("bet_log")).update({
+        "result": result,
+        "pl": pl,
+        "settled_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", bet_id).execute())
+    return jsonify({"ok": True, "bet_id": bet_id, "result": result, "pl": pl})
+
+
+@bet_bp.route("/reset-bank", methods=["POST"])
+def reset_bank():
+    from db import update_state
+    data = request.get_json(silent=True) or {}
+    amount = float(data.get("amount") or 1000)
+    update_state(bankroll=amount)
+    return jsonify({"ok": True, "bankroll": amount})

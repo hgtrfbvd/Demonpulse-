@@ -805,6 +805,30 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
     // Load race data
     // -------------------------------------------------------
 
+    async function loadAndRenderResult(raceUid) {
+        try {
+            const data = await api(`/api/races/${encodeURIComponent(raceUid)}/results`);
+            const container = q("formGuideRows");
+            if (!container) return;
+            if (data.ok && data.winner) {
+                container.innerHTML = `
+                    <div style="padding:24px;">
+                        <div style="font-size:0.75rem;letter-spacing:.08em;color:var(--text-dim);margin-bottom:12px;">RACE RESULT</div>
+                        <div style="display:grid;gap:10px;">
+                            <div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">WINNER</span>
+                                <span style="font-weight:700;font-size:1.1rem;">${esc(data.winner || "—")}</span>
+                                <span style="color:var(--amber);font-weight:700;">${data.win_price ? "$" + parseFloat(data.win_price).toFixed(2) : "—"}</span></div>
+                            ${data.place_3 ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">3RD</span><span>${esc(data.place_3)}</span></div>` : ""}
+                            ${data.winning_time ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">TIME</span><span>${esc(String(data.winning_time))}</span></div>` : ""}
+                            ${data.margin ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">MARGIN</span><span>${esc(String(data.margin))}</span></div>` : ""}
+                        </div>
+                    </div>`;
+            } else {
+                container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim);">Result not yet available.</div>`;
+            }
+        } catch (_) {}
+    }
+
     async function loadLiveRace() {
         const raceUid = getRaceUid();
         if (!raceUid) {
@@ -819,27 +843,39 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             liveAnalysis = data.analysis || null;
             liveSignal   = data.signal   || null;
 
-            // Runners: prefer data.runners, fallback to analysis.all_runners
-            const rawRunners = (Array.isArray(data.runners) && data.runners.length)
-                ? data.runners
-                : (liveAnalysis?.all_runners || []);
+            // Priority: data.runners > analysis.all_runners > []
+            let rawRunners = [];
+            if (Array.isArray(data.runners) && data.runners.length) {
+                rawRunners = data.runners;
+            } else if (Array.isArray(liveAnalysis?.all_runners) && liveAnalysis.all_runners.length) {
+                rawRunners = liveAnalysis.all_runners;
+            }
             liveRunners = rawRunners;
 
             renderRaceHeader();
             renderAnalysis();
 
-            if (liveRunners.length) {
+            // If race is resulted, show result panel instead of form guide
+            const status = (liveRace?.status || "").toLowerCase();
+            if (["final", "paying", "result_posted", "abandoned"].includes(status)) {
+                loadAndRenderResult(raceUid);
+            } else if (liveRunners.length) {
                 buildRunnerCards(liveRunners, liveAnalysis);
             } else {
                 const container = q("formGuideRows");
-                if (container) container.innerHTML = `<div class="board-empty" style="padding:24px;text-align:center;color:var(--text-dim);">No runner data.</div>`;
-                setText("formGuideMeta", "— runners");
+                if (container) container.innerHTML = `
+                    <div style="padding:32px;text-align:center;color:var(--text-dim);">
+                        <div style="font-size:1.1rem;margin-bottom:8px;">Runners loading…</div>
+                        <div style="font-size:0.85rem;">Runner data will appear when available from OddsPro.</div>
+                    </div>`;
+                setText("formGuideMeta", "0 runners");
             }
 
             await loadMeetingRaces();
         } catch (error) {
             console.error("Live race load failed:", error);
-            setText("liveTrack", "Failed to load race");
+            const container = q("formGuideRows");
+            if (container) container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red-1);">Failed to load race data.</div>`;
         }
     }
 
