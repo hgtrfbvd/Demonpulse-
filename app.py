@@ -663,6 +663,154 @@ def api_debug_formfav():
         log.exception(f"/api/debug/formfav failed: {e}")
         return jsonify({"ok": False, "error": "Could not retrieve pipeline debug state"}), 500
 
+
+@app.route("/api/debug/pipeline-test", methods=["GET"])
+def api_debug_pipeline_test():
+    """
+    GET /api/debug/pipeline-test
+    End-to-end live data pipeline diagnostic. No auth required, no writes.
+    Returns a JSON snapshot showing what OddsPro and FormFav are currently
+    returning, plus today's DB race count and scheduler state.
+    """
+    from datetime import date as _date
+
+    today = _date.today().isoformat()
+    result: dict = {}
+
+    # ── Connector initialisation (single instance each, reused throughout) ───
+    from connectors.oddspro_connector import OddsProConnector
+    from connectors.formfav_connector import FormFavConnector
+
+    oddspro_connector = None
+    formfav_connector = None
+    try:
+        oddspro_connector = OddsProConnector()
+        result["oddspro_base_url"] = oddspro_connector.base_url
+        result["oddspro_enabled"] = oddspro_connector.is_enabled()
+    except Exception as e:
+        result["oddspro_base_url"] = None
+        result["oddspro_enabled"] = False
+        result["oddspro_init_error"] = str(e)
+
+    try:
+        formfav_connector = FormFavConnector()
+        result["formfav_enabled"] = formfav_connector.is_enabled()
+    except Exception as e:
+        result["formfav_enabled"] = False
+        result["formfav_init_error"] = str(e)
+
+    tests: dict = {}
+
+    # ── OddsPro: /api/external/tracks connectivity ───────────────────────────
+    if oddspro_connector is not None:
+        try:
+            hc = oddspro_connector.healthcheck()
+            tests["oddspro_tracks"] = {
+                "ok": hc.get("ok", False),
+                "status_code": hc.get("status_code"),
+            }
+        except Exception as e:
+            tests["oddspro_tracks"] = {"ok": False, "error": str(e)}
+    else:
+        tests["oddspro_tracks"] = {"ok": False, "error": "OddsPro connector not initialised"}
+
+    # ── OddsPro: /api/external/meetings?date=today&location=domestic ─────────
+    # Uses the low-level _get() to capture the raw HTTP response shape
+    # (meetings_count, first_meeting, has_races_embedded, first_race) that the
+    # high-level fetch_meetings() would process away into MeetingRecord objects.
+    if oddspro_connector is not None:
+        try:
+            resp_mtg = oddspro_connector._get(  # noqa: SLF001
+                "/api/external/meetings",
+                params={"date": today, "location": "domestic"},
+            )
+            try:
+                mtg_payload = resp_mtg.json()
+            except Exception:
+                mtg_payload = {}
+            mtg_list: list = []
+            if isinstance(mtg_payload, list):
+                mtg_list = mtg_payload
+            elif isinstance(mtg_payload, dict):
+                mtg_list = (
+                    mtg_payload.get("data")
+                    or mtg_payload.get("meetings")
+                    or []
+                )
+                if isinstance(mtg_list, dict):
+                    mtg_list = [mtg_list]
+            first_mtg = mtg_list[0] if mtg_list else None
+            first_race = None
+            if first_mtg and isinstance(first_mtg, dict):
+                races_embedded = first_mtg.get("races") or []
+                first_race = races_embedded[0] if races_embedded else None
+            tests["oddspro_meetings"] = {
+                "ok": resp_mtg.status_code == 200,
+                "status_code": resp_mtg.status_code,
+                "meetings_count": len(mtg_list),
+                "first_meeting": first_mtg,
+                "has_races_embedded": bool(first_mtg and first_mtg.get("races")),
+                "first_race": first_race,
+            }
+        except Exception as e:
+            tests["oddspro_meetings"] = {"ok": False, "error": str(e)}
+    else:
+        tests["oddspro_meetings"] = {"ok": False, "error": "OddsPro connector not initialised"}
+
+    # ── OddsPro: /api/meetings discovery ─────────────────────────────────────
+    if oddspro_connector is not None:
+        try:
+            disc_list = oddspro_connector.fetch_meetings_discovery()
+            tests["oddspro_discovery"] = {
+                "ok": True,
+                "raw": disc_list,
+            }
+        except Exception as e:
+            tests["oddspro_discovery"] = {"ok": False, "error": str(e)}
+    else:
+        tests["oddspro_discovery"] = {"ok": False, "error": "OddsPro connector not initialised"}
+
+    # ── FormFav: /v1/form/meetings?date=today&race_code=gallops ──────────────
+    # Uses _request_meetings() to get the raw meeting dicts for the gallops
+    # code so we can see exactly what the API returns before any processing.
+    if formfav_connector is not None and formfav_connector.is_enabled():
+        try:
+            ff_raw = formfav_connector._request_meetings(today, "gallops")  # noqa: SLF001
+            tests["formfav_meetings"] = {
+                "ok": True,
+                "raw": ff_raw,
+            }
+        except Exception as e:
+            tests["formfav_meetings"] = {"ok": False, "error": str(e)}
+    else:
+        tests["formfav_meetings"] = {"ok": False, "error": "FormFav not enabled"}
+
+    # ── Database: today_races count ───────────────────────────────────────────
+    try:
+        from database import get_races_for_date
+        tests["database"] = {
+            "ok": True,
+            "today_races_count": len(get_races_for_date(today)),
+        }
+    except Exception as e:
+        tests["database"] = {"ok": False, "error": str(e)}
+
+    # ── Scheduler state ────────────────────────────────────────────────────────
+    try:
+        import scheduler
+        sched_status = scheduler.get_status()
+        tests["scheduler"] = {
+            "last_full_sweep_at":     sched_status.get("last_full_sweep_at"),
+            "last_full_sweep_result": sched_status.get("last_full_sweep_result"),
+            "last_error":             sched_status.get("last_error"),
+        }
+    except Exception as e:
+        tests["scheduler"] = {"ok": False, "error": str(e)}
+
+    result["tests"] = tests
+    return jsonify(result)
+
+
 # ------------------------------------------------------------
 # SMOKE TEST
 # ------------------------------------------------------------
