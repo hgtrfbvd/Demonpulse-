@@ -247,6 +247,12 @@ TRACK_ALIASES: dict[str, str] = {
     # Hatrick Straight (NZ greyhound): "Hatrick Straight Raceway" or "Hatrick" → "hatrick-straight"
     "hatrick-straight-raceway":  "hatrick-straight",
     "hatrick":                   "hatrick-straight",
+    # Q1 Lakeside (QLD greyhound): Sportsbet uses "q1-lakeside" (no hyphen before "1"),
+    # while the canonical slug is "q-1-lakeside" (hyphen between "q" and "1").
+    "q1-lakeside":               "q-1-lakeside",
+    "q-1-lakeside-park":         "q-1-lakeside",
+    # Bulli (NSW greyhound): "Bulli Raceway" → "bulli"
+    "bulli-raceway":             "bulli",
 }
 
 
@@ -276,21 +282,41 @@ def apply_track_alias(track: str) -> str:
 
 #: Australian thoroughbred venues.
 HORSE_AU_TRACKS: frozenset[str] = frozenset({
-    # NSW
+    # NSW — metropolitan
     "randwick", "rosehill", "canterbury", "warwick-farm", "kensington",
+    # NSW — provincial & country
     "newcastle", "wyong", "gosford", "kembla-grange", "hawkesbury",
-    "albury",  # alias target: albury-racecourse → albury
-    # VIC
+    "muswellbrook", "armidale", "goulburn", "tamworth", "grafton",
+    "lismore", "coffs-harbour", "taree", "scone", "cessnock",
+    "wagga-wagga", "albury", "orange", "bathurst", "dubbo",
+    "moruya", "nowra", "queanbeyan", "mudgee",
+    # VIC — metropolitan
     "flemington", "caulfield", "moonee-valley", "sandown", "mornington",
+    # VIC — provincial & country
     "ballarat", "bendigo", "geelong", "sale", "warrnambool", "traralgon",
-    # QLD
+    "hamilton", "cranbourne", "pakenham", "seymour", "echuca",
+    "swan-hill", "horsham", "warracknabeal", "donald", "stawell",
+    "avoca", "mildura", "wangaratta", "wodonga", "benalla",
+    "shepparton", "bairnsdale",
+    # QLD — metropolitan
     "eagle-farm", "doomben", "sunshine-coast", "gold-coast",
+    # QLD — provincial & country
+    "ipswich", "toowoomba", "warwick", "rockhampton", "mackay",
+    "townsville", "cairns", "bundaberg", "hervey-bay", "gympie",
+    "beaudesert",
     # SA
     "morphettville", "oakbank", "gawler", "port-lincoln",
+    "victoria-park", "mount-gambier", "port-augusta", "naracoorte",
+    "murray-bridge",
     # WA
     "ascot", "belmont-park", "pinjarra", "bunbury", "geraldton",
+    "northam", "kalgoorlie", "albany", "esperance",
     # TAS
-    "launceston", "hobart", "devonport",
+    "launceston", "hobart", "devonport", "elwick", "mowbray",
+    # ACT
+    "thoroughbred-park",
+    # NT
+    "darwin",
 })
 
 #: New Zealand thoroughbred venues.
@@ -306,6 +332,7 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     # VIC
     "the-meadows", "sandown-park", "sale", "ballarat", "bendigo", "geelong",
     "traralgon", "shepparton", "warragul",
+    "horsham", "mildura", "swan-hill",
     # SA
     "angle-park", "gawler", "murray-bridge",
     # VIC/NSW
@@ -313,10 +340,14 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     # NSW
     "casino", "lismore", "dubbo",
     "mt-druitt",  # alias target: mount-druitt → mt-druitt
+    "bulli", "grafton", "tamworth", "maitland", "bathurst",
+    # QLD
+    "ipswich", "albany-creek", "q-1-lakeside",
     # TAS
     "hobart", "launceston", "devonport",
     # WA
     "cannington", "mandurah", "northam",
+    "albany",
 })
 
 #: New Zealand greyhound venues.
@@ -686,3 +717,29 @@ def resolve_formfav_track(track: str, country: str = "au") -> str | None:
         return slug if slug in FORMFAV_AU_TRACKS else None
     # nz
     return slug if slug in FORMFAV_NZ_TRACKS else None
+
+
+# ---------------------------------------------------------------------------
+# ALIAS VALIDATION — import-time guard
+# ---------------------------------------------------------------------------
+# Raises a warning if any TRACK_ALIASES value is missing from all frozensets.
+# This prevents the class of bug where an alias points to a track that is not
+# present in any whitelist, causing permanent exclusion from the pipeline.
+# ---------------------------------------------------------------------------
+
+def _validate_aliases() -> None:
+    all_tracks = (
+        HORSE_AU_TRACKS | HORSE_NZ_TRACKS
+        | GREYHOUND_AU_TRACKS | GREYHOUND_NZ_TRACKS
+        | HARNESS_AU_TRACKS | HARNESS_NZ_TRACKS
+    )
+    missing = {v for v in TRACK_ALIASES.values() if v not in all_tracks}
+    if missing:
+        import warnings
+        warnings.warn(
+            f"TRACK_ALIASES targets not in any whitelist: {sorted(missing)}",
+            stacklevel=2,
+        )
+
+
+_validate_aliases()
