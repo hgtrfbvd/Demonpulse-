@@ -55,6 +55,9 @@ def open_bets():
     return jsonify({"ok": True, "bets": rows, "count": len(rows)})
 
 
+_PLACE_ODDS_DIVISOR = 4  # Standard place payout divisor for place bet P/L calculation
+
+
 @bet_bp.route("/settle", methods=["POST"])
 def settle_bet():
     from datetime import datetime, timezone
@@ -73,7 +76,7 @@ def settle_bet():
     if result == "WIN":
         pl = round(stake * odds - stake, 2)
     elif result == "PLACE":
-        pl = round(stake * (odds / 4) - stake, 2)
+        pl = round(stake * (odds / _PLACE_ODDS_DIVISOR) - stake, 2)
     else:
         pl = round(-stake, 2)
     safe_query(lambda: get_db().table(T("bet_log")).update({

@@ -818,6 +818,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                             <div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">WINNER</span>
                                 <span style="font-weight:700;font-size:1.1rem;">${esc(data.winner || "—")}</span>
                                 <span style="color:var(--amber);font-weight:700;">${data.win_price ? "$" + parseFloat(data.win_price).toFixed(2) : "—"}</span></div>
+                            ${data.place_2 ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">2ND</span><span>${esc(data.place_2)}</span></div>` : ""}
                             ${data.place_3 ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">3RD</span><span>${esc(data.place_3)}</span></div>` : ""}
                             ${data.winning_time ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">TIME</span><span>${esc(String(data.winning_time))}</span></div>` : ""}
                             ${data.margin ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">MARGIN</span><span>${esc(String(data.margin))}</span></div>` : ""}
