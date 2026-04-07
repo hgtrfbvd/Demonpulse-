@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     date        DATE        NOT NULL    DEFAULT CURRENT_DATE,
     track       TEXT        NOT NULL    DEFAULT '',
     code        TEXT        NOT NULL    DEFAULT 'GREYHOUND'
-                            CHECK (code IN ('GREYHOUND', 'HARNESS', 'GALLOPS')),
+                            CHECK (code IN ('GREYHOUND', 'HARNESS', 'GALLOPS', 'HORSE')),
     state       TEXT                    DEFAULT '',
     country     TEXT                    DEFAULT 'AUS',
     weather     TEXT                    DEFAULT '',
@@ -1365,8 +1365,9 @@ CREATE TABLE IF NOT EXISTS sectional_benchmarks (
 
 
 -- ================================================================
--- SECTION 11b: FORMFAV ENRICHMENT TABLES
--- Stores complete FormFav API responses for race and runner enrichment.
+-- SECTION 12: FORMFAV ENRICHMENT TABLES
+-- Persistent secondary enrichment from FormFav API.
+-- Keyed by race_uid (race) and (race_uid, number) (runner).
 -- Never overwrites OddsPro authoritative records.
 -- ================================================================
 
@@ -1388,6 +1389,7 @@ CREATE TABLE IF NOT EXISTS formfav_race_enrichment (
     abandoned           BOOLEAN     DEFAULT false,
     number_of_runners   INTEGER     DEFAULT 0,
     pace_scenario       TEXT        DEFAULT '',
+    prize_money         TEXT        DEFAULT '',
     raw_response        JSONB,
     fetched_at          TIMESTAMPTZ DEFAULT NOW(),
     updated_at          TIMESTAMPTZ DEFAULT NOW(),
@@ -1426,6 +1428,17 @@ CREATE TABLE IF NOT EXISTS formfav_runner_enrichment (
     model_rank          INTEGER,
     confidence          TEXT        DEFAULT '',
     model_version       TEXT        DEFAULT '',
+    last20_starts       TEXT        DEFAULT '',
+    racing_colours      TEXT        DEFAULT '',
+    gear_change         TEXT        DEFAULT '',
+    stats_first_up      JSONB,
+    stats_second_up     JSONB,
+    stats_overall_starts    INTEGER,
+    stats_overall_wins      INTEGER,
+    stats_overall_places    INTEGER,
+    stats_overall_win_pct   NUMERIC,
+    stats_overall_place_pct NUMERIC,
+    date                DATE,
     fetched_at          TIMESTAMPTZ DEFAULT NOW(),
     updated_at          TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE (race_uid, number)
@@ -1433,9 +1446,10 @@ CREATE TABLE IF NOT EXISTS formfav_runner_enrichment (
 
 CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_uid ON formfav_runner_enrichment(race_uid);
 CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_race_num ON formfav_runner_enrichment(race_uid, number);
+CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_date ON formfav_runner_enrichment(date);
 
 -- ================================================================
--- SECTION 11c: FORMFAV DEBUG STATS
+-- SECTION 12b: FORMFAV DEBUG STATS
 -- Persisted pipeline counter snapshots — written after each pipeline
 -- run so /api/debug/formfav always reflects real execution state.
 -- ================================================================
@@ -1446,6 +1460,11 @@ CREATE TABLE IF NOT EXISTS formfav_debug_stats (
     total_races_discovered      INTEGER NOT NULL DEFAULT 0,
     total_domestic_races        INTEGER NOT NULL DEFAULT 0,
     total_international_filtered INTEGER NOT NULL DEFAULT 0,
+    -- Merge-stage FormFav counters (full_sweep / data_engine)
+    formfav_merge_called        INTEGER NOT NULL DEFAULT 0,
+    formfav_merge_matched       INTEGER NOT NULL DEFAULT 0,
+    formfav_merge_failed        INTEGER NOT NULL DEFAULT 0,
+    -- Sync-stage FormFav counters (formfav_sync)
     total_formfav_eligible      INTEGER NOT NULL DEFAULT 0,
     total_formfav_called        INTEGER NOT NULL DEFAULT 0,
     total_formfav_success       INTEGER NOT NULL DEFAULT 0,
@@ -1454,9 +1473,45 @@ CREATE TABLE IF NOT EXISTS formfav_debug_stats (
 
 CREATE INDEX IF NOT EXISTS idx_formfav_debug_stats_recorded_at ON formfav_debug_stats(recorded_at DESC);
 
+-- ================================================================
+-- SECTION 12c: RUNNER CONNECTION STATS
+-- Per-runner-per-race jockey/trainer stats anchored to race context.
+-- Replaces standalone jockey_stats/trainer_stats lookup tables.
+-- ================================================================
+
+CREATE TABLE IF NOT EXISTS runner_connection_stats (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    race_uid        TEXT        NOT NULL,
+    date            DATE        NOT NULL,
+    track           TEXT        NOT NULL DEFAULT '',
+    race_num        INTEGER     NOT NULL,
+    runner_name     TEXT        NOT NULL DEFAULT '',
+    runner_number   INTEGER,
+    person_type     TEXT        NOT NULL,  -- 'jockey' or 'trainer'
+    person_name     TEXT        NOT NULL DEFAULT '',
+    race_code       TEXT        NOT NULL DEFAULT 'gallops',
+    total_starts    INTEGER,
+    total_wins      INTEGER,
+    overall_win_rate    NUMERIC,
+    overall_place_rate  NUMERIC,
+    recent_win_rate     NUMERIC,
+    track_win_rate      NUMERIC,   -- win rate at THIS specific track
+    track_starts        INTEGER,   -- starts at THIS specific track
+    raw_response    JSONB,
+    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (race_uid, runner_number, person_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runner_connection_race_uid
+    ON runner_connection_stats(race_uid);
+CREATE INDEX IF NOT EXISTS idx_runner_connection_person
+    ON runner_connection_stats(person_name, person_type, race_code);
+
+CREATE TABLE IF NOT EXISTS test_runner_connection_stats
+    ( LIKE runner_connection_stats INCLUDING ALL );
 
 -- ================================================================
--- SECTION 12: TEST-MODE MIRROR TABLES
+-- SECTION 13: TEST-MODE MIRROR TABLES
 -- In TEST mode, env.table() prefixes all testable tables with
 -- "test_" so production data is never touched.
 -- ================================================================
@@ -1572,7 +1627,7 @@ CREATE INDEX IF NOT EXISTS idx_test_results_log_uid     ON test_results_log(race
 
 
 -- ================================================================
--- SECTION 13: HELPER FUNCTIONS AND TRIGGERS
+-- SECTION 14: HELPER FUNCTIONS AND TRIGGERS
 -- ================================================================
 
 -- ----------------------------------------------------------------
@@ -1615,7 +1670,7 @@ $$ LANGUAGE plpgsql;
 
 
 -- ================================================================
--- SECTION 14: BACKFILL — existing users missing account/permission rows
+-- SECTION 15: BACKFILL — existing users missing account/permission rows
 -- ================================================================
 
 INSERT INTO user_accounts (user_id)
