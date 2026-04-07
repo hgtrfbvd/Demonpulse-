@@ -4,21 +4,12 @@
     let allBoardItems = [];
     let activeCodeFilter = "ALL";
     let countdownTimer = null;
+    let refreshTimer = null;
+    let lastSuccessAt = null;
 
-    const el = {
-        refreshBtn: document.getElementById("refreshHomeBoardBtn"),
-        clearBtn: document.getElementById("clearHomeFilterBtn"),
-        filterButtons: Array.from(document.querySelectorAll(".terminal-filter-btn")),
-        boardRows: document.getElementById("homeBoardRows"),
-        boardMeta: document.getElementById("boardTerminalMeta"),
-        visibleRaceCount: document.getElementById("visibleRaceCount"),
-        hotRaceCount: document.getElementById("hotRaceCount"),
-        nextUpMain: document.getElementById("nextUpMain"),
-        nextUpSub: document.getElementById("nextUpSub"),
-        codeMixValue: document.getElementById("codeMixValue"),
-        quickFeedList: document.getElementById("quickFeedList"),
-        priorityFocusBox: document.getElementById("priorityFocusBox"),
-    };
+    // -------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------
 
     function normaliseCode(code) {
         const raw = String(code || "GREYHOUND").toUpperCase();
@@ -26,366 +17,336 @@
         return raw;
     }
 
-    function formatTrack(track) {
-        if (!track) return "—";
-        return track.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    function formatTrack(slug) {
+        if (!slug) return "—";
+        return slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
     }
 
-    function codeClass(code) {
-        const c = normaliseCode(code);
-        if (c === "GREYHOUND") return "code-gh";
-        if (c === "HORSE") return "code-horse";
-        if (c === "HARNESS") return "code-harness";
-        return "code-default";
-    }
-
-    function signalClass(signal) {
-        const s = String(signal || "").toUpperCase();
-        if (s === "SNIPER") return "signal-sniper";
-        if (s === "VALUE") return "signal-value";
-        if (s === "GEM") return "signal-gem";
-        if (s === "WATCH") return "signal-watch";
-        if (s === "RISK") return "signal-risk";
-        if (s === "NO_BET") return "signal-no-bet";
-        return "signal-none";
+    function formatCountdown(secs) {
+        if (secs == null) return "—";
+        if (secs < 0)    return "Jumped";
+        if (secs < 60)   return `${secs}s`;
+        if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+        return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
     }
 
     function parseJumpTimeToDate(jumpTime) {
         if (!jumpTime || typeof jumpTime !== "string") return null;
-
-        // ISO datetime strings: "2026-04-07T10:30:00+10:00", "2026-04-07T10:30:00Z", etc.
-        // Detect by full date pattern before the "T" separator
         if (/^\d{4}-\d{2}-\d{2}T/.test(jumpTime) || /^\d{4}-\d{2}-\d{2} /.test(jumpTime)) {
             const dt = new Date(jumpTime);
             return isNaN(dt.getTime()) ? null : dt;
         }
-
-        // HH:MM or HH:MM:SS — interpreted as local time for today
         const parts = jumpTime.split(":");
         if (parts.length < 2) return null;
-
         const hour = parseInt(parts[0], 10);
         const minute = parseInt(parts[1], 10);
-
         if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
-
         const now = new Date();
         return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
     }
 
-    // Use jump_dt_iso (UTC ISO from backend) when available, else fall back to jump_time
-    function getJumpDate(item) {
-        if (item && item.jump_dt_iso) {
-            const dt = new Date(item.jump_dt_iso);
-            if (!isNaN(dt.getTime())) return dt;
-        }
-        return parseJumpTimeToDate(item && item.jump_time ? item.jump_time : (typeof item === "string" ? item : null));
+    function getSecondsToJump(item) {
+        if (item.seconds_to_jump != null) return item.seconds_to_jump;
+        const dt = item.jump_dt_iso ? new Date(item.jump_dt_iso) : parseJumpTimeToDate(item.jump_time);
+        if (!dt) return null;
+        return Math.floor((dt.getTime() - Date.now()) / 1000);
     }
 
-    function formatCountdownText(jumpTimeOrDate) {
-        let target;
-        if (jumpTimeOrDate instanceof Date) {
-            target = jumpTimeOrDate;
-        } else {
-            target = parseJumpTimeToDate(jumpTimeOrDate);
-        }
-        if (!target) return "—";
-
-        const diffSeconds = Math.floor((target.getTime() - Date.now()) / 1000);
-        if (diffSeconds <= 0) return "Jumped / due";
-
-        const mins = Math.floor(diffSeconds / 60);
-        const secs = diffSeconds % 60;
-
-        if (mins >= 60) {
-            const hrs = Math.floor(mins / 60);
-            const remMins = mins % 60;
-            return `${hrs}h ${remMins}m`;
-        }
-
-        return `${mins}m ${String(secs).padStart(2, "0")}s`;
+    function countdownClass(secs) {
+        if (secs == null) return "";
+        if (secs < 120)  return "imminent";
+        if (secs < 600)  return "near";
+        return "";
     }
 
-    function setFilter(nextFilter) {
-        activeCodeFilter = nextFilter;
-        el.filterButtons.forEach(btn => {
-            btn.classList.toggle("active", btn.dataset.code === nextFilter);
+    function chipClass(secs) {
+        if (secs == null) return "ntj-upcoming";
+        if (secs < 120)  return "ntj-imminent";
+        if (secs < 600)  return "ntj-near";
+        return "ntj-upcoming";
+    }
+
+    function statusClass(secs) {
+        if (secs == null) return "status-upcoming";
+        if (secs < 120)  return "status-imminent";
+        if (secs < 600)  return "status-near";
+        return "status-upcoming";
+    }
+
+    function statusLabel(secs) {
+        if (secs == null) return "UPCOMING";
+        if (secs < 120)  return "IMMINENT";
+        if (secs < 600)  return "NEAR";
+        return "UPCOMING";
+    }
+
+    function codeBadgeClass(code) {
+        const c = normaliseCode(code);
+        if (c === "GREYHOUND") return "badge-greyhound";
+        if (c === "HORSE")     return "badge-horse";
+        if (c === "HARNESS")   return "badge-harness";
+        return "";
+    }
+
+    function codeShort(code) {
+        const c = normaliseCode(code);
+        if (c === "GREYHOUND") return "GH";
+        if (c === "HORSE")     return "HR";
+        if (c === "HARNESS")   return "HN";
+        return c.slice(0, 2);
+    }
+
+    function openRace(el) {
+        const uid = el.dataset.raceUid;
+        if (uid) window.location.href = `/live?race_uid=${encodeURIComponent(uid)}`;
+    }
+
+    // -------------------------------------------------------
+    // Grouping
+    // -------------------------------------------------------
+
+    function groupByMeeting(items) {
+        const groups = {};
+        for (const item of items) {
+            const key = `${item.track}_${normaliseCode(item.code)}`;
+            if (!groups[key]) {
+                groups[key] = { track: item.track, code: normaliseCode(item.code), races: [] };
+            }
+            groups[key].races.push(item);
+        }
+        for (const g of Object.values(groups)) {
+            g.races.sort((a, b) => (a.race_num || 0) - (b.race_num || 0));
+        }
+        return Object.values(groups).sort((a, b) => {
+            const aMin = Math.min(...a.races.map(r => getSecondsToJump(r) ?? 99999));
+            const bMin = Math.min(...b.races.map(r => getSecondsToJump(r) ?? 99999));
+            return aMin - bMin;
         });
-        renderHomeBoard();
     }
+
+    // -------------------------------------------------------
+    // Render NTJ Strip
+    // -------------------------------------------------------
+
+    function renderNtjStrip(items) {
+        const strip = document.getElementById("ntjStrip");
+        if (!strip) return;
+
+        // Sort by soonest and take first 8
+        const sorted = [...items]
+            .filter(item => (getSecondsToJump(item) ?? -1) >= -30)
+            .sort((a, b) => (getSecondsToJump(a) ?? 99999) - (getSecondsToJump(b) ?? 99999))
+            .slice(0, 8);
+
+        if (!sorted.length) {
+            strip.innerHTML = `<div class="ntj-chip ntj-upcoming"><span class="ntj-track">No races</span><span class="ntj-time">—</span></div>`;
+            return;
+        }
+
+        strip.innerHTML = sorted.map(item => {
+            const secs = getSecondsToJump(item);
+            const cls = chipClass(secs);
+            const uid = item.race_uid || "";
+            return `
+                <div class="ntj-chip ${cls}" data-race-uid="${uid}" onclick="openRace(this)" title="${formatTrack(item.track)} R${item.race_num || '?'}">
+                    <span class="ntj-track">${formatTrack(item.track)}</span>
+                    <span class="ntj-race">R${item.race_num || "?"}</span>
+                    <span class="ntj-time">${formatCountdown(secs)}</span>
+                </div>
+            `;
+        }).join("");
+    }
+
+    // -------------------------------------------------------
+    // Render Meeting Cards
+    // -------------------------------------------------------
+
+    function renderMeetingCards(filteredItems) {
+        const board = document.getElementById("raceBoard");
+        if (!board) return;
+
+        if (!filteredItems.length) {
+            board.innerHTML = `<div class="board-empty" style="padding:32px;text-align:center;color:var(--text-dim);">No races available for this filter.</div>`;
+            return;
+        }
+
+        const meetings = groupByMeeting(filteredItems);
+
+        board.innerHTML = meetings.map(meeting => {
+            const badgeCls = codeBadgeClass(meeting.code);
+            const short = codeShort(meeting.code);
+            const racesHtml = meeting.races.map(race => {
+                const secs = getSecondsToJump(race);
+                const cdCls = countdownClass(secs);
+                const sCls = statusClass(secs);
+                const sLabel = statusLabel(secs);
+                const uid = race.race_uid || "";
+                const gradeDist = [race.grade, race.distance ? race.distance + "m" : null]
+                    .filter(Boolean).join(" • ") || "—";
+                return `
+                    <div class="race-row" data-race-uid="${uid}" onclick="openRace(this)">
+                        <div class="race-row-left">
+                            <span class="race-num">R${race.race_num || "?"}</span>
+                            <div class="race-details">
+                                <span class="race-name">${gradeDist}</span>
+                            </div>
+                        </div>
+                        <div class="race-row-right">
+                            <span class="race-countdown ${cdCls}">${formatCountdown(secs)}</span>
+                            <span class="race-status-badge ${sCls}">${sLabel}</span>
+                            <span class="race-arrow">›</span>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+
+            const stateStr = meeting.races[0]?.state || meeting.races[0]?.country || "";
+            const subText = [stateStr, meeting.code.charAt(0) + meeting.code.slice(1).toLowerCase()]
+                .filter(Boolean).join(" • ");
+
+            return `
+                <div class="meeting-card" data-code="${meeting.code}">
+                    <div class="meeting-header">
+                        <div class="meeting-header-left">
+                            <div class="meeting-code-badge ${badgeCls}">${short}</div>
+                            <div class="meeting-info">
+                                <span class="meeting-name">${formatTrack(meeting.track)}</span>
+                                <span class="meeting-sub">${subText}</span>
+                            </div>
+                        </div>
+                        <span class="meeting-race-count">${meeting.races.length} race${meeting.races.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    <div class="meeting-races">
+                        ${racesHtml}
+                    </div>
+                </div>
+            `;
+        }).join("");
+    }
+
+    // -------------------------------------------------------
+    // Filter
+    // -------------------------------------------------------
 
     function getFilteredItems() {
         if (activeCodeFilter === "ALL") return [...allBoardItems];
         return allBoardItems.filter(item => normaliseCode(item.code) === activeCodeFilter);
     }
 
-    function sortByJumpTime(items) {
-        return items.sort((a, b) => {
-            // Prefer backend-computed seconds_to_jump (already server-side calculated)
-            const aHasSecs = a.seconds_to_jump != null;
-            const bHasSecs = b.seconds_to_jump != null;
-            if (aHasSecs && bHasSecs) return a.seconds_to_jump - b.seconds_to_jump;
-
-            // Fall back to jump_dt_iso (UTC ISO) or jump_time (HH:MM)
-            const aDate = getJumpDate(a);
-            const bDate = getJumpDate(b);
-
-            if (!aDate && !bDate) return 0;
-            if (!aDate) return 1;
-            if (!bDate) return -1;
-            return aDate.getTime() - bDate.getTime();
+    function setFilter(code) {
+        activeCodeFilter = code;
+        document.querySelectorAll(".filter-tab").forEach(btn => {
+            btn.classList.toggle("active", btn.dataset.code === code);
         });
+        renderBoard();
     }
 
-    function isHotSignal(signal) {
-        const s = String(signal || "").toUpperCase();
-        return s === "SNIPER" || s === "VALUE";
+    function renderBoard() {
+        const filtered = getFilteredItems();
+        renderNtjStrip(allBoardItems); // NTJ strip always shows all
+        renderMeetingCards(filtered);
+        updateFilterMeta();
     }
 
-    function renderBoardRows(items) {
-        if (!items.length) {
-            el.boardRows.innerHTML = `
-                <tr>
-                    <td colspan="10" class="board-empty">No races available for this filter.</td>
-                </tr>
-            `;
-            return;
-        }
+    // -------------------------------------------------------
+    // Meta / status dot
+    // -------------------------------------------------------
 
-        el.boardRows.innerHTML = items.map((item, idx) => {
-            const code = normaliseCode(item.code);
-            const signal = item.signal || "—";
-            const confidence = item.confidence || "—";
-            const liveHref = item.race_uid
-                ? `/live?race_uid=${encodeURIComponent(item.race_uid)}`
-                : "/live";
-            const raceHref = item.race_uid
-                ? `/race?race_uid=${encodeURIComponent(item.race_uid)}`
-                : "/race";
-            const detailId = `home-detail-${idx}`;
+    function updateFilterMeta() {
+        const meta = document.getElementById("filterMeta");
+        const dot  = document.getElementById("refreshDot");
+        if (!meta) return;
 
-            // Display the jump time: prefer formatted local time from jump_dt_iso
-            const jumpDisplay = (() => {
-                if (item.jump_dt_iso) {
-                    const d = new Date(item.jump_dt_iso);
-                    if (!isNaN(d.getTime())) {
-                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
-                    }
-                }
-                return item.jump_time || "—";
-            })();
-            const jumpIso = item.jump_dt_iso || "";
+        const count = getFilteredItems().length;
+        const now = Date.now();
+        const stale = lastSuccessAt ? (now - lastSuccessAt) > 60000 : true;
 
-            return `
-                <tr class="home-board-row" data-detail="${detailId}" style="cursor:pointer;" title="Click to expand timing detail">
-                    <td><span class="code-badge ${codeClass(code)}">${code}</span></td>
-                    <td>${formatTrack(item.track)}</td>
-                    <td>R${item.race_num || "—"}</td>
-                    <td class="home-board-time">${jumpDisplay}</td>
-                    <td class="countdown-cell" data-jump-iso="${jumpIso}" data-jump="${item.jump_time || ""}">${formatCountdownText(item.jump_dt_iso ? new Date(item.jump_dt_iso) : item.jump_time)}</td>
-                    <td><span class="status-pill">${(item.status || "upcoming").toUpperCase()}</span></td>
-                    <td><span class="signal-pill ${signalClass(signal)}">${signal}</span></td>
-                    <td>${confidence}</td>
-                    <td>
-                        <a class="dp-btn dp-btn-small" href="${liveHref}">Live</a>
-                        <a class="dp-btn dp-btn-small" href="${raceHref}" style="margin-left:4px;">Race View</a>
-                    </td>
-                    <td style="width:24px;text-align:center;color:var(--text-dim);font-size:12px;">▶</td>
-                </tr>
-                <tr class="home-detail-row" id="${detailId}" style="display:none;">
-                    <td colspan="10">
-                        <div class="home-detail-panel">
-                            <div class="home-detail-grid">
-                                <div class="home-detail-item"><span class="home-detail-key">race_uid</span><span class="home-detail-val">${item.race_uid || "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">source jump</span><span class="home-detail-val">${item.source_jump_time || item.jump_time || "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">jump_dt_iso</span><span class="home-detail-val">${item.jump_dt_iso || "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">ntj_label</span><span class="home-detail-val">${item.ntj_label || "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">seconds_to_jump</span><span class="home-detail-val">${item.seconds_to_jump != null ? item.seconds_to_jump : "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">status</span><span class="home-detail-val">${item.status || "—"}</span></div>
-                                <div class="home-detail-item"><span class="home-detail-key">country</span><span class="home-detail-val">${item.country || "—"}</span></div>
-                            </div>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join("");
+        const timeStr = lastSuccessAt
+            ? new Date(lastSuccessAt).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: _AEST })
+            : "—";
 
-        // bind expand/collapse
-        document.querySelectorAll(".home-board-row").forEach(row => {
-            row.addEventListener("click", (e) => {
-                if (e.target.closest("a")) return;
-                const detailId = row.dataset.detail;
-                const detail = document.getElementById(detailId);
-                const arrow = row.querySelector("td:last-child");
-                if (!detail) return;
-                const open = detail.style.display !== "none";
-                detail.style.display = open ? "none" : "table-row";
-                if (arrow) arrow.textContent = open ? "▶" : "▼";
-            });
-        });
+        meta.textContent = `${count} race${count !== 1 ? "s" : ""} • Updated ${timeStr}`;
+        if (dot) dot.className = `refresh-dot ${stale ? "dot-stale" : "dot-live"}`;
     }
 
-    function renderQuickFeed(items) {
-        if (!items.length) {
-            el.quickFeedList.innerHTML = `<div class="quick-feed-empty">No board data yet.</div>`;
-            return;
-        }
-
-        const top = items.slice(0, 6);
-        el.quickFeedList.innerHTML = top.map(item => {
-            const code = normaliseCode(item.code);
-            const signal = item.signal || "—";
-            return `
-                <a class="quick-feed-row" href="${item.race_uid ? `/live?race_uid=${encodeURIComponent(item.race_uid)}` : '/live'}">
-                    <div class="quick-feed-main">
-                        <span class="code-badge ${codeClass(code)}">${code}</span>
-                        <span class="quick-feed-track">${formatTrack(item.track)} R${item.race_num || "—"}</span>
-                    </div>
-                    <div class="quick-feed-side">
-                        <span class="quick-feed-time">${item.jump_time || "—"}</span>
-                        <span class="signal-pill ${signalClass(signal)}">${signal}</span>
-                    </div>
-                </a>
-            `;
-        }).join("");
-    }
-
-    function renderPriority(items) {
-        const hot = items.find(item => isHotSignal(item.signal));
-        if (!hot) {
-            el.priorityFocusBox.innerHTML = `No SNIPER or VALUE race visible right now.`;
-            return;
-        }
-
-        el.priorityFocusBox.innerHTML = `
-            <div class="priority-code-line">
-                <span class="code-badge ${codeClass(hot.code)}">${normaliseCode(hot.code)}</span>
-                <span class="signal-pill ${signalClass(hot.signal)}">${hot.signal || "—"}</span>
-            </div>
-            <div class="priority-race-line">${formatTrack(hot.track)} R${hot.race_num || "—"}</div>
-            <div class="priority-sub-line">Jump ${hot.jump_time || "—"} • Confidence ${hot.confidence || "—"}</div>
-            <a class="dp-btn dp-btn-primary priority-open-btn" href="${hot.race_uid ? `/live?race_uid=${encodeURIComponent(hot.race_uid)}` : '/live'}">Open Live Race</a>
-        `;
-    }
-
-    function updateSummary(items) {
-        const visibleCount = items.length;
-        const hotCount = items.filter(item => isHotSignal(item.signal)).length;
-
-        // NEXT UP: only races still in the future (seconds_to_jump > 0)
-        // Never use a PAST race (jumped/expired) or an UNKNOWN-time race as next-up.
-        // Both ntj_label and seconds_to_jump are checked: ntj_label covers the
-        // server-classified state while the seconds_to_jump guard handles any
-        // edge case where ntj_label hasn't propagated but the number is present.
-        const upcomingItems = items.filter(item => {
-            if (item.ntj_label === "PAST" || item.ntj_label === "UNKNOWN") return false;
-            if (item.seconds_to_jump != null && item.seconds_to_jump <= 0) return false;
-            return true;
-        });
-        const next = upcomingItems[0] || null;
-
-        const ghCount = items.filter(item => normaliseCode(item.code) === "GREYHOUND").length;
-        const horseCount = items.filter(item => normaliseCode(item.code) === "HORSE").length;
-        const harnessCount = items.filter(item => normaliseCode(item.code) === "HARNESS").length;
-
-        el.visibleRaceCount.textContent = String(visibleCount);
-        el.hotRaceCount.textContent = String(hotCount);
-        el.codeMixValue.textContent = `${ghCount} / ${horseCount} / ${harnessCount}`;
-
-        if (next) {
-            el.nextUpMain.textContent = `${formatTrack(next.track)} R${next.race_num || "—"}`;
-            const nextJump = (() => {
-                if (next.jump_dt_iso) {
-                    const d = new Date(next.jump_dt_iso);
-                    if (!isNaN(d.getTime())) {
-                        return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", timeZone: _AEST });
-                    }
-                }
-                return next.jump_time || "—";
-            })();
-            el.nextUpSub.textContent = `${normaliseCode(next.code)} • ${nextJump}`;
-        } else {
-            el.nextUpMain.textContent = "—";
-            el.nextUpSub.textContent = visibleCount ? "No upcoming races" : "Waiting for board";
-        }
-
-        el.boardMeta.textContent = visibleCount
-            ? `${visibleCount} race${visibleCount === 1 ? "" : "s"} visible`
-            : "No races visible";
-    }
+    // -------------------------------------------------------
+    // Countdown refresh (every second in-DOM)
+    // -------------------------------------------------------
 
     function refreshCountdowns() {
-        document.querySelectorAll(".countdown-cell").forEach(cell => {
-            // Prefer jump_dt_iso (UTC ISO) for precise countdown
-            const iso = cell.dataset.jumpIso || "";
-            if (iso) {
-                const dt = new Date(iso);
-                if (!isNaN(dt.getTime())) {
-                    cell.textContent = formatCountdownText(dt);
-                    return;
-                }
+        document.querySelectorAll(".race-row").forEach(row => {
+            const uid = row.dataset.raceUid;
+            if (!uid) return;
+            const item = allBoardItems.find(i => i.race_uid === uid);
+            if (!item) return;
+
+            const secs = getSecondsToJump(item);
+            const cdEl = row.querySelector(".race-countdown");
+            const sbEl = row.querySelector(".race-status-badge");
+
+            if (cdEl) {
+                cdEl.textContent = formatCountdown(secs);
+                cdEl.className = `race-countdown ${countdownClass(secs)}`;
             }
-            // Fall back to jump_time (HH:MM)
-            cell.textContent = formatCountdownText(cell.dataset.jump || "");
+            if (sbEl) {
+                sbEl.textContent = statusLabel(secs);
+                sbEl.className = `race-status-badge ${statusClass(secs)}`;
+            }
         });
+
+        document.querySelectorAll(".ntj-chip[data-race-uid]").forEach(chip => {
+            const uid = chip.dataset.raceUid;
+            const item = allBoardItems.find(i => i.race_uid === uid);
+            if (!item) return;
+            const secs = getSecondsToJump(item);
+            const timeEl = chip.querySelector(".ntj-time");
+            if (timeEl) timeEl.textContent = formatCountdown(secs);
+            chip.className = `ntj-chip ${chipClass(secs)}`;
+        });
+
+        updateFilterMeta();
     }
 
-    function renderHomeBoard() {
-        const items = sortByJumpTime(getFilteredItems());
-        renderBoardRows(items);
-        renderQuickFeed(items);
-        renderPriority(items);
-        updateSummary(items);
-        refreshCountdowns();
-    }
+    // -------------------------------------------------------
+    // Data load
+    // -------------------------------------------------------
 
     async function loadHomeBoard() {
-        el.boardMeta.textContent = "Loading board…";
-        el.boardRows.innerHTML = `
-            <tr>
-                <td colspan="9" class="board-empty">Loading board…</td>
-            </tr>
-        `;
+        const meta = document.getElementById("filterMeta");
+        if (meta) meta.textContent = "Loading…";
 
         try {
             const data = await api("/api/home/board");
             allBoardItems = Array.isArray(data.items) ? data.items : [];
-            renderHomeBoard();
+            lastSuccessAt = Date.now();
+            renderBoard();
         } catch (error) {
             console.error("Home board load failed:", error);
-            el.boardMeta.textContent = "Board load failed";
-            el.boardRows.innerHTML = `
-                <tr>
-                    <td colspan="9" class="board-empty">Failed to load board.</td>
-                </tr>
-            `;
-            el.quickFeedList.innerHTML = `<div class="quick-feed-empty">Failed to load board.</div>`;
-            el.priorityFocusBox.innerHTML = `Board load failed.`;
+            const board = document.getElementById("raceBoard");
+            if (board) board.innerHTML = `<div class="board-empty" style="padding:32px;text-align:center;color:var(--text-dim);">Failed to load board.</div>`;
+            if (meta) meta.textContent = "Load failed";
         }
     }
 
-    function bindHomeEvents() {
-        if (el.refreshBtn) {
-            el.refreshBtn.addEventListener("click", loadHomeBoard);
-        }
+    // -------------------------------------------------------
+    // Boot
+    // -------------------------------------------------------
 
-        if (el.clearBtn) {
-            el.clearBtn.addEventListener("click", () => setFilter("ALL"));
-        }
-
-        el.filterButtons.forEach(btn => {
-            btn.addEventListener("click", () => setFilter(btn.dataset.code));
-        });
-    }
-
-    function startHomeCountdownLoop() {
-        if (countdownTimer) clearInterval(countdownTimer);
-        countdownTimer = setInterval(refreshCountdowns, 1000);
-    }
+    // Make openRace globally accessible (used in onclick attrs)
+    window.openRace = openRace;
 
     document.addEventListener("DOMContentLoaded", () => {
-        bindHomeEvents();
-        startHomeCountdownLoop();
+        // Filter tab clicks
+        document.querySelectorAll(".filter-tab").forEach(btn => {
+            btn.addEventListener("click", () => setFilter(btn.dataset.code));
+        });
+
+        // Countdown refresh loop
+        countdownTimer = setInterval(refreshCountdowns, 1000);
+
+        // Auto-refresh board every 30 seconds
+        refreshTimer = setInterval(loadHomeBoard, 30000);
+
         loadHomeBoard();
     });
 })();

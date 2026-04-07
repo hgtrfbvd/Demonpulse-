@@ -2,191 +2,55 @@
 {% block title %}Live{% endblock %}
 
 {% block content %}
-<div class="page-shell live-page">
+<div class="page-shell live-page" style="gap:0;">
 
-    <section class="live-hero card">
-        <div class="live-hero-left">
-            <div class="page-kicker">ACTIVE RACE WORKSPACE</div>
-            <h1 class="page-title">Live Race Terminal</h1>
-            <div class="page-subtitle">
-                Focused screen for the race being viewed. Simulation is optional, betting is race-specific, and workflow actions are all in one place.
-            </div>
+    <!-- Race Header Bar -->
+    <div class="race-header-bar">
+        <div class="race-header-title">
+            <span class="race-header-track" id="liveTrack">—</span>
+            <span class="race-header-sep">•</span>
+            <span class="race-header-racenum" id="liveRaceNum">R—</span>
+            <span class="race-header-name" id="liveRaceName">—</span>
         </div>
-
-        <div class="live-hero-right">
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">CODE</div>
-                <div class="hero-stat-value hero-stat-small" id="liveHeroCode">—</div>
-                <div class="hero-stat-sub">Active race code</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">COUNTDOWN</div>
-                <div class="hero-stat-value hero-stat-small" id="liveHeroCountdown">—</div>
-                <div class="hero-stat-sub">Until jump</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">SIGNAL</div>
-                <div class="hero-stat-value hero-stat-small" id="liveHeroSignal">—</div>
-                <div class="hero-stat-sub">Current signal state</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">DECISION</div>
-                <div class="hero-stat-value hero-stat-small" id="liveHeroDecision">—</div>
-                <div class="hero-stat-sub">System recommendation</div>
-            </div>
+        <div class="race-header-chips">
+            <span class="race-code-chip" id="liveCode">—</span>
+            <span class="race-meta-chip" id="liveDistance">—</span>
+            <span class="race-meta-chip" id="liveGrade">—</span>
+            <span class="race-meta-chip" id="liveCondition">—</span>
+            <span class="race-time-chip race-meta-chip" id="liveJump">—</span>
+            <span class="race-countdown-chip" id="liveCountdownChip">—</span>
         </div>
-    </section>
-
-    <section class="live-race-header card">
-        <div class="section-head">
-            <div>
-                <div class="section-kicker">SELECTED RACE</div>
-                <h2 class="section-title" id="liveRaceTitle">No race selected</h2>
-            </div>
-            <div class="section-meta" id="liveRaceMeta">Open from Home board or use ?race_uid=...</div>
+        <div class="race-header-nav">
+            <button class="race-nav-btn" id="livePrevRace">‹ Prev</button>
+            <button class="race-nav-btn" id="liveNextRace">Next ›</button>
         </div>
+    </div>
 
-        <div class="live-meta-row">
-            <div class="live-meta-chip"><span class="live-meta-label">Track</span><span id="liveTrack">—</span></div>
-            <div class="live-meta-chip"><span class="live-meta-label">Race</span><span id="liveRaceNum">—</span></div>
-            <div class="live-meta-chip"><span class="live-meta-label">Distance</span><span id="liveDistance">—</span></div>
-            <div class="live-meta-chip"><span class="live-meta-label">Grade</span><span id="liveGrade">—</span></div>
-            <div class="live-meta-chip"><span class="live-meta-label">Jump</span><span id="liveJump">—</span></div>
-            <div class="live-meta-chip"><span class="live-meta-label">Status</span><span id="liveStatus">—</span></div>
-        </div>
-    </section>
+    <!-- Two-column main content -->
+    <div class="live-two-col" style="display:flex; gap:16px; padding:16px 20px; align-items:flex-start;">
 
-    <section class="live-terminal-grid">
-        <div class="live-left-stack">
+        <!-- LEFT: Form Guide (65%) -->
+        <div style="flex:0 0 65%; min-width:0;">
 
-            <div class="card decision-terminal-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">SYSTEM DECISION</div>
-                        <h2 class="section-title">Signal / Confidence / Selection</h2>
-                    </div>
-                    <div class="decision-pill decision-none" id="liveDecisionPill">—</div>
+            <div class="form-guide-card card">
+                <div class="form-guide-header">
+                    <h2 class="form-guide-title">Form Guide</h2>
+                    <span class="form-guide-meta" id="formGuideMeta">— runners</span>
                 </div>
-
-                <div class="live-decision-grid">
-                    <div class="live-decision-item">
-                        <div class="live-decision-label">Selection</div>
-                        <div class="live-decision-value" id="liveSelection">—</div>
-                    </div>
-                    <div class="live-decision-item">
-                        <div class="live-decision-label">Box</div>
-                        <div class="live-decision-value" id="liveBox">—</div>
-                    </div>
-                    <div class="live-decision-item">
-                        <div class="live-decision-label">Signal</div>
-                        <div class="live-decision-value" id="liveSignal">—</div>
-                    </div>
-                    <div class="live-decision-item">
-                        <div class="live-decision-label">Confidence</div>
-                        <div class="live-decision-value" id="liveConfidence">—</div>
-                    </div>
-                    <div class="live-decision-item">
-                        <div class="live-decision-label">EV</div>
-                        <div class="live-decision-value" id="liveEV">—</div>
-                    </div>
-                    <div class="live-decision-item">
-                        <div class="live-decision-label">Collapse Risk</div>
-                        <div class="live-decision-value" id="liveCollapseRisk">—</div>
-                    </div>
-                </div>
-
-                <div class="live-reason-box" id="liveReasonBox">
-                    Waiting for race analysis.
-                </div>
-
-                <div class="inline-actions live-inline-actions">
-                    <button class="dp-btn dp-btn-primary" id="liveWatchSimBtn">Watch Sim</button>
-                    <button class="dp-btn" id="liveSendToSimulatorBtn">Open in Simulator</button>
-                    <button class="dp-btn" id="liveRefreshBtn">Refresh Race</button>
-                    <button class="dp-btn" id="liveMarkWatchedBtn">Mark Watched</button>
-                </div>
-            </div>
-
-            <div class="card live-bet-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">QUICK BET</div>
-                        <h2 class="section-title">Race Bet Module</h2>
-                    </div>
-                    <div class="section-meta" id="liveBetMeta">Auto-fills from selection</div>
-                </div>
-
-                <div class="live-bet-grid">
-                    <div class="bet-field">
-                        <label class="bet-label">Race UID</label>
-                        <input id="liveBetRaceUid" class="bet-input" placeholder="race_uid">
-                    </div>
-
-                    <div class="bet-field">
-                        <label class="bet-label">Runner</label>
-                        <input id="liveBetRunner" class="bet-input" placeholder="Runner">
-                    </div>
-
-                    <div class="bet-field">
-                        <label class="bet-label">Box</label>
-                        <input id="liveBetBox" class="bet-input" placeholder="Box">
-                    </div>
-
-                    <div class="bet-field">
-                        <label class="bet-label">Odds</label>
-                        <input id="liveBetOdds" class="bet-input" placeholder="Odds">
-                    </div>
-
-                    <div class="bet-field">
-                        <label class="bet-label">Stake</label>
-                        <input id="liveBetStake" class="bet-input" placeholder="Stake">
-                    </div>
-
-                    <div class="bet-field">
-                        <label class="bet-label">Bet Type</label>
-                        <select id="liveBetType" class="bet-input">
-                            <option value="WIN">Win</option>
-                            <option value="PLACE">Place</option>
-                            <option value="EACHWAY">Each Way</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="inline-actions live-inline-actions">
-                    <button class="dp-btn dp-btn-primary" id="livePlaceBetBtn">Place Bet</button>
-                    <button class="dp-btn" id="liveClearBetBtn">Clear Bet Form</button>
-                </div>
-            </div>
-
-            <div class="card runners-terminal-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">RUNNER BOARD</div>
-                        <h2 class="section-title">Runners</h2>
-                    </div>
-                    <div class="section-meta" id="liveRunnerMeta">No runner data</div>
-                </div>
-
-                <div class="table-wrap">
-                    <table class="board-terminal-table live-runner-table">
+                <div class="form-guide-table-wrap">
+                    <table class="form-guide-table">
                         <thead>
                             <tr>
-                                <th>Box</th>
-                                <th>Runner</th>
-                                <th>Odds</th>
-                                <th>Speed</th>
-                                <th>Style</th>
-                                <th>Score</th>
-                                <th>Status</th>
+                                <th class="col-box">#</th>
+                                <th class="col-runner">Runner</th>
+                                <th class="col-form">Form</th>
+                                <th class="col-odds">Odds</th>
+                                <th class="col-prob">AI Win%</th>
+                                <th class="col-rank">Rank</th>
                             </tr>
                         </thead>
-                        <tbody id="liveRunnerRows">
-                            <tr>
-                                <td colspan="7" class="board-empty">No race loaded.</td>
-                            </tr>
+                        <tbody id="formGuideRows">
+                            <tr><td colspan="6" class="board-empty">No race loaded.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -194,100 +58,98 @@
 
         </div>
 
-        <div class="live-right-stack">
+        <!-- RIGHT: Analysis + Sim + Quick Bet (35%) -->
+        <div style="flex:0 0 35%; min-width:0; display:flex; flex-direction:column; gap:12px;">
 
-            <div class="card race-shape-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">RACE SHAPE</div>
-                        <h2 class="section-title">Shape + Filters</h2>
-                    </div>
-                    <div class="section-meta" id="liveShapeMeta">Pending analysis</div>
+            <!-- Analysis Panel -->
+            <div class="race-analysis-card card">
+                <div class="analysis-section">
+                    <div class="analysis-label">SIGNAL</div>
+                    <div class="analysis-signal" id="analysisSignal">—</div>
                 </div>
-
-                <div class="live-shape-grid">
-                    <div class="live-shape-stat">
-                        <div class="live-shape-label">Pace</div>
-                        <div class="live-shape-value" id="livePace">—</div>
-                    </div>
-                    <div class="live-shape-stat">
-                        <div class="live-shape-label">Pressure</div>
-                        <div class="live-shape-value" id="livePressure">—</div>
-                    </div>
-                    <div class="live-shape-stat">
-                        <div class="live-shape-label">Beneficiary</div>
-                        <div class="live-shape-value" id="liveBeneficiary">—</div>
-                    </div>
-                    <div class="live-shape-stat">
-                        <div class="live-shape-label">Separation</div>
-                        <div class="live-shape-value" id="liveSeparation">—</div>
-                    </div>
+                <div class="analysis-section">
+                    <div class="analysis-label">DECISION</div>
+                    <div class="analysis-decision" id="analysisDecision">—</div>
                 </div>
-
-                <div class="live-filter-list" id="liveFilterList">
-                    <div class="quick-feed-empty">No filter data yet.</div>
+                <div class="analysis-divider"></div>
+                <div class="analysis-grid">
+                    <div class="analysis-item">
+                        <span class="analysis-key">Pace</span>
+                        <span class="analysis-val" id="analysisPace">—</span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-key">Race Shape</span>
+                        <span class="analysis-val" id="analysisShape">—</span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-key">Condition</span>
+                        <span class="analysis-val" id="analysisCondition">—</span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-key">Weather</span>
+                        <span class="analysis-val" id="analysisWeather">—</span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-key">Confidence</span>
+                        <span class="analysis-val" id="analysisConfidence">—</span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-key">EV</span>
+                        <span class="analysis-val" id="analysisEV">—</span>
+                    </div>
                 </div>
             </div>
 
-            <div class="card live-sim-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">OPTIONAL SIMULATION</div>
-                        <h2 class="section-title">Live Sim Panel</h2>
-                    </div>
-                    <div class="section-meta" id="liveSimMeta">Idle</div>
+            <!-- Simulation Panel -->
+            <div class="sim-panel card">
+                <div class="sim-header">
+                    <span class="sim-title">Simulation</span>
+                    <button class="sim-run-btn" id="liveRunSimBtn">Run Sim</button>
                 </div>
-
-                <div class="live-sim-idle" id="liveSimIdle">
-                    Simulation is not automatic on the Live page. Click <strong>Watch Sim</strong> to run the active race through the simulator.
+                <div class="sim-idle" id="simIdle">
+                    Click Run Sim to simulate this race.
                 </div>
-
-                <div class="live-sim-results" id="liveSimResults" style="display:none;">
-                    <div class="live-sim-topline">
-                        <div class="live-sim-top-item">
-                            <div class="live-sim-top-label">Decision</div>
-                            <div class="live-sim-top-value" id="liveSimDecision">—</div>
-                        </div>
-                        <div class="live-sim-top-item">
-                            <div class="live-sim-top-label">Confidence</div>
-                            <div class="live-sim-top-value" id="liveSimConfidence">—</div>
-                        </div>
-                        <div class="live-sim-top-item">
-                            <div class="live-sim-top-label">Chaos</div>
-                            <div class="live-sim-top-value" id="liveSimChaos">—</div>
-                        </div>
-                        <div class="live-sim-top-item">
-                            <div class="live-sim-top-label">Top Win %</div>
-                            <div class="live-sim-top-value" id="liveSimTopWin">—</div>
-                        </div>
-                    </div>
-
-                    <div class="live-sim-summary" id="liveSimSummary">—</div>
-
-                    <div class="table-wrap">
-                        <table class="board-terminal-table live-sim-table">
-                            <thead>
-                                <tr>
-                                    <th>Runner</th>
-                                    <th>Box</th>
-                                    <th>Win %</th>
-                                    <th>Place %</th>
-                                    <th>Avg Finish</th>
-                                    <th>Sim Edge</th>
-                                </tr>
-                            </thead>
-                            <tbody id="liveSimRows">
-                                <tr>
-                                    <td colspan="6" class="board-empty">No simulation run yet.</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="sim-results" id="simResults" style="display:none;">
+                    <div class="sim-summary" id="simSummary"></div>
+                    <div class="sim-runner-list" id="simRunnerList"></div>
                 </div>
             </div>
 
         </div>
-    </section>
+    </div>
+
+    <!-- Quick Bet Bar (full width) -->
+    <div style="padding: 0 20px 20px;">
+        <div class="quick-bet-bar card">
+            <div class="qb-field">
+                <label>Type</label>
+                <select id="qbType">
+                    <option value="WIN">Win</option>
+                    <option value="PLACE">Place</option>
+                    <option value="EACHWAY">Each Way</option>
+                </select>
+            </div>
+            <div class="qb-field qb-runner">
+                <label>Runner</label>
+                <select id="qbRunner">
+                    <option value="">Select runner…</option>
+                </select>
+            </div>
+            <div class="qb-field qb-odds">
+                <label>Odds</label>
+                <input id="qbOdds" type="text" placeholder="—">
+            </div>
+            <div class="qb-field qb-stake">
+                <label>Stake $</label>
+                <input id="qbStake" type="number" value="10" min="1">
+            </div>
+            <div class="qb-returns">
+                <label>Returns</label>
+                <span id="qbReturns">—</span>
+            </div>
+            <button class="qb-place-btn" id="qbPlaceBtn">Place Bet</button>
+        </div>
+    </div>
 
 </div>
 {% endblock %}
