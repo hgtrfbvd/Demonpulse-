@@ -25,6 +25,11 @@
         return raw;
     }
 
+    function formatTrack(track) {
+        if (!track) return "—";
+        return track.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+
     function parseJumpTimeToDate(jumpTime) {
         if (!jumpTime || typeof jumpTime !== "string") return null;
 
@@ -93,7 +98,7 @@
 
         const code = normaliseCode(raceData.code);
         const jumpDisplay = formatJumpTimeDisplay(raceData);
-        setText("rvRaceTitle", `${raceData.track || "Unknown"} R${raceData.race_num || "?"}`);
+        setText("rvRaceTitle", `${formatTrack(raceData.track)} R${raceData.race_num || "?"}`);
         setText("rvRaceMeta", `${code} • ${jumpDisplay} • ${(raceData.status || "upcoming").toUpperCase()}`);
         setText("rvHeroCode", code);
         setText("rvHeroStatus", (raceData.status || "upcoming").toUpperCase());
@@ -103,7 +108,7 @@
         // Populate the race info strip
         const strip = q("rvInfoStrip");
         if (strip) strip.style.display = "";
-        setText("rvInfoTrack", raceData.track || "—");
+        setText("rvInfoTrack", formatTrack(raceData.track));
         setText("rvInfoRaceNum", raceData.race_num ? `Race ${raceData.race_num}` : "—");
         setText("rvInfoCode", code);
         setText("rvInfoDistance", raceData.distance || "—");
@@ -178,7 +183,7 @@
         setText("rvTruthTz", r.jump_dt_iso ? "UTC (ISO)" : (r.timezone || "AEST"));
         setText("rvTruthCountry", r.country || "—");
         setText("rvTruthCode", normaliseCode(r.code));
-        setText("rvTruthTrack", r.track || "—");
+        setText("rvTruthTrack", formatTrack(r.track));
         setText("rvTruthMerge", r.merge_status || "—");
         setText("rvTruthFormfav", r.formfav ? "enriched" : "none");
         setText("rvTruthBoard", r.board_reason || "standard");

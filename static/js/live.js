@@ -90,6 +90,11 @@
         return raw;
     }
 
+    function formatTrack(track) {
+        if (!track) return "—";
+        return track.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+
     function decisionClass(decision) {
         const d = String(decision || "").toUpperCase();
         if (["BET", "SMALL_BET", "SAVE_BET"].includes(d)) return "decision-bet";
@@ -129,10 +134,10 @@
 
         const code = normaliseCode(liveRace.code);
         const jumpDisplay = formatJumpTimeDisplay(liveRace);
-        setText("liveRaceTitle", `${liveRace.track || "Unknown"} R${liveRace.race_num || "?"}`);
+        setText("liveRaceTitle", `${formatTrack(liveRace.track)} R${liveRace.race_num || "?"}`);
         setText("liveRaceMeta", `${code} • ${jumpDisplay} • ${liveRace.status || "upcoming"}`);
 
-        setText("liveTrack", liveRace.track || "—");
+        setText("liveTrack", formatTrack(liveRace.track));
         setText("liveRaceNum", liveRace.race_num ? `R${liveRace.race_num}` : "—");
         setText("liveDistance", liveRace.distance || "—");
         setText("liveGrade", liveRace.grade || "—");

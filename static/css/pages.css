@@ -351,6 +351,12 @@
     color: #fff;
 }
 
+.home-board-time {
+    min-width: 72px;
+    white-space: nowrap;
+    overflow: visible;
+}
+
 .quick-feed-list {
     display: flex;
     flex-direction: column;
