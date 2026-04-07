@@ -20,8 +20,26 @@ health_bp = Blueprint("health", __name__, url_prefix="/api/health")
 @health_bp.route("", methods=["GET"])
 @health_bp.route("/", methods=["GET"])
 def health():
-    """Basic liveness probe."""
-    return jsonify({"ok": True, "app": "DemonPulse", "mode": env.mode})
+    """Basic liveness probe — includes connector enabled flags for settings UI."""
+    oddspro_enabled = False
+    formfav_enabled = False
+    try:
+        from connectors.oddspro_connector import OddsProConnector
+        oddspro_enabled = OddsProConnector().is_enabled()
+    except Exception as e:
+        log.debug(f"health: OddsPro connector check failed: {e}")
+    try:
+        from connectors.formfav_connector import FormFavConnector
+        formfav_enabled = FormFavConnector().is_enabled()
+    except Exception as e:
+        log.debug(f"health: FormFav connector check failed: {e}")
+    return jsonify({
+        "ok": True,
+        "app": "DemonPulse",
+        "mode": env.mode,
+        "oddspro_enabled": oddspro_enabled,
+        "formfav_enabled": formfav_enabled,
+    })
 
 
 @health_bp.route("/connectors", methods=["GET"])
