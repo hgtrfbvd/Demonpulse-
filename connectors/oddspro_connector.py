@@ -996,9 +996,9 @@ class OddsProConnector:
         Response shape: {"data": {...}, "meta": {...}}
         """
         params: dict[str, Any] = {}
-        if meeting.meeting_date:
-            params["date"] = meeting.meeting_date
-        path_id = quote(str(meeting.meeting_id), safe="")
+        if meeting_date:
+            params["date"] = meeting_date
+        path_id = quote(str(meeting_id), safe="")
         try:
             resp = self._get(f"/api/external/meeting/{path_id}", params=params)
             payload = resp.json()

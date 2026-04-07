@@ -949,7 +949,7 @@ def run_pro_schema_migrations(db_client: Any = None) -> dict[str, Any]:
     # Index for date column
     index_sqls = [
         "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_date ON formfav_runner_enrichment(date);",
-        "CREATE INDEX IF NOT EXISTS idx_formfav_runner_enrichment_date ON test_formfav_runner_enrichment(date);",
+        "CREATE INDEX IF NOT EXISTS idx_test_formfav_runner_enrichment_date ON test_formfav_runner_enrichment(date);",
     ]
     for sql in index_sqls:
         try:
