@@ -405,7 +405,7 @@ class OddsProConnector:
     source_name = "oddspro"
 
     def __init__(self):
-        raw_base = os.getenv("ODDSPRO_BASE_URL", "").rstrip("/")
+        raw_base = os.getenv("ODDSPRO_BASE_URL", "https://oddspro.com.au").rstrip("/")
         # Strip /api/external suffix if accidentally included in the env var.
         # The connector appends /api/external/* to all endpoint paths, so the
         # base URL must be the server root only (e.g. https://oddspro.com.au).
