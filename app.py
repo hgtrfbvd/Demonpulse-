@@ -349,6 +349,42 @@ def api_live_race(race_uid: str):
 
         runners = get_runners_for_race(race_uid)
 
+        # Merge FormFav runner enrichment data
+        try:
+            from database import get_formfav_runner_enrichments
+            ff_runner_rows = get_formfav_runner_enrichments(race_uid)
+            ff_runner_map = {}
+            for ff_r in ff_runner_rows:
+                key = ff_r.get("number") or ff_r.get("box_num")
+                if key is not None:
+                    ff_runner_map[int(key)] = ff_r
+
+            enriched_runners = []
+            for r in runners:
+                box = r.get("box_num") or r.get("number") or r.get("barrier")
+                ff = ff_runner_map.get(int(box)) if box is not None else {}
+                merged = {**r}
+                if ff:
+                    for field in ["form_string", "trainer", "jockey", "driver", "weight", "career",
+                                  "best_time", "win_prob", "place_prob", "model_rank", "confidence",
+                                  "decorators", "speed_map", "class_profile", "race_class_fit",
+                                  "stats_overall", "stats_track", "stats_distance", "stats_condition",
+                                  "stats_track_distance", "stats_full", "model_version"]:
+                        if not merged.get(field) and ff.get(field):
+                            merged[field] = ff[field]
+                    merged["ff_win_prob"]      = ff.get("win_prob")
+                    merged["ff_model_rank"]    = ff.get("model_rank")
+                    merged["ff_confidence"]    = ff.get("confidence")
+                    merged["ff_decorators"]    = ff.get("decorators") or []
+                    merged["ff_speed_map"]     = ff.get("speed_map")
+                    merged["ff_class_profile"] = ff.get("class_profile")
+                    merged["ff_stats_full"]    = ff.get("stats_full") or {}
+                    merged["ff_career_stats"]  = ff.get("stats_overall")
+                enriched_runners.append(merged)
+            runners = enriched_runners
+        except Exception:
+            pass
+
         # Attach stored FormFav enrichment if available
         ff_data: dict = {}
         try:
@@ -626,6 +662,41 @@ def api_health():
         "oddspro_enabled": oddspro_enabled,
         "formfav_enabled": formfav_enabled,
     })
+
+
+# ------------------------------------------------------------
+# AI LEARNING STATUS
+# ------------------------------------------------------------
+
+@app.route("/api/ai/learning/status", methods=["GET"])
+def api_ai_learning_status():
+    """AI learning engine status — paper bets placed, results reviewed, model progress."""
+    try:
+        from database import get_races_for_date
+        from ai.learning_store import get_performance_summary
+        from datetime import date
+        today = date.today().isoformat()
+
+        perf = get_performance_summary(limit=200)
+
+        all_races = get_races_for_date(today)
+        predicted = [r for r in all_races if r.get("status") in ("final", "result_posted", "paying")]
+
+        return jsonify({
+            "ok": True,
+            "model_version": perf.get("model_version", "baseline_v1"),
+            "total_predictions": perf.get("total_predictions", 0),
+            "total_evaluated": perf.get("total_evaluated", 0),
+            "win_rate": perf.get("win_rate", 0),
+            "roi": perf.get("roi", 0),
+            "paper_bets_today": len(predicted),
+            "results_reviewed_today": len([r for r in predicted if r.get("status") in ("final", "paying", "result_posted")]),
+            "enrichment_rate": perf.get("enrichment_rate", 0),
+            "active": True,
+        })
+    except Exception as e:
+        log.error(f"/api/ai/learning/status failed: {e}")
+        return jsonify({"ok": False, "error": "Learning status unavailable"}), 500
 
 
 # ------------------------------------------------------------

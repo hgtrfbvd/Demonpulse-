@@ -4,129 +4,116 @@
 {% block content %}
 <div class="page-shell learning-page">
 
-    <section class="learn-hero card">
-        <div class="learn-hero-left">
-            <div class="page-kicker">ADAPTATION / REVIEW / CONTROL</div>
-            <h1 class="page-title">AI Learning Terminal</h1>
-            <div class="page-subtitle">
-                Review what the system learned, reverse-engineer wins and losses, inspect discovered patterns, and control promotion of new logic and filters.
-            </div>
+    <!-- Status bar -->
+    <div class="page-stats-bar">
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Status</span>
+            <span class="stats-bar-value">
+                <span id="learnStatusDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--text-dim);margin-right:5px;vertical-align:middle;"></span>
+                ACTIVE
+            </span>
         </div>
-
-        <div class="learn-hero-right">
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">EDGE PATTERNS</div>
-                <div class="hero-stat-value hero-stat-small" id="learnEdgeCount">—</div>
-                <div class="hero-stat-sub">Detected patterns</div>
-            </div>
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">ERROR TAGS</div>
-                <div class="hero-stat-value hero-stat-small" id="learnErrorCount">—</div>
-                <div class="hero-stat-sub">Tagged learning issues</div>
-            </div>
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">PROMOTIONS</div>
-                <div class="hero-stat-value hero-stat-small" id="learnPromotionCount">—</div>
-                <div class="hero-stat-sub">Approved adjustments</div>
-            </div>
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">SHADOW MODE</div>
-                <div class="hero-stat-value hero-stat-small" id="learnShadowStatus">—</div>
-                <div class="hero-stat-sub">Paper learning state</div>
-            </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Model</span>
+            <span class="stats-bar-value" id="learnModelVersion">—</span>
         </div>
-    </section>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Paper Bets Today</span>
+            <span class="stats-bar-value" id="learnPaperBetsToday">—</span>
+        </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Results Reviewed</span>
+            <span class="stats-bar-value" id="learnResultsReviewed">—</span>
+        </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Win Rate</span>
+            <span class="stats-bar-value" id="learnWinRate">—</span>
+        </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">ROI</span>
+            <span class="stats-bar-value" id="learnROI">—</span>
+        </div>
+    </div>
 
+    <!-- TABS -->
     <section class="card">
         <div class="report-tabs">
-            <button class="report-tab active" data-learn-tab="overview">Overview</button>
-            <button class="report-tab" data-learn-tab="reverse">Reverse Engineering</button>
-            <button class="report-tab" data-learn-tab="filters">Filters</button>
-            <button class="report-tab" data-learn-tab="promotions">Promotions</button>
+            <button class="report-tab active" data-learn-tab="activity">Live Activity</button>
+            <button class="report-tab" data-learn-tab="config">Configuration</button>
+            <button class="report-tab" data-learn-tab="performance">Performance</button>
         </div>
     </section>
 
-    <section class="learning-section" id="learn-overview">
+    <!-- LIVE ACTIVITY -->
+    <section class="learning-section" id="learn-activity">
+        <div class="card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">LIVE ACTIVITY</div>
+                    <h2 class="section-title">Paper Betting Feed</h2>
+                </div>
+                <div class="section-meta" id="learnActivityMeta">Polling every 30s</div>
+            </div>
+            <div id="learnActivityFeed">
+                <div class="activity-empty">No predictions yet today — system will auto-predict all upcoming races.</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CONFIGURATION -->
+    <section class="learning-section" id="learn-config" style="display:none;">
         <div class="learn-main-grid">
             <div class="learn-left-stack">
-
                 <div class="card">
                     <div class="section-head">
                         <div>
-                            <div class="section-kicker">LEARNING OVERVIEW</div>
-                            <h2 class="section-title">System Learning Summary</h2>
-                        </div>
-                        <div class="section-meta" id="learnOverviewMeta">Loading…</div>
-                    </div>
-
-                    <div class="learn-summary-grid">
-                        <div class="learn-summary-box">
-                            <div class="learn-summary-label">Top Finding</div>
-                            <div class="learn-summary-value" id="learnTopFinding">—</div>
-                        </div>
-                        <div class="learn-summary-box">
-                            <div class="learn-summary-label">Weakest Area</div>
-                            <div class="learn-summary-value" id="learnWeakestArea">—</div>
-                        </div>
-                        <div class="learn-summary-box">
-                            <div class="learn-summary-label">Best Edge Type</div>
-                            <div class="learn-summary-value" id="learnBestEdgeType">—</div>
-                        </div>
-                        <div class="learn-summary-box">
-                            <div class="learn-summary-label">Current Focus</div>
-                            <div class="learn-summary-value" id="learnFocusArea">—</div>
+                            <div class="section-kicker">MODEL CONFIGURATION</div>
+                            <h2 class="section-title">Learning Parameters</h2>
                         </div>
                     </div>
-
-                    <div class="sim-guide-box" id="learnOverviewText">
-                        No learning summary loaded yet.
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="section-head">
-                        <div>
-                            <div class="section-kicker">EDGE PERFORMANCE</div>
-                            <h2 class="section-title">Edge / Pattern Table</h2>
+                    <div class="settings-grid">
+                        <div class="settings-field">
+                            <label class="settings-label">Learning Objective</label>
+                            <select class="bet-input" id="learnObjective">
+                                <option value="roi">Maximise ROI</option>
+                                <option value="strike">High Strike Rate</option>
+                                <option value="value">Value Finding</option>
+                                <option value="conservative">Conservative</option>
+                            </select>
                         </div>
-                        <div class="section-meta" id="learnEdgeMeta">No data</div>
+                        <div class="settings-field">
+                            <label class="settings-label">Confidence Threshold</label>
+                            <input class="bet-input" type="range" id="learnConfThreshold" min="0.50" max="0.90" step="0.01" value="0.60">
+                            <span class="settings-value" id="learnConfValue">0.60</span>
+                        </div>
+                        <div class="settings-field">
+                            <label class="settings-label">EV Threshold</label>
+                            <input class="bet-input" type="range" id="learnEvThreshold" min="0.02" max="0.20" step="0.01" value="0.05">
+                            <span class="settings-value" id="learnEvValue">0.05</span>
+                        </div>
+                        <div class="settings-field">
+                            <label class="settings-label">Auto-bet all races</label>
+                            <select class="bet-input" id="learnAutoBet">
+                                <option value="1" selected>Yes (default)</option>
+                                <option value="0">No</option>
+                            </select>
+                        </div>
+                        <div class="settings-field">
+                            <label class="settings-label">Race Codes</label>
+                            <div style="display:flex;gap:12px;margin-top:4px;">
+                                <label><input type="checkbox" id="codeGreyhound" checked> Greyhound</label>
+                                <label><input type="checkbox" id="codeHorse" checked> Horse</label>
+                                <label><input type="checkbox" id="codeHarness" checked> Harness</label>
+                            </div>
+                        </div>
                     </div>
-
-                    <div class="table-wrap">
-                        <table class="board-terminal-table">
-                            <thead>
-                                <tr>
-                                    <th>Edge Type</th>
-                                    <th>Samples</th>
-                                    <th>ROI</th>
-                                    <th>Status</th>
-                                    <th>Action</th>
-                                </tr>
-                            </thead>
-                            <tbody id="learnEdgeRows">
-                                <tr><td colspan="5" class="board-empty">No edge data</td></tr>
-                            </tbody>
-                        </table>
+                    <div style="margin-top:16px;">
+                        <button class="dp-btn dp-btn-primary" id="saveLearnConfigBtn">Save Configuration</button>
+                        <span class="section-meta" id="learnConfigMeta" style="margin-left:10px;"></span>
                     </div>
                 </div>
-
             </div>
-
             <div class="learn-right-stack">
-
-                <div class="card">
-                    <div class="section-head">
-                        <div>
-                            <div class="section-kicker">ERROR BREAKDOWN</div>
-                            <h2 class="section-title">Learning Error Tags</h2>
-                        </div>
-                    </div>
-
-                    <div class="learn-chip-grid" id="learnErrorChips">
-                        <div class="quick-feed-empty">No error tags loaded.</div>
-                    </div>
-                </div>
-
                 <div class="card">
                     <div class="section-head">
                         <div>
@@ -134,105 +121,52 @@
                             <h2 class="section-title">Paper Engine State</h2>
                         </div>
                     </div>
-
-                    <div class="learn-status-list" id="learnStatusList">
-                        <div class="sim-log-row">
-                            <div class="sim-log-main">
-                                <div class="sim-log-race">Status unavailable</div>
-                            </div>
+                    <div class="settings-grid">
+                        <div class="settings-field">
+                            <label class="settings-label">Total Predictions</label>
+                            <div class="settings-value" id="learnTotalPredictions">—</div>
+                        </div>
+                        <div class="settings-field">
+                            <label class="settings-label">Total Evaluated</label>
+                            <div class="settings-value" id="learnTotalEvaluated">—</div>
+                        </div>
+                        <div class="settings-field">
+                            <label class="settings-label">Enrichment Rate</label>
+                            <div class="settings-value" id="learnEnrichmentRate">—</div>
                         </div>
                     </div>
                 </div>
-
             </div>
         </div>
     </section>
 
-    <section class="learning-section" id="learn-reverse" style="display:none;">
+    <!-- PERFORMANCE -->
+    <section class="learning-section" id="learn-performance" style="display:none;">
         <div class="card">
             <div class="section-head">
                 <div>
-                    <div class="section-kicker">REVERSE ENGINEERING</div>
-                    <h2 class="section-title">Why It Won / Why It Lost</h2>
-                </div>
-                <div class="section-meta" id="learnReverseMeta">No case loaded</div>
-            </div>
-
-            <div class="learn-reverse-grid">
-                <div class="learn-reverse-box">
-                    <div class="learn-reverse-title">Winning Pattern</div>
-                    <div class="learn-reverse-body" id="learnWhyWon">No winning case loaded.</div>
-                </div>
-                <div class="learn-reverse-box">
-                    <div class="learn-reverse-title">Losing Pattern</div>
-                    <div class="learn-reverse-body" id="learnWhyLost">No losing case loaded.</div>
-                </div>
-                <div class="learn-reverse-box">
-                    <div class="learn-reverse-title">Missed Winner</div>
-                    <div class="learn-reverse-body" id="learnMissedWinner">No missed-winner case loaded.</div>
-                </div>
-                <div class="learn-reverse-box">
-                    <div class="learn-reverse-title">Recommended Change</div>
-                    <div class="learn-reverse-body" id="learnRecommendedChange">No recommendation yet.</div>
+                    <div class="section-kicker">PERFORMANCE</div>
+                    <h2 class="section-title">Paper Bankroll Over Time</h2>
                 </div>
             </div>
-        </div>
-    </section>
-
-    <section class="learning-section" id="learn-filters" style="display:none;">
-        <div class="card">
-            <div class="section-head">
-                <div>
-                    <div class="section-kicker">FILTER LAB</div>
-                    <h2 class="section-title">Discovered / Candidate Filters</h2>
+            <canvas id="learnBankrollChart" height="100" style="margin:12px 0;"></canvas>
+            <div class="learn-chip-grid" id="learnPerfStats" style="margin-top:12px;">
+                <div class="learn-chip">
+                    <div class="learn-chip-key">Win Rate</div>
+                    <div class="learn-chip-val" id="perfWinRate">—</div>
                 </div>
-                <div class="section-meta" id="learnFilterMeta">No filters loaded</div>
-            </div>
-
-            <div class="table-wrap">
-                <table class="board-terminal-table">
-                    <thead>
-                        <tr>
-                            <th>Filter</th>
-                            <th>Type</th>
-                            <th>Effect</th>
-                            <th>Confidence</th>
-                            <th>State</th>
-                        </tr>
-                    </thead>
-                    <tbody id="learnFilterRows">
-                        <tr><td colspan="5" class="board-empty">No filter candidates</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </section>
-
-    <section class="learning-section" id="learn-promotions" style="display:none;">
-        <div class="card">
-            <div class="section-head">
-                <div>
-                    <div class="section-kicker">PROMOTION CONTROL</div>
-                    <h2 class="section-title">AEEE / Adjustment Queue</h2>
+                <div class="learn-chip">
+                    <div class="learn-chip-key">ROI</div>
+                    <div class="learn-chip-val" id="perfROI">—</div>
                 </div>
-                <div class="section-meta" id="learnPromotionMeta">No promotions queued</div>
-            </div>
-
-            <div class="table-wrap">
-                <table class="board-terminal-table">
-                    <thead>
-                        <tr>
-                            <th>Adjustment</th>
-                            <th>Direction</th>
-                            <th>Amount</th>
-                            <th>Reason</th>
-                            <th>State</th>
-                        </tr>
-                    </thead>
-                    <tbody id="learnPromotionRows">
-                        <tr><td colspan="5" class="board-empty">No promotion data</td></tr>
-                    </tbody>
-                </table>
+                <div class="learn-chip">
+                    <div class="learn-chip-key">Predictions</div>
+                    <div class="learn-chip-val" id="perfTotal">—</div>
+                </div>
+                <div class="learn-chip">
+                    <div class="learn-chip-key">Evaluated</div>
+                    <div class="learn-chip-val" id="perfEvaluated">—</div>
+                </div>
             </div>
         </div>
     </section>
@@ -243,3 +177,4 @@
 {% block scripts %}
 <script src="/static/js/learning.js"></script>
 {% endblock %}
+

@@ -95,23 +95,11 @@ def build_board(
             continue
 
         # --- EXPIRED / RESULTED FILTER ---
-        # Remove races whose jump time has passed by more than the grace period
-        # and that have not yet received an authoritative settled status from
-        # OddsPro.  This handles stale DB records where the status column was
-        # never updated after the race ran.
-        if is_race_expired_by_time(race, grace_secs=BOARD_EXPIRED_GRACE_SECS):
-            expired_count += 1
-            log.debug(
-                f"board_builder: EXPIRED_BY_TIME {race_uid} "
-                f"jump_time={jump_time_raw!r} "
-                f"jump_dt_iso={ntj.get('jump_dt_iso')!r} "
-                f"seconds_to_jump={ntj.get('seconds_to_jump')} "
-                f"now_aest={now_aest.strftime('%Y-%m-%d %H:%M:%S %Z')} "
-                f"status={race.get('status')!r} "
-                f"grace_secs={BOARD_EXPIRED_GRACE_SECS} "
-                f"excluded=True"
-            )
-            continue
+        # Races are no longer removed by time alone — the status machine handles
+        # removal when a confirmed settled status arrives from OddsPro.
+        # (BOARD_EXPIRED_GRACE_SECS is kept as a last-resort 24-hour fallback via
+        # is_race_expired_by_time, but we skip the early-exit here so jumped races
+        # remain visible as "Pending Result" until a result is confirmed.)
 
         log.debug(
             f"board_builder: INCLUDED {race_uid} "

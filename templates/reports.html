@@ -29,6 +29,7 @@
         <div class="report-tabs">
             <button class="report-tab active" data-tab="performance">Performance</button>
             <button class="report-tab" data-tab="ai">AI Analysis</button>
+            <button class="report-tab" data-tab="bankroll">Bankroll</button>
             <button class="report-tab" data-tab="system">System Logs</button>
         </div>
     </section>
@@ -112,6 +113,37 @@
         <div class="report-log-list" id="systemLogs">
             <div class="quick-feed-empty">Loading…</div>
         </div>
+    </section>
+
+    <!-- BANKROLL -->
+    <section class="card report-section" id="report-bankroll" style="display:none;">
+        <div class="page-stats-bar">
+            <div class="stats-bar-item">
+                <span class="stats-bar-label">Bank</span>
+                <span class="stats-bar-value" id="rpBank">—</span>
+            </div>
+            <div class="stats-bar-item">
+                <span class="stats-bar-label">Today P/L</span>
+                <span class="stats-bar-value" id="rpTodayPL">—</span>
+            </div>
+            <div class="stats-bar-item">
+                <span class="stats-bar-label">Open Bets</span>
+                <span class="stats-bar-value" id="rpOpenBets">—</span>
+            </div>
+            <div class="stats-bar-item">
+                <span class="stats-bar-label">Exposure</span>
+                <span class="stats-bar-value" id="rpExposure">—</span>
+            </div>
+            <div class="stats-bar-item">
+                <span class="stats-bar-label">Strike Rate</span>
+                <span class="stats-bar-value" id="rpStrike">—</span>
+            </div>
+        </div>
+        <canvas id="bankrollChart" height="100" style="margin:12px 0;"></canvas>
+        <table class="board-terminal-table">
+            <thead><tr><th>Date</th><th>Race</th><th>Runner</th><th>Type</th><th>Odds</th><th>Stake</th><th>Result</th><th>P/L</th></tr></thead>
+            <tbody id="rpBetHistoryRows"><tr><td colspan="8" class="board-empty">No history</td></tr></tbody>
+        </table>
     </section>
 
 </div>

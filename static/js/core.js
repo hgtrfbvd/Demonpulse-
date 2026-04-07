@@ -103,4 +103,29 @@ document.addEventListener("DOMContentLoaded", () => {
     loadSystemStatus();
     loadHeaderStats();
     setInterval(loadHeaderStats, 30000);
+    enforceNavAccess();
 });
+
+async function enforceNavAccess() {
+    try {
+        const me = await api("/api/auth/me");
+        const role = me.role || "viewer";
+        const perms = me.permissions || [];
+
+        const navRules = {
+            "/betting":     ["betting"],
+            "/learning":    ["ai_learning"],
+            "/backtesting": ["backtest"],
+            "/settings":    ["settings"],
+            "/reports":     ["reports"],
+        };
+
+        document.querySelectorAll(".top-nav-link").forEach(link => {
+            const path = new URL(link.href, location.origin).pathname;
+            const required = navRules[path];
+            if (required && !required.some(p => perms.includes(p))) {
+                link.style.display = "none";
+            }
+        });
+    } catch (_) {}
+}

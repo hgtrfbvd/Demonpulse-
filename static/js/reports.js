@@ -17,6 +17,7 @@
 
             if (tab.dataset.tab === "system") loadSystemLogs();
             if (tab.dataset.tab === "ai") loadAIPerformance();
+            if (tab.dataset.tab === "bankroll") loadBankroll();
         });
     });
 
@@ -199,6 +200,88 @@
     }
 
     // -------------------------------------------------------
+    // Bankroll tab
+    // -------------------------------------------------------
+
+    let bankrollChart = null;
+
+    async function loadBankroll() {
+        try {
+            const data = await api("/api/bets/summary");
+            const pl   = parseFloat(data.pl ?? data.profit ?? 0);
+            if (q("rpBank"))     q("rpBank").textContent     = `$${(data.bankroll ?? 1000).toLocaleString()}`;
+            if (q("rpTodayPL"))  q("rpTodayPL").textContent  = `${pl >= 0 ? "+" : ""}$${pl.toFixed(2)}`;
+            if (q("rpOpenBets")) q("rpOpenBets").textContent = data.open_bets ?? data.pending_bets ?? "0";
+            if (q("rpExposure")) q("rpExposure").textContent = data.exposure ? `$${data.exposure}` : "—";
+            if (q("rpStrike"))   q("rpStrike").textContent   = data.strike_rate || data.win_rate || "—";
+        } catch (_) {}
+
+        try {
+            const data = await api("/api/bets/history");
+            const bets = Array.isArray(data.bets) ? data.bets : (Array.isArray(data) ? data : []);
+
+            const tbody = q("rpBetHistoryRows");
+            if (tbody) {
+                if (!bets.length) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="board-empty">No history</td></tr>`;
+                } else {
+                    tbody.innerHTML = bets.map(b => {
+                        const pl = parseFloat(b.pl || 0);
+                        const plStr = `<span style="color:${pl >= 0 ? "var(--green)" : "var(--red-1)"}">$${pl.toFixed(2)}</span>`;
+                        return `<tr>
+                            <td>${b.date || "—"}</td>
+                            <td>${b.race_uid || b.race || "—"}</td>
+                            <td>${b.runner || b.selection || "—"}</td>
+                            <td>${b.bet_type || b.type || "WIN"}</td>
+                            <td>${b.odds || "—"}</td>
+                            <td>$${b.stake || "—"}</td>
+                            <td>${b.result || "PENDING"}</td>
+                            <td>${plStr}</td>
+                        </tr>`;
+                    }).join("");
+                }
+            }
+
+            // Draw bankroll curve
+            const ctx = q("bankrollChart");
+            if (ctx && bets.length) {
+                const settled = bets.filter(b => b.result && b.result !== "PENDING");
+                let running = 1000;
+                const labels = [], values = [];
+                for (const b of settled) {
+                    running += parseFloat(b.pl || 0);
+                    labels.push(b.date || "");
+                    values.push(parseFloat(running.toFixed(2)));
+                }
+                if (bankrollChart) bankrollChart.destroy();
+                if (values.length) {
+                    bankrollChart = new Chart(ctx, {
+                        type: "line",
+                        data: {
+                            labels,
+                            datasets: [{
+                                data: values,
+                                borderColor: values[values.length - 1] >= values[0] ? "#3dd68c" : "#ff2d2d",
+                                backgroundColor: "transparent",
+                                tension: 0.3,
+                                pointRadius: 2,
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                x: { display: false },
+                                y: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { color: "#606070" } }
+                            }
+                        }
+                    });
+                }
+            }
+        } catch (_) {}
+    }
+
+    // -------------------------------------------------------
     // Boot
     // -------------------------------------------------------
 
@@ -208,3 +291,4 @@
     });
 
 })();
+

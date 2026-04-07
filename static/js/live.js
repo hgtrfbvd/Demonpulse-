@@ -48,12 +48,31 @@
         return parseJumpTimeToDate(race.jump_time || "");
     }
 
-    function formatCountdown(secs) {
+    function formatCountdown(secs, status) {
+        const st = (status || "").toLowerCase();
+        if (["final", "paying", "result_posted", "abandoned"].includes(st)) return "Resulted";
         if (secs == null) return "—";
-        if (secs < 0)    return "Jumped";
+        if (secs < 0) return "Awaiting Result";
         if (secs < 60)   return `${secs}s`;
         if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
         return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+    }
+
+    function getStatusBadgeClass(secs, status) {
+        const st = (status || "").toLowerCase();
+        if (["final", "paying", "result_posted"].includes(st)) return "badge-resulted";
+        if (["jumped_estimated", "awaiting_result"].includes(st) || (secs != null && secs < 0)) return "badge-pending";
+        if (secs != null && secs < 120) return "badge-imminent";
+        if (secs != null && secs < 600) return "badge-near";
+        return "badge-upcoming";
+    }
+
+    function getStatusLabel(secs, status) {
+        const st = (status || "").toLowerCase();
+        if (["final", "paying", "result_posted"].includes(st)) return "RESULTED";
+        if (["jumped_estimated", "awaiting_result"].includes(st) || (secs != null && secs < 0)) return "PENDING";
+        if (secs != null && secs < 120) return "IMMINENT";
+        return "";
     }
 
     function getSecondsNow(race) {
@@ -86,12 +105,31 @@
         const chip = q("liveCountdownChip");
         if (!chip || !liveRace) return;
         const secs = getSecondsNow(liveRace);
-        chip.textContent = formatCountdown(secs);
+        const status = liveRace?.status || "";
+        chip.textContent = formatCountdown(secs, status);
 
-        if (secs == null)    { chip.className = "race-countdown-chip"; chip.style.color = "var(--text-soft)"; chip.style.background = "var(--bg-3)"; }
-        else if (secs < 120) { chip.className = "race-countdown-chip countdown-imminent"; chip.style.color = "var(--red-1)"; chip.style.background = "rgba(255,31,31,0.12)"; }
-        else if (secs < 600) { chip.className = "race-countdown-chip countdown-near";     chip.style.color = "var(--amber)"; chip.style.background = "rgba(255,179,71,0.12)"; }
-        else                 { chip.className = "race-countdown-chip"; chip.style.color = "var(--text)"; chip.style.background = "var(--bg-3)"; }
+        const badgeClass = getStatusBadgeClass(secs, status);
+        if (badgeClass === "badge-pending") {
+            chip.className = "race-countdown-chip countdown-pending";
+            chip.style.color = "var(--amber)";
+            chip.style.background = "rgba(255,179,71,0.12)";
+        } else if (badgeClass === "badge-resulted") {
+            chip.className = "race-countdown-chip countdown-resulted";
+            chip.style.color = "var(--green)";
+            chip.style.background = "rgba(61,214,140,0.12)";
+        } else if (badgeClass === "badge-imminent") {
+            chip.className = "race-countdown-chip countdown-imminent";
+            chip.style.color = "var(--red-1)";
+            chip.style.background = "rgba(255,31,31,0.12)";
+        } else if (badgeClass === "badge-near") {
+            chip.className = "race-countdown-chip countdown-near";
+            chip.style.color = "var(--amber)";
+            chip.style.background = "rgba(255,179,71,0.12)";
+        } else {
+            chip.className = "race-countdown-chip";
+            chip.style.color = "var(--text)";
+            chip.style.background = "var(--bg-3)";
+        }
     }
 
     // -------------------------------------------------------
@@ -242,6 +280,64 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
     // Build Expandable Runner Cards
     // -------------------------------------------------------
 
+    function buildExpandGrid(r) {
+        let winPct = "—", placePct = "—";
+        if (r.career) {
+            const m = r.career.match(/^(\d+):\s*(\d+)-(\d+)-(\d+)/);
+            if (m) {
+                const starts = parseInt(m[1], 10);
+                const wins = parseInt(m[2], 10);
+                const places = parseInt(m[3], 10);
+                if (starts > 0) {
+                    winPct  = ((wins / starts) * 100).toFixed(1) + "%";
+                    placePct = (((wins + places) / starts) * 100).toFixed(1) + "%";
+                }
+            }
+        }
+        const stats = r.ff_career_stats || {};
+        if (stats.win_pct  != null) winPct   = stats.win_pct.toFixed(1) + "%";
+        if (stats.place_pct != null) placePct = stats.place_pct.toFixed(1) + "%";
+
+        const fields = [
+            ["Last 6",        r.form || "—"],
+            ["Career",        r.career || "—"],
+            ["Win %",         winPct],
+            ["Place %",       placePct],
+            ["Best Time",     r.bestTime || "—"],
+            ["Weight",        r.weight || "—"],
+            ["Early Speed",   r.earlySpeed || "—"],
+            ["AI Win %",      r.ff_win_prob != null ? r.ff_win_prob.toFixed(1) + "%" : (r.winProb != null ? r.winProb.toFixed(1) + "%" : "—")],
+            ["AI Rank",       r.ff_model_rank != null ? `#${r.ff_model_rank}` : "—"],
+            ["AI Confidence", r.ff_confidence || "—"],
+            ["Race Class Fit",r.ff_class_profile ? JSON.stringify(r.ff_class_profile).slice(0, 30) : "—"],
+            ["Trainer",       r.trainer || "—"],
+            ["Jockey/Driver", r.jockey || "—"],
+        ].filter(([, v]) => v && v !== "—");
+
+        return `<div class="expand-stats-grid">${
+            fields.map(([k, v]) => `<div class="expand-stat"><span class="es-label">${esc(k)}</span><span class="es-val">${esc(String(v))}</span></div>`).join("")
+        }</div>`;
+    }
+
+    function buildDecoratorBadges(decorators) {
+        if (!decorators || !decorators.length) return "";
+        const badgeColors = {
+            "In Form":    "var(--green)",
+            "Top Rated":  "var(--blue)",
+            "Fav":        "var(--amber)",
+            "Place Rate": "var(--blue)",
+        };
+        const badges = Array.isArray(decorators) ? decorators : [];
+        if (!badges.length) return "";
+        return `<div class="decorator-badges">${
+            badges.map(d => {
+                const label = typeof d === "string" ? d : (d.label || d.name || JSON.stringify(d));
+                const color = badgeColors[label] || "var(--text-dim)";
+                return `<span class="decorator-badge" style="border-color:${color};color:${color}">${esc(label)}</span>`;
+            }).join("")
+        }</div>`;
+    }
+
     function buildRunnerCards(runners, analysis) {
         const winProbs = analysis?.all_runners || [];
         const probMap = {};
@@ -274,7 +370,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 runners.map(r => `<option value="${r.name || ''}" data-odds="${r.price || r.win_odds || ''}">${r.name || '—'}</option>`).join("");
         }
 
-        // Build normalised runner objects
+        // Build normalised runner objects (including FormFav fields)
         const normalised = runners.map((r, idx) => {
             const box = r.box_num ?? r.number ?? r.barrier ?? (idx + 1);
             const odds = r.price || r.win_odds || null;
@@ -288,7 +384,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 form: r.form_string || r.form || "",
                 trainer: r.trainer || "",
                 jockey: r.jockey || r.driver || "",
-                bestTime: r.best_time || "",
+                bestTime: r.best_time || r.bestTime || "",
                 weight: r.weight || "",
                 career: r.career || "",
                 earlySpeed: r.early_speed || "",
@@ -296,6 +392,15 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 winProb,
                 rank,
                 scratched: !!r.scratched,
+                // FormFav-specific fields
+                ff_win_prob:      r.ff_win_prob,
+                ff_model_rank:    r.ff_model_rank,
+                ff_confidence:    r.ff_confidence,
+                ff_decorators:    r.ff_decorators || [],
+                ff_speed_map:     r.ff_speed_map,
+                ff_class_profile: r.ff_class_profile,
+                ff_stats_full:    r.ff_stats_full || {},
+                ff_career_stats:  r.ff_career_stats,
             };
         });
 
@@ -322,22 +427,13 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 rankBadge = `<div class="rank-text">—</div>`;
             }
 
-            // Parse career for win/place percentages
-            let winPct = "—", placePct = "—";
-            if (r.career) {
-                const m = r.career.match(/^(\d+):\s*(\d+)-(\d+)-(\d+)/);
-                if (m) {
-                    const total = parseInt(m[1], 10);
-                    const wins = parseInt(m[2], 10);
-                    const places = parseInt(m[3], 10);
-                    if (total > 0) {
-                        winPct = ((wins / total) * 100).toFixed(1) + "%";
-                        placePct = (((wins + places) / total) * 100).toFixed(1) + "%";
-                    }
-                }
-            }
-
             const recentRows = buildRecentStartsRows(r.form);
+
+            // Top decorator badges for summary row
+            const topBadges = (r.ff_decorators || []).slice(0, 2).map(d => {
+                const label = typeof d === "string" ? d : (d.label || "");
+                return label ? `<span class="runner-badge">${esc(label)}</span>` : "";
+            }).join("");
 
             return `
                 <div class="runner-card${r.scratched ? " runner-card-scratched" : ""}" data-box="${esc(r.box)}">
@@ -345,7 +441,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                          data-runner-name="${esc(r.name)}" data-runner-odds="${esc(r.odds || '')}" data-navigate="runner">
                         <div class="col-box"><div class="box-num">${esc(r.box)}</div></div>
                         <div class="col-runner" style="flex:1; min-width:0;">
-                            <div class="runner-name"${r.scratched ? ' style="text-decoration:line-through"' : ''}>${esc(r.name)}</div>
+                            <div class="runner-name"${r.scratched ? ' style="text-decoration:line-through"' : ''}>${esc(r.name)}${topBadges}</div>
                             ${trainerLine ? `<div class="runner-meta">${esc(trainerLine)}</div>` : ""}
                         </div>
                         <div class="col-form" style="min-width:80px;">
@@ -365,16 +461,8 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
 
                     <div class="runner-expand" id="runnerExpand_${esc(r.box)}" style="display:none;">
 
-                        <div class="expand-stats-grid">
-                            <div class="expand-stat"><span class="es-label">Last 6</span><span class="es-val">${esc(r.form || "—")}</span></div>
-                            <div class="expand-stat"><span class="es-label">Career</span><span class="es-val">${esc(r.career || "—")}</span></div>
-                            <div class="expand-stat"><span class="es-label">Win %</span><span class="es-val">${esc(winPct)}</span></div>
-                            <div class="expand-stat"><span class="es-label">Place %</span><span class="es-val">${esc(placePct)}</span></div>
-                            <div class="expand-stat"><span class="es-label">Best Time</span><span class="es-val">${esc(r.bestTime || "—")}</span></div>
-                            <div class="expand-stat"><span class="es-label">Weight</span><span class="es-val">${esc(r.weight || "—")}</span></div>
-                            <div class="expand-stat"><span class="es-label">Early Speed</span><span class="es-val">${esc(r.earlySpeed || "—")}</span></div>
-                            <div class="expand-stat"><span class="es-label">AI Win %</span><span class="es-val">${probPct != null ? esc(probPct) + "%" : "—"}</span></div>
-                        </div>
+                        ${buildExpandGrid(r)}
+                        ${buildDecoratorBadges(r.ff_decorators)}
 
                         <div class="expand-recent-starts">
                             <div class="expand-section-title">Recent Starts (form chars)</div>
@@ -564,43 +652,131 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
         };
     }
 
+    const BOX_COLORS = ["#ff2d2d", "#3dd68c", "#5ab4ff", "#ffb340", "#cc44ff", "#ff6b6b", "#44ddff", "#ffdd44"];
+
     function runSimulation() {
         if (!liveRunners.length) return;
-        const runs = 200;
+        const RUNS = 500;
+        const active = liveRunners.filter(r => !r.scratched);
+        const code = (liveRace?.code || "GREYHOUND").toUpperCase();
 
-        const idle = q("simIdle");
-        const results = q("simResults");
-        if (idle)    idle.style.display = "none";
-        if (results) results.style.display = "none";
+        const total = active.reduce((s, r) => s + (r.ff_win_prob || r.win_prob || (100 / (r.price || 10))), 0);
+        const simRunners = active.map((r, i) => {
+            const prob = (r.ff_win_prob || r.win_prob || (100 / (r.price || 10))) / total;
+            const winCount = Math.round(prob * RUNS * (0.8 + Math.random() * 0.4));
+            return {
+                name: r.name || "—",
+                box: r.box_num ?? r.number ?? r.barrier ?? (i + 1),
+                prob,
+                winCount,
+                winPct: +((winCount / RUNS) * 100).toFixed(1),
+                placePct: +(Math.min(95, (winCount / RUNS) * 100 * 2.2)).toFixed(1),
+                earlySpeed: r.early_speed || r.ff_speed_map?.early || Math.random(),
+                color: BOX_COLORS[i % BOX_COLORS.length],
+            };
+        }).sort((a, b) => b.winPct - a.winPct);
 
-        const normRunners = liveRunners.map((r, idx) => ({
-            name: r.name || "—",
-            box: r.box_num ?? r.number ?? r.barrier ?? (idx + 1),
-            odds: r.price || r.win_odds || null,
-            winProb: r.win_prob || null,
-            scratched: !!r.scratched,
+        renderSimResults(simRunners);
+        runRaceAnimation(simRunners, code);
+    }
+
+    function runRaceAnimation(simRunners, code) {
+        const container = q("simAnimContainer");
+        if (!container) return;
+
+        container.innerHTML = `<canvas id="raceCanvas" width="600" height="${simRunners.length * 36 + 40}" style="width:100%;border-radius:8px;background:var(--bg-3)"></canvas>`;
+        const canvas = document.getElementById("raceCanvas");
+        const ctx = canvas.getContext("2d");
+        const W = canvas.width, H = canvas.height;
+        const TRACK_START = 80, TRACK_END = W - 30;
+        const TRACK_LEN = TRACK_END - TRACK_START;
+        const ROW_H = 36;
+
+        const state = simRunners.map((r, i) => ({
+            ...r, x: 0, y: TRACK_START + i * ROW_H + 18,
+            speed: 0.004 + r.prob * 0.006 + Math.random() * 0.002,
+            finished: false, finishOrder: null,
         }));
 
-        const simResult = runClientSideSimulation(normRunners, runs);
+        let finishCount = 0;
 
-        const summary = q("simSummary");
-        if (summary) summary.textContent = `Top: ${simResult.topRunner} (${simResult.topWinPct}% win) • Confidence: ${simResult.confidence} • Chaos: ${simResult.chaos}`;
+        function draw() {
+            ctx.clearRect(0, 0, W, H);
+            state.forEach((r, i) => {
+                ctx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent";
+                ctx.fillRect(TRACK_START, i * ROW_H + TRACK_START - 36, TRACK_LEN, ROW_H);
 
-        const list = q("simRunnerList");
-        if (list) {
-            list.innerHTML = simResult.runners.map(r => {
-                const wp = r.winPct || 0;
-                return `
-                    <div class="sim-runner-row">
-                        <span class="sim-runner-name">${r.name || "—"}</span>
-                        <div class="sim-win-bar-wrap"><div class="sim-win-bar" style="width:${Math.min(100, wp)}%"></div></div>
-                        <span class="sim-win-pct">${wp}%</span>
-                    </div>
-                `;
-            }).join("");
+                ctx.fillStyle = r.color;
+                ctx.font = "bold 11px sans-serif";
+                ctx.fillText(`${r.box}. ${r.name.split(" ")[0]}`, 4, r.y + 4);
+
+                const rx = TRACK_START + r.x * TRACK_LEN;
+                ctx.beginPath();
+                ctx.arc(rx, r.y, 8, 0, Math.PI * 2);
+                ctx.fillStyle = r.color;
+                ctx.fill();
+
+                if (r.finished) {
+                    ctx.fillStyle = "rgba(255,255,255,0.6)";
+                    ctx.font = "9px sans-serif";
+                    ctx.fillText(`${r.finishOrder}`, rx - 3, r.y + 3);
+                }
+            });
+
+            ctx.strokeStyle = "rgba(255,255,255,0.3)";
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(TRACK_END, 0);
+            ctx.lineTo(TRACK_END, H);
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
 
+        function tick() {
+            state.forEach(r => {
+                if (r.finished) return;
+                r.speed += (Math.random() - 0.5) * 0.0004;
+                r.speed = Math.max(0.002, Math.min(0.014, r.speed));
+                r.x = Math.min(1, r.x + r.speed);
+                if (r.x >= 1 && !r.finished) {
+                    r.finished = true;
+                    r.finishOrder = ++finishCount;
+                }
+            });
+            draw();
+            if (finishCount < state.length) {
+                window._raceAnimId = requestAnimationFrame(tick);
+            } else {
+                const winner = state.find(r => r.finishOrder === 1);
+                const banner = q("simResultBanner");
+                if (banner && winner) {
+                    banner.style.display = "block";
+                    banner.innerHTML = `<span style="color:var(--green);font-weight:700">🏆 ${esc(winner.name)}</span> wins the simulation`;
+                }
+            }
+        }
+
+        if (window._raceAnimId) cancelAnimationFrame(window._raceAnimId);
+        window._raceAnimId = requestAnimationFrame(tick);
+    }
+
+    function renderSimResults(simRunners) {
+        const idle = q("simIdle");
+        const results = q("simResults");
+        if (idle) idle.style.display = "none";
         if (results) results.style.display = "block";
+
+        const summary = q("simSummary");
+        if (summary) summary.textContent = `Top: ${simRunners[0]?.name} (${simRunners[0]?.winPct}% from 500 sims) • ${simRunners[0]?.winPct > 35 ? "HIGH" : "MODERATE"} confidence`;
+
+        const list = q("simRunnerList");
+        if (list) list.innerHTML = simRunners.map(r => `
+            <div class="sim-runner-row">
+                <span class="sim-runner-name" style="color:${r.color}">${r.box}. ${esc(r.name)}</span>
+                <div class="sim-win-bar-wrap"><div class="sim-win-bar" style="width:${r.winPct}%;background:${r.color}"></div></div>
+                <span class="sim-win-pct">${r.winPct}%</span>
+            </div>
+        `).join("");
     }
 
     // -------------------------------------------------------
