@@ -11,6 +11,10 @@
 
     const q = (id) => document.getElementById(id);
 
+    function esc(str) {
+        return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
     // -------------------------------------------------------
     // Utility
     // -------------------------------------------------------
@@ -211,9 +215,13 @@ AI Win probability: ${runner.winProb ? runner.winProb + "%" : "—"}
 Be direct and useful. Mention key strengths or concerns. Do not use filler phrases.`;
 
         try {
+            const anthropicKey = window.ANTHROPIC_API_KEY || "";
             const resp = await fetch("https://api.anthropic.com/v1/messages", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(anthropicKey ? { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" } : {})
+                },
                 body: JSON.stringify({
                     model: "claude-sonnet-4-20250514",
                     max_tokens: 150,
@@ -332,40 +340,40 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             const recentRows = buildRecentStartsRows(r.form);
 
             return `
-                <div class="runner-card${r.scratched ? " runner-card-scratched" : ""}" data-box="${r.box}">
+                <div class="runner-card${r.scratched ? " runner-card-scratched" : ""}" data-box="${esc(r.box)}">
                     <div class="runner-summary-row${r.scratched ? " scratched-row" : ""}"
-                         data-runner-name="${r.name}" data-runner-odds="${r.odds || ''}" data-navigate="runner">
-                        <div class="col-box"><div class="box-num">${r.box}</div></div>
+                         data-runner-name="${esc(r.name)}" data-runner-odds="${esc(r.odds || '')}" data-navigate="runner">
+                        <div class="col-box"><div class="box-num">${esc(r.box)}</div></div>
                         <div class="col-runner" style="flex:1; min-width:0;">
-                            <div class="runner-name"${r.scratched ? ' style="text-decoration:line-through"' : ''}>${r.name}</div>
-                            ${trainerLine ? `<div class="runner-meta">${trainerLine}</div>` : ""}
+                            <div class="runner-name"${r.scratched ? ' style="text-decoration:line-through"' : ''}>${esc(r.name)}</div>
+                            ${trainerLine ? `<div class="runner-meta">${esc(trainerLine)}</div>` : ""}
                         </div>
                         <div class="col-form" style="min-width:80px;">
                             <div class="form-string">${colorFormString(r.form)}</div>
                         </div>
                         <div class="col-odds" style="min-width:60px; text-align:right;">
-                            <div class="odds-value">${oddsStr}</div>
+                            <div class="odds-value">${esc(oddsStr)}</div>
                         </div>
                         <div class="col-prob" style="min-width:72px; text-align:right;">
                             ${probPct != null ? `
                                 <div class="prob-bar-wrap"><div class="prob-bar" style="width:${probBarWidth}%"></div></div>
-                                <div class="prob-text">${probPct}%</div>
+                                <div class="prob-text">${esc(probPct)}%</div>
                             ` : '<div class="prob-text" style="color:var(--text-dim)">—</div>'}
                         </div>
                         <div class="col-rank" style="min-width:52px; text-align:right;">${rankBadge}</div>
                     </div>
 
-                    <div class="runner-expand" id="runnerExpand_${r.box}" style="display:none;">
+                    <div class="runner-expand" id="runnerExpand_${esc(r.box)}" style="display:none;">
 
                         <div class="expand-stats-grid">
-                            <div class="expand-stat"><span class="es-label">Last 6</span><span class="es-val">${r.form || "—"}</span></div>
-                            <div class="expand-stat"><span class="es-label">Career</span><span class="es-val">${r.career || "—"}</span></div>
-                            <div class="expand-stat"><span class="es-label">Win %</span><span class="es-val">${winPct}</span></div>
-                            <div class="expand-stat"><span class="es-label">Place %</span><span class="es-val">${placePct}</span></div>
-                            <div class="expand-stat"><span class="es-label">Best Time</span><span class="es-val">${r.bestTime || "—"}</span></div>
-                            <div class="expand-stat"><span class="es-label">Weight</span><span class="es-val">${r.weight || "—"}</span></div>
-                            <div class="expand-stat"><span class="es-label">Early Speed</span><span class="es-val">${r.earlySpeed || "—"}</span></div>
-                            <div class="expand-stat"><span class="es-label">AI Win %</span><span class="es-val">${probPct != null ? probPct + "%" : "—"}</span></div>
+                            <div class="expand-stat"><span class="es-label">Last 6</span><span class="es-val">${esc(r.form || "—")}</span></div>
+                            <div class="expand-stat"><span class="es-label">Career</span><span class="es-val">${esc(r.career || "—")}</span></div>
+                            <div class="expand-stat"><span class="es-label">Win %</span><span class="es-val">${esc(winPct)}</span></div>
+                            <div class="expand-stat"><span class="es-label">Place %</span><span class="es-val">${esc(placePct)}</span></div>
+                            <div class="expand-stat"><span class="es-label">Best Time</span><span class="es-val">${esc(r.bestTime || "—")}</span></div>
+                            <div class="expand-stat"><span class="es-label">Weight</span><span class="es-val">${esc(r.weight || "—")}</span></div>
+                            <div class="expand-stat"><span class="es-label">Early Speed</span><span class="es-val">${esc(r.earlySpeed || "—")}</span></div>
+                            <div class="expand-stat"><span class="es-label">AI Win %</span><span class="es-val">${probPct != null ? esc(probPct) + "%" : "—"}</span></div>
                         </div>
 
                         <div class="expand-recent-starts">
@@ -380,7 +388,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                             </div>
                         </div>
 
-                        <button class="expand-bet-btn" data-runner-name="${r.name}" data-runner-odds="${r.odds || ''}">
+                        <button class="expand-bet-btn" data-runner-name="${esc(r.name)}" data-runner-odds="${esc(r.odds || '')}">
                             Bet This Runner →
                         </button>
 

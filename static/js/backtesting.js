@@ -2,6 +2,10 @@
     const q = (id) => document.getElementById(id);
     let backtestLog = [];
 
+    function esc(str) {
+        return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
     function setText(id, value) {
         const el = q(id);
         if (el) el.textContent = value ?? "—";
@@ -64,10 +68,10 @@
         wrap.innerHTML = backtestLog.slice().reverse().map(item => `
             <div class="sim-log-row">
                 <div class="sim-log-main">
-                    <div class="sim-log-race">${item.label}</div>
-                    <div class="sim-log-sub">${item.sub}</div>
+                    <div class="sim-log-race">${esc(item.label)}</div>
+                    <div class="sim-log-sub">${esc(item.sub)}</div>
                 </div>
-                <div class="sim-log-side">${item.time}</div>
+                <div class="sim-log-side">${esc(item.time)}</div>
             </div>
         `).join("");
     }
@@ -110,9 +114,13 @@ Samples: ${result.total || result.samples || 0}, Correct: ${result.correct || 0}
 Be direct. If ROI is negative, say so clearly.`;
 
         try {
+            const anthropicKey = window.ANTHROPIC_API_KEY || "";
             const resp = await fetch("https://api.anthropic.com/v1/messages", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(anthropicKey ? { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" } : {})
+                },
                 body: JSON.stringify({
                     model: "claude-sonnet-4-20250514",
                     max_tokens: 100,

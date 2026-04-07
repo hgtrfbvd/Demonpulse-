@@ -8,6 +8,10 @@
 
     const q = (id) => document.getElementById(id);
 
+    function esc(str) {
+        return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
     function getRaceUidFromUrl() {
         const params = new URLSearchParams(window.location.search);
         return params.get("race_uid") || "";
@@ -196,11 +200,11 @@
         setText("simRunnerMeta", `${rows.length} runners simulated`);
         q("simRunnerRows").innerHTML = rows.map(r => `
             <tr>
-                <td>${r.name || "—"}</td>
-                <td>${r.box ?? "—"}</td>
-                <td>${r.winPct != null ? r.winPct + "%" : "—"}</td>
-                <td>${r.placePct != null ? r.placePct + "%" : "—"}</td>
-                <td>${r.avgFinish ?? "—"}</td>
+                <td>${esc(r.name || "—")}</td>
+                <td>${esc(r.box ?? "—")}</td>
+                <td>${r.winPct != null ? esc(r.winPct) + "%" : "—"}</td>
+                <td>${r.placePct != null ? esc(r.placePct) + "%" : "—"}</td>
+                <td>${esc(r.avgFinish ?? "—")}</td>
                 <td>—</td>
                 <td>—</td>
             </tr>
@@ -242,9 +246,13 @@ Field size: ${simResult.runners.length} runners
 Cover: the recommended bet, key risks, and one sentence on race shape.`;
 
         try {
+            const anthropicKey = window.ANTHROPIC_API_KEY || "";
             const resp = await fetch("https://api.anthropic.com/v1/messages", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(anthropicKey ? { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" } : {})
+                },
                 body: JSON.stringify({
                     model: "claude-sonnet-4-20250514",
                     max_tokens: 200,
@@ -274,10 +282,10 @@ Cover: the recommended bet, key risks, and one sentence on race shape.`;
         wrap.innerHTML = simLog.slice(-10).reverse().map(item => `
             <div class="sim-log-row">
                 <div class="sim-log-main">
-                    <div class="sim-log-race">${item.race || "—"}</div>
-                    <div class="sim-log-sub">${item.runs} runs • ${item.decision} • Chaos: ${item.chaos}</div>
+                    <div class="sim-log-race">${esc(item.race || "—")}</div>
+                    <div class="sim-log-sub">${esc(item.runs)} runs • ${esc(item.decision)} • Chaos: ${esc(item.chaos)}</div>
                 </div>
-                <div class="sim-log-side">${item.time}</div>
+                <div class="sim-log-side">${esc(item.time)}</div>
             </div>
         `).join("");
     }
