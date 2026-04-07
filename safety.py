@@ -7,6 +7,8 @@ import logging
 import threading
 from datetime import datetime
 
+from race_status import parse_jump_time
+
 log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------
@@ -18,13 +20,20 @@ MAX_MINUTES_BEFORE_JUMP = 90    # too early if more than 90 min
 def check_betting_window(jump_time_str, anchor_time_str):
     """
     Returns: "VALID", "TOO_EARLY", "TOO_LATE", "UNKNOWN"
+    Accepts both HH:MM time strings and ISO 8601 datetime strings.
     """
     if not jump_time_str or not anchor_time_str:
         return "UNKNOWN"
     try:
-        jh, jm = map(int, jump_time_str.split(":"))
-        ah, am = map(int, anchor_time_str.split(":"))
-        diff = (jh * 60 + jm) - (ah * 60 + am)
+        jump_dt = parse_jump_time(jump_time_str)
+        anchor_dt = parse_jump_time(anchor_time_str)
+        if jump_dt and anchor_dt:
+            diff = (jump_dt - anchor_dt).total_seconds() / 60
+        else:
+            # Fall back to simple HH:MM parsing for legacy callers
+            jh, jm = map(int, jump_time_str.split(":"))
+            ah, am = map(int, anchor_time_str.split(":"))
+            diff = (jh * 60 + jm) - (ah * 60 + am)
         if diff < MIN_MINUTES_BEFORE_JUMP:
             return "TOO_LATE"
         elif diff > MAX_MINUTES_BEFORE_JUMP:

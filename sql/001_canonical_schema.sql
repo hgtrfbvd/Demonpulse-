@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     date        DATE        NOT NULL    DEFAULT CURRENT_DATE,
     track       TEXT        NOT NULL    DEFAULT '',
     code        TEXT        NOT NULL    DEFAULT 'GREYHOUND'
-                            CHECK (code IN ('GREYHOUND', 'HARNESS', 'GALLOPS')),
+                            CHECK (code IN ('GREYHOUND', 'HARNESS', 'GALLOPS', 'HORSE')),
     state       TEXT                    DEFAULT '',
     country     TEXT                    DEFAULT 'AUS',
     weather     TEXT                    DEFAULT '',

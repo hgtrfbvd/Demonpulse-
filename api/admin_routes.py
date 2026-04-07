@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from flask import Blueprint, jsonify, request
+from auth import require_role
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
 
 @admin_bp.route("/sweep", methods=["POST"])
+@require_role("admin")
 def trigger_sweep():
     """Manually trigger a full OddsPro sweep for today."""
     try:
@@ -30,6 +32,7 @@ def trigger_sweep():
 
 
 @admin_bp.route("/refresh", methods=["POST"])
+@require_role("admin")
 def trigger_refresh():
     """Manually trigger a rolling refresh of active races."""
     try:
@@ -44,6 +47,7 @@ def trigger_refresh():
 
 
 @admin_bp.route("/results", methods=["POST"])
+@require_role("admin")
 def trigger_results():
     """Manually trigger a result check sweep."""
     try:
@@ -58,6 +62,7 @@ def trigger_results():
 
 
 @admin_bp.route("/block", methods=["POST"])
+@require_role("admin")
 def block_race():
     """Explicitly block a race by race_uid."""
     try:
@@ -76,21 +81,8 @@ def block_race():
         return jsonify({"ok": False, "error": "Block operation failed"}), 500
 
 
-@admin_bp.route("/near-jump-refresh", methods=["POST"])
-def trigger_near_jump_refresh():
-    """Manually trigger a near-jump OddsPro refresh + FormFav overlay cycle."""
-    try:
-        from data_engine import near_jump_refresh
-        from datetime import date
-        target_date = (request.get_json(silent=True) or {}).get("date")
-        result = near_jump_refresh(target_date or date.today().isoformat())
-        return jsonify(result)
-    except Exception as e:
-        log.error(f"/api/admin/near-jump-refresh failed: {e}")
-        return jsonify({"ok": False, "error": "Near-jump refresh failed"}), 500
-
-
 @admin_bp.route("/migrate", methods=["POST"])
+@require_role("admin")
 def run_migrations():
     """Run DB schema migrations to add missing columns."""
     try:
@@ -104,6 +96,7 @@ def run_migrations():
 
 
 @admin_bp.route("/scheduler", methods=["GET"])
+@require_role("admin")
 def scheduler_status():
     """Get scheduler status."""
     try:
@@ -119,6 +112,7 @@ def scheduler_status():
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/predict/race", methods=["POST"])
+@require_role("admin")
 def admin_predict_race():
     """
     Trigger prediction build for a single race.
@@ -142,6 +136,7 @@ def admin_predict_race():
 
 
 @admin_bp.route("/predict/today", methods=["POST"])
+@require_role("admin")
 def admin_predict_today():
     """Trigger prediction build for all open/upcoming races today."""
     try:
@@ -157,6 +152,7 @@ def admin_predict_today():
 
 
 @admin_bp.route("/backtest", methods=["POST"])
+@require_role("admin")
 def admin_backtest():
     """
     Run a backtest for a date or date range.
@@ -203,6 +199,7 @@ def admin_backtest():
 
 
 @admin_bp.route("/predictions/inspect/<race_uid>", methods=["GET"])
+@require_role("admin")
 def admin_inspect_prediction(race_uid: str):
     """Inspect the stored prediction for a race."""
     try:
@@ -217,6 +214,7 @@ def admin_inspect_prediction(race_uid: str):
 
 
 @admin_bp.route("/predictions/performance", methods=["GET"])
+@require_role("admin")
 def admin_performance_summary():
     """Inspect model/performance summary across stored evaluations."""
     try:
@@ -230,6 +228,7 @@ def admin_performance_summary():
 
 
 @admin_bp.route("/phase3-migrate", methods=["POST"])
+@require_role("admin")
 def run_phase3_migrations():
     """Run Phase 3 database migrations to create intelligence-layer tables."""
     try:
@@ -242,6 +241,7 @@ def run_phase3_migrations():
 
 
 @admin_bp.route("/phase4-migrate", methods=["POST"])
+@require_role("admin")
 def run_phase4_migrations():
     """
     Run Phase 4 database migrations:
@@ -260,6 +260,7 @@ def run_phase4_migrations():
 
 
 @admin_bp.route("/migrate-all", methods=["POST"])
+@require_role("admin")
 def run_all_migrations():
     """
     Run all migration phases in order: column migrations → Phase 3 → Phase 4.
@@ -279,6 +280,7 @@ def run_all_migrations():
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/bootstrap-day", methods=["GET", "POST"])
+@require_role("admin")
 def admin_bootstrap_day():
     """
     Full-pipeline diagnostic bootstrap.
@@ -609,6 +611,7 @@ def admin_bootstrap_day():
 
 
 @admin_bp.route("/run-cycle", methods=["GET", "POST"])
+@require_role("admin")
 def admin_run_cycle():
     """
     Trigger a broad OddsPro rolling refresh cycle.
@@ -661,6 +664,7 @@ def admin_run_cycle():
 
 
 @admin_bp.route("/rebuild-board", methods=["GET", "POST"])
+@require_role("admin")
 def admin_rebuild_board():
     """
     Rebuild the racing board from stored validated races.
@@ -694,6 +698,7 @@ def admin_rebuild_board():
 
 
 @admin_bp.route("/near-jump-refresh", methods=["GET", "POST"])
+@require_role("admin")
 def admin_near_jump_refresh():
     """
     Trigger a near-jump OddsPro refresh + FormFav provisional overlay cycle.
@@ -736,6 +741,7 @@ def admin_near_jump_refresh():
 
 
 @admin_bp.route("/check-results", methods=["GET", "POST"])
+@require_role("admin")
 def admin_check_results():
     """
     Trigger an OddsPro result sweep for today.
@@ -775,6 +781,7 @@ def admin_check_results():
 
 
 @admin_bp.route("/engine-status", methods=["GET"])
+@require_role("admin")
 def admin_engine_status():
     """
     Comprehensive live engine status including health metrics, scheduler state,
@@ -868,6 +875,7 @@ def admin_engine_status():
 
 
 @admin_bp.route("/routes", methods=["GET"])
+@require_role("admin")
 def admin_routes_list():
     """
     List important operational endpoints for fast browser testing and debugging.

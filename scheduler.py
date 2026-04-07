@@ -404,7 +404,7 @@ def run_scheduler():
     last_result_check = now
     last_race_state = now
     last_health_snapshot = now
-    last_formfav_sync = now - FORMFAV_SYNC_INTERVAL  # run shortly after startup
+    last_formfav_sync = now  # full_sweep triggers formfav_sync directly when races are stored
 
     if FULL_SWEEP_ON_START:
         try:

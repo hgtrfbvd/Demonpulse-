@@ -24,3 +24,7 @@ services:
         value: "480"
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "0"
+      - key: ODDSPRO_BASE_URL
+        value: https://api.raceodds.pro
+      - key: FORMFAV_API_KEY
+        sync: false

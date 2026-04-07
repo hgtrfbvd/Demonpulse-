@@ -1621,7 +1621,7 @@ def _apply_formfav_overlay(race: dict[str, Any]) -> None:
 def _race_to_dict(race: Any) -> dict[str, Any]:
     """Convert a RaceRecord dataclass or dict to a plain dict."""
     if hasattr(race, "__dict__"):
-        return race.__dict__
+        return dict(race.__dict__)
     return race if isinstance(race, dict) else {}
 
 

@@ -276,6 +276,7 @@ HORSE_AU_TRACKS: frozenset[str] = frozenset({
     # NSW
     "randwick", "rosehill", "canterbury", "warwick-farm", "kensington",
     "newcastle", "wyong", "gosford", "kembla-grange", "hawkesbury",
+    "albury",  # alias target: albury-racecourse → albury
     # VIC
     "flemington", "caulfield", "moonee-valley", "sandown", "mornington",
     "ballarat", "bendigo", "geelong", "sale", "warrnambool", "traralgon",
@@ -294,6 +295,7 @@ HORSE_NZ_TRACKS: frozenset[str] = frozenset({
     "ellerslie", "te-rapa", "pukekohe", "taupo", "tauranga", "ruakaka",
     "new-plymouth", "whanganui", "woodville", "otaki", "trentham",
     "riccarton", "ashburton", "timaru", "oamaru", "wingatui", "riverton",
+    "palmerston-north",  # alias target: palmy → palmerston-north
 })
 
 #: Australian greyhound venues.
@@ -307,6 +309,7 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     "richmond", "wentworth-park", "dapto",
     # NSW
     "casino", "lismore", "dubbo",
+    "mt-druitt",  # alias target: mount-druitt → mt-druitt
     # TAS
     "hobart", "launceston", "devonport",
     # WA
@@ -332,6 +335,7 @@ HARNESS_AU_TRACKS: frozenset[str] = frozenset({
     "albion-park", "redcliffe", "marburg",
     # SA
     "angle-park", "port-pirie",
+    "wayville",  # alias target: globe-derby-park/globe-derby → wayville
     # TAS
     "launceston", "hobart", "devonport",
 })

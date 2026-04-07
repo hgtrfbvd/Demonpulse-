@@ -13,11 +13,18 @@ from __future__ import annotations
 import logging
 from datetime import datetime, date, timezone
 from typing import Any
+import hashlib
 import json
 
 from db import get_db, safe_query, T
 
 log = logging.getLogger(__name__)
+
+# Range of synthetic box numbers assigned to runners whose position cannot be
+# determined from the source data.  Must not collide with real barrier numbers
+# (which are at most a few dozen for any race format).
+_FALLBACK_BOX_BASE = 9000
+_FALLBACK_BOX_RANGE = 1000  # fallback box_nums span 9000-9999
 
 
 def _as_json(val: Any) -> Any:
@@ -253,12 +260,8 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
     if not runners:
         return 0
 
-    # Per-race counter used only when all of box_num/barrier/number are absent.
-    # Fallback values start at 9001 to avoid collisions with real stall/box numbers.
-    _race_fallback_seq: dict[str, int] = {}
-
     rows = []
-    for r in runners:
+    for idx, r in enumerate(runners):
         race_uid = r.get("race_uid") or ""
         if not race_uid:
             log.warning(
@@ -283,15 +286,18 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
                 box_num = None
 
         if box_num is None:
-            # Generate a stable fallback box_num so no runner is ever skipped.
-            # Use 9000 + position within this race's fallback sequence to avoid
-            # conflicts with real barrier/box numbers (which are never > a few dozen).
-            _race_fallback_seq[race_uid] = _race_fallback_seq.get(race_uid, 0) + 1
-            box_num = 9000 + _race_fallback_seq[race_uid]
+            # Generate a stable fallback box_num so no runner is ever skipped,
+            # and the same runner always gets the same fallback across upsert calls.
+            # Include the runner name and list position as discriminators so runners
+            # with empty or identical names still get distinct box numbers.
+            # Use SHA-256 of (race_uid:name:idx) for a deterministic, stable identifier.
+            _hash_key = f"{race_uid}:{r.get('name', '')}:{idx}"
+            _hash_val = int(hashlib.sha256(_hash_key.encode()).hexdigest(), 16)
+            box_num = _FALLBACK_BOX_BASE + (_hash_val % _FALLBACK_BOX_RANGE)
             log.info(
                 f"database.upsert_runners: runner missing box_num/barrier/number "
                 f"(race_uid={race_uid!r}, name={r.get('name')!r}) "
-                f"— assigned fallback box_num={box_num}"
+                f"— assigned stable fallback box_num={box_num}"
             )
         rows.append({
             "race_id": race_id_uuid,
@@ -387,11 +393,15 @@ def get_result(race_uid: str) -> dict[str, Any] | None:
     parts = (race_uid or "").split("_")
     if len(parts) < 4:
         return None
-    race_date, code, *track_parts_and_num = parts
-    if not track_parts_and_num:
-        return None
-    race_num_str = track_parts_and_num[-1]
-    track = "-".join(track_parts_and_num[:-1])
+    # Format: DATE_CODE_TRACK_RACENUM
+    # DATE (index 0) and CODE (index 1) are fixed; RACENUM is the last component;
+    # TRACK is everything between CODE and RACENUM (handles underscores in track names).
+    race_date = parts[0]
+    code = parts[1]
+    race_num_str = parts[-1]
+    # parts[2:-1] works for both len==4 (single-component track) and
+    # len>4 (track name contains underscores); join always produces the correct string.
+    track = "_".join(parts[2:-1])
     try:
         race_num = int(race_num_str)
     except ValueError:
