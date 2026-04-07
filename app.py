@@ -607,10 +607,24 @@ def run_smoke_test():
 # ------------------------------------------------------------
 @app.route("/api/health")
 def api_health():
+    oddspro_enabled = False
+    formfav_enabled = False
+    try:
+        from connectors.oddspro_connector import OddsProConnector
+        oddspro_enabled = OddsProConnector().is_enabled()
+    except Exception as e:
+        log.debug(f"api_health: OddsPro connector check failed: {e}")
+    try:
+        from connectors.formfav_connector import FormFavConnector
+        formfav_enabled = FormFavConnector().is_enabled()
+    except Exception as e:
+        log.debug(f"api_health: FormFav connector check failed: {e}")
     return jsonify({
         "ok": True,
         "app": "DemonPulse",
         "mode": env.mode,
+        "oddspro_enabled": oddspro_enabled,
+        "formfav_enabled": formfav_enabled,
     })
 
 
