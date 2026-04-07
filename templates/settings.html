@@ -31,6 +31,7 @@
             <button class="settings-tab" data-tab="data">Data Controls</button>
             <button class="settings-tab" data-tab="visibility">System Visibility</button>
             <button class="settings-tab" data-tab="maintenance">Maintenance</button>
+            <button class="settings-tab" data-tab="users">User Management</button>
         </div>
     </section>
 
@@ -53,13 +54,30 @@
                 <div class="settings-value">AEST (Australia/Sydney)</div>
             </div>
             <div class="settings-field">
-                <label class="settings-label">Board Refresh Interval</label>
-                <div class="settings-value">30 seconds (auto)</div>
+                <label class="settings-label">Board Refresh (seconds)</label>
+                <select class="bet-input" id="settingRefreshInterval">
+                    <option value="15">15s</option>
+                    <option value="30" selected>30s</option>
+                    <option value="60">60s</option>
+                    <option value="120">2 min</option>
+                </select>
+            </div>
+            <div class="settings-field">
+                <label class="settings-label">Default Stake ($)</label>
+                <input class="bet-input" id="settingDefaultStake" type="number" value="10" min="1">
             </div>
             <div class="settings-field">
                 <label class="settings-label">FormFav Sync Interval</label>
                 <div class="settings-value">300 seconds (5 min)</div>
             </div>
+            <div class="settings-field">
+                <label class="settings-label">Scheduler</label>
+                <span class="settings-value" id="settingSchedulerStatus">—</span>
+            </div>
+        </div>
+        <div style="margin-top:12px;">
+            <button class="dp-btn dp-btn-primary" id="saveGeneralSettingsBtn">Save Settings</button>
+            <span class="section-meta" id="generalSettingsMeta" style="margin-left:10px;"></span>
         </div>
     </section>
 
@@ -161,6 +179,69 @@
             </div>
         </div>
         <pre class="rv-raw-pre" id="healthDetailPre" style="display:none;"></pre>
+    </section>
+
+    <!-- E. USER MANAGEMENT -->
+    <section class="card settings-section" id="settings-users" style="display:none;">
+        <div class="section-head">
+            <div>
+                <div class="section-kicker">USER MANAGEMENT</div>
+                <h2 class="section-title">Access Control</h2>
+            </div>
+            <button class="dp-btn dp-btn-primary" id="openAddUserBtn">+ Add User</button>
+        </div>
+
+        <div class="table-wrap">
+            <table class="board-terminal-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Status</th>
+                        <th>Last Login</th>
+                        <th>Bankroll</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="userTableRows">
+                    <tr><td colspan="6" class="board-empty">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Add User Modal -->
+        <div class="modal-backdrop" id="addUserModal" style="display:none;">
+            <div class="modal-box">
+                <div class="modal-title">Add New User</div>
+                <div class="modal-fields">
+                    <div class="settings-field">
+                        <label class="settings-label">Username</label>
+                        <input class="bet-input" id="newUsername" placeholder="username">
+                    </div>
+                    <div class="settings-field">
+                        <label class="settings-label">Password</label>
+                        <input class="bet-input" id="newPassword" type="password" placeholder="min 8 characters">
+                    </div>
+                    <div class="settings-field">
+                        <label class="settings-label">Role</label>
+                        <select class="bet-input" id="newRole">
+                            <option value="viewer">Viewer — board + reports only</option>
+                            <option value="operator" selected>Operator — home, live, betting, reports</option>
+                            <option value="admin">Admin — full access</option>
+                        </select>
+                    </div>
+                    <div class="settings-field">
+                        <label class="settings-label">Starting Bankroll ($)</label>
+                        <input class="bet-input" id="newBankroll" type="number" value="1000">
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="dp-btn dp-btn-primary" id="confirmAddUserBtn">Create User</button>
+                    <button class="dp-btn" onclick="document.getElementById('addUserModal').style.display='none'">Cancel</button>
+                </div>
+                <div class="section-meta" id="addUserMeta"></div>
+            </div>
+        </div>
     </section>
 
 </div>

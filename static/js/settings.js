@@ -25,6 +25,8 @@
 
                 if (tab.dataset.tab === "visibility") loadVisibility();
                 if (tab.dataset.tab === "data") loadSourceStatus();
+                if (tab.dataset.tab === "users") loadUsers();
+                if (tab.dataset.tab === "general") loadSchedulerStatus();
             });
         });
     }
@@ -190,9 +192,150 @@
         }
     }
 
+    // -------------------------------------------------------
+    // General settings
+    // -------------------------------------------------------
+    async function loadSchedulerStatus() {
+        try {
+            const data = await api("/api/admin/scheduler");
+            setText("settingSchedulerStatus", data.status || data.scheduler_status || "—");
+        } catch (_) {
+            setText("settingSchedulerStatus", "—");
+        }
+    }
+
+    function bindGeneralSettings() {
+        // Restore saved settings from localStorage
+        try {
+            const saved = JSON.parse(localStorage.getItem("generalSettings") || "{}");
+            if (saved.refreshInterval && q("settingRefreshInterval")) q("settingRefreshInterval").value = saved.refreshInterval;
+            if (saved.defaultStake && q("settingDefaultStake"))       q("settingDefaultStake").value   = saved.defaultStake;
+        } catch (_) {}
+
+        const saveBtn = q("saveGeneralSettingsBtn");
+        if (saveBtn) {
+            saveBtn.addEventListener("click", () => {
+                const cfg = {
+                    refreshInterval: q("settingRefreshInterval")?.value || "30",
+                    defaultStake:    q("settingDefaultStake")?.value    || "10",
+                };
+                localStorage.setItem("generalSettings", JSON.stringify(cfg));
+                setText("generalSettingsMeta", "✓ Saved");
+            });
+        }
+    }
+
+    // -------------------------------------------------------
+    // User management
+    // -------------------------------------------------------
+
+    async function loadUsers() {
+        try {
+            const data = await api("/api/admin/users");
+            const rows = q("userTableRows");
+            const users = data.users || [];
+            if (!users.length) {
+                if (rows) rows.innerHTML = `<tr><td colspan="6" class="board-empty">No users yet</td></tr>`;
+                return;
+            }
+            if (rows) rows.innerHTML = users.map(u => `
+                <tr>
+                    <td><strong>${u.username}</strong></td>
+                    <td><span class="role-badge role-${u.role}">${u.role}</span></td>
+                    <td><span style="color:${u.active ? "var(--green)" : "var(--text-dim)"}">${u.active ? "Active" : "Disabled"}</span></td>
+                    <td>${u.last_login ? new Date(u.last_login).toLocaleDateString("en-AU") : "Never"}</td>
+                    <td>$${(u.bankroll ?? 1000).toLocaleString()}</td>
+                    <td>
+                        <button class="dp-btn dp-btn-small" onclick="toggleUser('${u.id}', ${u.active})">${u.active ? "Disable" : "Enable"}</button>
+                        <button class="dp-btn dp-btn-small" onclick="resetPassword('${u.id}', '${u.username}')">Reset PW</button>
+                        ${u.role !== "admin" ? `<button class="dp-btn dp-btn-small" style="color:var(--red-1)" onclick="deleteUser('${u.id}', '${u.username}')">Remove</button>` : ""}
+                    </td>
+                </tr>
+            `).join("");
+        } catch (e) {
+            console.error("Load users failed", e);
+        }
+    }
+
+    async function createUser() {
+        const username  = q("newUsername")?.value.trim() || "";
+        const password  = q("newPassword")?.value || "";
+        const role      = q("newRole")?.value || "operator";
+        const bankroll  = parseFloat(q("newBankroll")?.value) || 1000;
+        const meta      = q("addUserMeta");
+
+        if (!username || !password) { if (meta) meta.textContent = "Username and password required"; return; }
+        if (password.length < 8)   { if (meta) meta.textContent = "Password must be 8+ characters"; return; }
+
+        try {
+            const r = await api("/api/admin/users/create", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password, role, starting_bankroll: bankroll })
+            });
+            if (r.ok) {
+                const modal = q("addUserModal");
+                if (modal) modal.style.display = "none";
+                loadUsers();
+            } else {
+                if (meta) meta.textContent = r.error || "Failed to create user";
+            }
+        } catch (e) {
+            if (meta) meta.textContent = "Error: " + e.message;
+        }
+    }
+
+    function bindUserManagement() {
+        const openBtn = q("openAddUserBtn");
+        if (openBtn) openBtn.addEventListener("click", () => {
+            const modal = q("addUserModal");
+            if (modal) modal.style.display = "flex";
+        });
+
+        const confirmBtn = q("confirmAddUserBtn");
+        if (confirmBtn) confirmBtn.addEventListener("click", createUser);
+
+        // Listen to reloadUsers events fired by global toggle/delete functions
+        document.addEventListener("reloadUsers", () => loadUsers());
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
         initTabs();
         loadHeroStats();
+        loadSchedulerStatus();
         bindMaintenance();
+        bindGeneralSettings();
+        bindUserManagement();
     });
 })();
+
+// Expose user management functions globally (called from inline onclick)
+async function toggleUser(userId, currentActive) {
+    await fetch(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !currentActive })
+    });
+    // Reload table via settings module
+    const evt = new CustomEvent("reloadUsers");
+    document.dispatchEvent(evt);
+}
+
+async function deleteUser(userId, username) {
+    if (!confirm(`Remove user "${username}"? This cannot be undone.`)) return;
+    await fetch(`/api/admin/users/${userId}`, { method: "DELETE" });
+    const evt = new CustomEvent("reloadUsers");
+    document.dispatchEvent(evt);
+}
+
+async function resetPassword(userId, username) {
+    const newPw = prompt(`New password for "${username}" (min 8 chars):`);
+    if (!newPw || newPw.length < 8) { alert("Password must be 8+ characters"); return; }
+    const r = await fetch(`/api/admin/users/${userId}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_password: newPw })
+    });
+    const data = await r.json();
+    alert(data.ok ? "Password reset successfully" : (data.error || "Failed"));
+}

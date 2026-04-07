@@ -907,3 +907,83 @@ def admin_routes_list():
             {"method": "POST", "path": "/api/admin/migrate-all", "description": "Run all DB migrations"},
         ],
     })
+
+
+# ---------------------------------------------------------------
+# USER MANAGEMENT ROUTES
+# ---------------------------------------------------------------
+
+@admin_bp.route("/users", methods=["GET"])
+@require_role("admin")
+def list_users():
+    from users import get_all_users
+    return jsonify({"ok": True, "users": get_all_users()})
+
+
+@admin_bp.route("/users/create", methods=["POST"])
+@require_role("admin")
+def create_user_route():
+    from users import create_user_full
+    from auth import get_current_user
+    data = request.get_json(silent=True) or {}
+    actor = get_current_user()
+    try:
+        user = create_user_full(
+            username=data.get("username", "").strip(),
+            password=data.get("password", ""),
+            role=data.get("role", "operator"),
+            starting_bankroll=float(data.get("starting_bankroll", 1000)),
+            creator_username=actor.get("username", "admin") if actor else "admin",
+        )
+        return jsonify({"ok": True, "user": user})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/users/<user_id>", methods=["PATCH"])
+@require_role("admin")
+def update_user_route(user_id):
+    from users import update_user_profile
+    from auth import get_current_user
+    data = request.get_json(silent=True) or {}
+    actor = get_current_user()
+    try:
+        update_user_profile(user_id, actor.get("username", "admin") if actor else "admin", **data)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/users/<user_id>", methods=["DELETE"])
+@require_role("admin")
+def delete_user_route(user_id):
+    from users import delete_user
+    from auth import get_current_user
+    actor = get_current_user()
+    try:
+        delete_user(user_id, actor.get("username", "admin") if actor else "admin")
+        return jsonify({"ok": True})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/users/<user_id>/reset-password", methods=["POST"])
+@require_role("admin")
+def reset_user_password(user_id):
+    from users import reset_password
+    from auth import get_current_user
+    data = request.get_json(silent=True) or {}
+    actor = get_current_user()
+    try:
+        reset_password(user_id, data.get("new_password", ""), actor.get("username", "admin") if actor else "admin")
+        return jsonify({"ok": True})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+

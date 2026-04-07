@@ -2260,3 +2260,61 @@
 .runner-summary-row:hover { background: rgba(255,255,255,0.03); }
 .runner-summary-row.expanded { border-left: 3px solid var(--red-1); background: rgba(255,31,31,0.04); }
 .runner-summary-row.scratched-row { opacity: 0.45; }
+
+/* ============================================================
+   PHASE 2 UI ADDITIONS — UiBuild.Md
+   ============================================================ */
+
+/* Section 1 — Status badges */
+.badge-pending  { background: rgba(255,179,71,0.18); color: var(--amber); border: 1px solid rgba(255,179,71,0.3); }
+.badge-resulted { background: rgba(61,214,140,0.14); color: var(--green); }
+
+/* Section 2 — Runner decorator badges */
+.decorator-badges { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+.decorator-badge {
+    font-size:0.68rem; font-weight:700; padding:3px 9px; border-radius:20px;
+    border:1px solid; background:transparent; letter-spacing:0.04em;
+}
+.runner-badge {
+    font-size:0.6rem; font-weight:700; padding:1px 6px; border-radius:4px;
+    background:rgba(90,180,255,0.12); color:var(--blue);
+    margin-left:5px; vertical-align:middle;
+}
+
+/* Section 3 — Simulation result banner */
+.sim-result-banner {
+    text-align:center; padding:8px 12px; border-radius:8px;
+    background:rgba(61,214,140,0.08); border:1px solid rgba(61,214,140,0.2);
+    font-size:0.82rem; margin-top:8px;
+}
+
+/* Section 4 — Learning activity feed */
+.activity-row { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; }
+.activity-icon { width:16px; font-weight:700; }
+.activity-win  .activity-icon { color:var(--green); }
+.activity-loss .activity-icon { color:var(--red-1); }
+.activity-race { min-width:110px; color:var(--text-soft); }
+.activity-pick { flex:1; color:var(--text); }
+.activity-result { font-weight:600; min-width:70px; text-align:right; }
+.activity-win  .activity-result { color:var(--green); }
+.activity-loss .activity-result { color:var(--red-1); }
+.activity-pending .activity-result { color:var(--text-dim); }
+.activity-empty { color:var(--text-dim); font-size:0.82rem; padding:16px 0; text-align:center; }
+
+/* Section 6 — User management modal */
+.modal-backdrop {
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:300;
+    display:flex; align-items:center; justify-content:center;
+    backdrop-filter:blur(4px);
+}
+.modal-box {
+    background:var(--bg-2); border:1px solid var(--border-strong);
+    border-radius:16px; padding:24px; min-width:360px; max-width:480px;
+}
+.modal-title { font-size:1.1rem; font-weight:700; margin-bottom:16px; }
+.modal-fields { display:flex; flex-direction:column; gap:12px; margin-bottom:20px; }
+.modal-actions { display:flex; gap:8px; }
+.role-badge { font-size:0.68rem; font-weight:700; padding:2px 8px; border-radius:4px; }
+.role-admin    { background:rgba(255,45,45,0.15); color:var(--red-1); }
+.role-operator { background:rgba(90,180,255,0.12); color:var(--blue); }
+.role-viewer   { background:var(--bg-4); color:var(--text-dim); }
