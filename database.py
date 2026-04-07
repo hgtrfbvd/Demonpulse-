@@ -261,7 +261,7 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
         return 0
 
     rows = []
-    for r in runners:
+    for idx, r in enumerate(runners):
         race_uid = r.get("race_uid") or ""
         if not race_uid:
             log.warning(
@@ -288,8 +288,10 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
         if box_num is None:
             # Generate a stable fallback box_num so no runner is ever skipped,
             # and the same runner always gets the same fallback across upsert calls.
-            # Use SHA-256 of (race_uid:name) for a deterministic, stable identifier.
-            _hash_key = f"{race_uid}:{r.get('name', '')}"
+            # Include the runner name and list position as discriminators so runners
+            # with empty or identical names still get distinct box numbers.
+            # Use SHA-256 of (race_uid:name:idx) for a deterministic, stable identifier.
+            _hash_key = f"{race_uid}:{r.get('name', '')}:{idx}"
             _hash_val = int(hashlib.sha256(_hash_key.encode()).hexdigest(), 16)
             box_num = _FALLBACK_BOX_BASE + (_hash_val % _FALLBACK_BOX_RANGE)
             log.info(
@@ -397,9 +399,9 @@ def get_result(race_uid: str) -> dict[str, Any] | None:
     race_date = parts[0]
     code = parts[1]
     race_num_str = parts[-1]
-    # When len==4: parts[2:-1] is a one-element list, equivalent to parts[2].
-    # When len>4: track name contained underscores; join them back.
-    track = "_".join(parts[2:-1]) if len(parts) > 4 else parts[2]
+    # parts[2:-1] works for both len==4 (single-component track) and
+    # len>4 (track name contains underscores); join always produces the correct string.
+    track = "_".join(parts[2:-1])
     try:
         race_num = int(race_num_str)
     except ValueError:
