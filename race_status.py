@@ -52,7 +52,7 @@ _AWAITING_RESULT_THRESHOLD = 1800  # 30 minutes
 # Seconds past jump_time before a race is considered expired and removed from
 # the live board (applies when no authoritative settled status has been received).
 # Configurable grace period: 30 minutes matches _AWAITING_RESULT_THRESHOLD.
-BOARD_EXPIRED_GRACE_SECS = 86400  # keep on board until midnight
+BOARD_EXPIRED_GRACE_SECS = 3600  # remove from board 60 min after jump
 
 # Status constants — Phase 1 originals
 STATUS_UPCOMING = "upcoming"

@@ -148,6 +148,7 @@ function Login({onLogin}){
       const res=await API.post('/api/auth/login',{username:u,password:p});
 
       if(res.ok && res.data?.user){
+        if(res.data.token) localStorage.setItem("dp_token", res.data.token);
         onLogin(res.data.user);
       }else{
         alert(res.data?.error || `Login failed (${res.status})`);

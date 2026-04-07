@@ -1813,6 +1813,9 @@
 .status-imminent { background: rgba(255,31,31,0.2); color: var(--red-1); }
 .status-near     { border: 1px solid var(--amber); color: var(--amber); }
 .status-upcoming { color: var(--text-dim); }
+.status-jumped   { background: var(--bg-3); color: var(--text-dim); }
+.ntj-jumped      { opacity: 0.45; }
+.jumped          { color: var(--text-dim); }
 
 .race-arrow { color: var(--text-dim); font-size: 1rem; }
 

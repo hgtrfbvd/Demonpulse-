@@ -253,21 +253,13 @@ AI Win probability: ${runner.winProb ? runner.winProb + "%" : "—"}
 Be direct and useful. Mention key strengths or concerns. Do not use filler phrases.`;
 
         try {
-            const anthropicKey = window.ANTHROPIC_API_KEY || "";
-            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+            const resp = await fetch("/api/ai/commentary", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    ...(anthropicKey ? { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" } : {})
-                },
-                body: JSON.stringify({
-                    model: "claude-sonnet-4-20250514",
-                    max_tokens: 150,
-                    messages: [{ role: "user", content: prompt }]
-                })
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt })
             });
             const data = await resp.json();
-            const text = data.content?.[0]?.text || "No commentary available.";
+            const text = data.text || "Commentary unavailable.";
             el.textContent = text;
             el.dataset.loaded = "true";
             aiCommentaryCache[cacheKey] = text;
