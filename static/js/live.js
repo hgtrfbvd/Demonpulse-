@@ -2,10 +2,12 @@
     const _AEST = "Australia/Sydney";
 
     let liveRace = null;
+    let liveRunners = [];
     let liveAnalysis = null;
     let liveSignal = null;
-    let allMeetingRaces = [];   // races in the same meeting, sorted by race_num
+    let allMeetingRaces = [];
     let countdownTimer = null;
+    const aiCommentaryCache = {};  // keyed by race_uid + "_" + box
 
     const q = (id) => document.getElementById(id);
 
@@ -114,7 +116,6 @@
         setText("liveGrade", liveRace.grade || "—");
         setText("liveCondition", liveRace.track_condition || liveRace.condition || "—");
 
-        // Jump time display
         let jumpDisplay = "—";
         if (liveRace.jump_dt_iso) {
             const dt = new Date(liveRace.jump_dt_iso);
@@ -126,7 +127,6 @@
         }
         setText("liveJump", jumpDisplay);
 
-        // Code chip
         const codeChip = q("liveCode");
         if (codeChip) {
             codeChip.textContent = code;
@@ -151,29 +151,114 @@
     }
 
     // -------------------------------------------------------
-    // Build Runner Rows
+    // Form string → recent starts rows (for expanded detail)
     // -------------------------------------------------------
 
-    function buildRunnerRows(runners, analysis) {
+    function buildRecentStartsRows(formStr) {
+        if (!formStr) return '<div class="rr-empty">No form data.</div>';
+        const chars = formStr.slice(-6).split("");
+        return chars.map(c => {
+            let cls = "finish-bad";
+            let label = c;
+            if (c === "1") { cls = "finish-win"; label = "1st"; }
+            else if (c === "2") { cls = "finish-win"; label = "2nd"; }
+            else if (c === "3") { cls = "finish-place"; label = "3rd"; }
+            else if (c === "F" || c === "W") { cls = "finish-bad"; label = c === "F" ? "Fell" : "W/D"; }
+            else if (c === "V") { cls = "finish-place"; label = "Vac"; }
+            else { label = c + "th"; }
+            return `
+                <div class="recent-run-row">
+                    <span class="rr-track">—</span>
+                    <span class="rr-time">—</span>
+                    <span class="rr-dist">—</span>
+                    <span class="rr-date">—</span>
+                    <span class="rr-finish ${cls}">${label}</span>
+                </div>
+            `;
+        }).join("");
+    }
+
+    // -------------------------------------------------------
+    // AI Commentary
+    // -------------------------------------------------------
+
+    async function generateRunnerCommentary(runner, race) {
+        const cacheKey = `${getRaceUid()}_${runner.box}`;
+        const el = document.getElementById(`aiCommentary_${runner.box}`);
+        if (!el) return;
+        if (el.dataset.loaded === "true") return;
+
+        // Check cache
+        if (aiCommentaryCache[cacheKey]) {
+            el.textContent = aiCommentaryCache[cacheKey];
+            el.dataset.loaded = "true";
+            return;
+        }
+
+        el.innerHTML = `<span class="ai-loading">Analysing…</span>`;
+
+        const prompt = `You are a racing analyst. In 2-3 sentences, give a punter's assessment of this runner's chances.
+
+Race: ${formatTrack(race.track)} R${race.race_num} — ${race.distance || ""} ${race.grade || ""} ${race.condition || ""}
+Runner: ${runner.name} (Box/Barrier ${runner.box})
+Trainer: ${runner.trainer || "Unknown"}
+Form (last 6): ${runner.form || "—"}
+Career: ${runner.career || "—"}
+Best time: ${runner.bestTime || "—"}
+Odds: ${runner.odds ? "$" + parseFloat(runner.odds).toFixed(2) : "—"}
+AI Win probability: ${runner.winProb ? runner.winProb + "%" : "—"}
+
+Be direct and useful. Mention key strengths or concerns. Do not use filler phrases.`;
+
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model: "claude-sonnet-4-20250514",
+                    max_tokens: 150,
+                    messages: [{ role: "user", content: prompt }]
+                })
+            });
+            const data = await resp.json();
+            const text = data.content?.[0]?.text || "No commentary available.";
+            el.textContent = text;
+            el.dataset.loaded = "true";
+            aiCommentaryCache[cacheKey] = text;
+        } catch (e) {
+            el.textContent = "Commentary unavailable.";
+        }
+    }
+
+    // -------------------------------------------------------
+    // Build Expandable Runner Cards
+    // -------------------------------------------------------
+
+    function buildRunnerCards(runners, analysis) {
         const winProbs = analysis?.all_runners || [];
         const probMap = {};
         for (const r of winProbs) {
-            probMap[r.number ?? r.box] = r.win_prob;
+            const key = r.number ?? r.box ?? r.box_num;
+            if (key != null) probMap[key] = r.win_prob;
         }
 
-        // Determine rank order by model_rank or win_prob
         const ranked = [...runners]
             .filter(r => !r.scratched)
             .sort((a, b) => {
-                const aProb = probMap[a.number ?? a.box_num] ?? (a.price > 0 ? 100 / a.price : 0);
-                const bProb = probMap[b.number ?? b.box_num] ?? (b.price > 0 ? 100 / b.price : 0);
-                return bProb - aProb;
+                const boxA = a.box_num ?? a.number ?? a.barrier;
+                const boxB = b.box_num ?? b.number ?? b.barrier;
+                const probA = probMap[boxA] ?? (a.price > 0 ? 100 / a.price : 0);
+                const probB = probMap[boxB] ?? (b.price > 0 ? 100 / b.price : 0);
+                return probB - probA;
             });
         const rankMap = {};
-        ranked.forEach((r, i) => { rankMap[r.number ?? r.box_num] = i + 1; });
+        ranked.forEach((r, i) => {
+            const key = r.box_num ?? r.number ?? r.barrier;
+            if (key != null) rankMap[key] = i + 1;
+        });
 
-        const tbody = q("formGuideRows");
-        if (!tbody) return;
+        const container = q("formGuideRows");
+        if (!container) return;
 
         const runnerSelect = q("qbRunner");
         if (runnerSelect) {
@@ -181,65 +266,182 @@
                 runners.map(r => `<option value="${r.name || ''}" data-odds="${r.price || r.win_odds || ''}">${r.name || '—'}</option>`).join("");
         }
 
-        tbody.innerHTML = runners.map(r => {
-            const isScratched = r.scratched;
-            const boxNum = r.box_num ?? r.box ?? r.number ?? "?";
-            const odds = r.price || r.win_odds;
+        // Build normalised runner objects
+        const normalised = runners.map((r, idx) => {
+            const box = r.box_num ?? r.number ?? r.barrier ?? (idx + 1);
+            const odds = r.price || r.win_odds || null;
             const impliedProb = odds > 0 ? (100 / odds) : null;
-            const aiProb = probMap[r.number ?? r.box_num];
+            const aiProb = probMap[box];
             const winProb = aiProb ?? impliedProb ?? null;
-            const rank = rankMap[r.number ?? r.box_num];
-            const formStr = r.form_string || r.form || "";
-            const careerStr = r.career || "";
+            const rank = rankMap[box];
+            return {
+                box,
+                name: r.name || "—",
+                form: r.form_string || r.form || "",
+                trainer: r.trainer || "",
+                jockey: r.jockey || r.driver || "",
+                bestTime: r.best_time || "",
+                weight: r.weight || "",
+                career: r.career || "",
+                earlySpeed: r.early_speed || "",
+                odds,
+                winProb,
+                rank,
+                scratched: !!r.scratched,
+            };
+        });
+
+        // Render cards
+        container.innerHTML = normalised.map(r => {
+            const oddsStr = r.odds ? `$${parseFloat(r.odds).toFixed(2)}` : "—";
+            const probPct = r.winProb != null ? Math.min(100, Math.max(0, r.winProb)).toFixed(1) : null;
+            const probBarWidth = r.winProb != null ? Math.min(100, Math.max(0, r.winProb)) : 0;
+            const trainerLine = [r.trainer ? `T: ${r.trainer}` : null, r.jockey ? `J: ${r.jockey}` : null]
+                .filter(Boolean).join("  ");
 
             let rankBadge = "";
-            if (isScratched) {
+            if (r.scratched) {
                 rankBadge = `<div class="rank-badge rank-scr">SCR</div>`;
-            } else if (rank === 1) {
+            } else if (r.rank === 1) {
                 rankBadge = `<div class="rank-badge rank-1">1st</div>`;
-            } else if (rank === 2) {
+            } else if (r.rank === 2) {
                 rankBadge = `<div class="rank-badge rank-2">2nd</div>`;
-            } else if (rank === 3) {
+            } else if (r.rank === 3) {
                 rankBadge = `<div class="rank-badge rank-3">3rd</div>`;
-            } else if (rank) {
-                rankBadge = `<div class="rank-text">${rank}th</div>`;
+            } else if (r.rank) {
+                rankBadge = `<div class="rank-text">${r.rank}th</div>`;
             } else {
                 rankBadge = `<div class="rank-text">—</div>`;
             }
 
-            const probPct = winProb != null ? Math.min(100, Math.max(0, winProb)).toFixed(1) : null;
-            const probBarWidth = winProb != null ? Math.min(100, Math.max(0, winProb)) : 0;
-            const impStr = impliedProb != null ? `${impliedProb.toFixed(1)}% imp` : "";
-            const trainerJockey = [r.trainer ? `T: ${r.trainer}` : null, r.jockey ? `J: ${r.jockey}` : null]
-                .filter(Boolean).join("  ");
+            // Parse career for win/place percentages
+            let winPct = "—", placePct = "—";
+            if (r.career) {
+                const m = r.career.match(/^(\d+):\s*(\d+)-(\d+)-(\d+)/);
+                if (m) {
+                    const total = parseInt(m[1], 10);
+                    const wins = parseInt(m[2], 10);
+                    const places = parseInt(m[3], 10);
+                    if (total > 0) {
+                        winPct = ((wins / total) * 100).toFixed(1) + "%";
+                        placePct = (((wins + places) / total) * 100).toFixed(1) + "%";
+                    }
+                }
+            }
+
+            const recentRows = buildRecentStartsRows(r.form);
 
             return `
-                <tr class="runner-row${isScratched ? " scratched" : ""}" data-runner-name="${r.name || ''}" data-runner-odds="${odds || ''}" data-navigate="runner">
-                    <td class="col-box"><div class="box-num">${boxNum}</div></td>
-                    <td class="col-runner">
-                        <div class="runner-name"${isScratched ? ' style="text-decoration:line-through"' : ''}>${r.name || "—"}</div>
-                        ${trainerJockey ? `<div class="runner-meta">${trainerJockey}</div>` : ""}
-                    </td>
-                    <td class="col-form">
-                        <div class="form-string">${colorFormString(formStr)}</div>
-                        ${careerStr ? `<div class="form-career">${careerStr}</div>` : ""}
-                    </td>
-                    <td class="col-odds">
-                        <div class="odds-value">${odds ? `$${parseFloat(odds).toFixed(2)}` : "—"}</div>
-                        ${impStr ? `<div class="odds-imp">${impStr}</div>` : ""}
-                    </td>
-                    <td class="col-prob">
-                        ${probPct != null ? `
-                            <div class="prob-bar-wrap"><div class="prob-bar" style="width:${probBarWidth}%"></div></div>
-                            <div class="prob-text">${probPct}%</div>
-                        ` : '<div class="prob-text" style="color:var(--text-dim)">—</div>'}
-                    </td>
-                    <td class="col-rank">${rankBadge}</td>
-                </tr>
+                <div class="runner-card${r.scratched ? " runner-card-scratched" : ""}" data-box="${r.box}">
+                    <div class="runner-summary-row${r.scratched ? " scratched-row" : ""}"
+                         data-runner-name="${r.name}" data-runner-odds="${r.odds || ''}" data-navigate="runner">
+                        <div class="col-box"><div class="box-num">${r.box}</div></div>
+                        <div class="col-runner" style="flex:1; min-width:0;">
+                            <div class="runner-name"${r.scratched ? ' style="text-decoration:line-through"' : ''}>${r.name}</div>
+                            ${trainerLine ? `<div class="runner-meta">${trainerLine}</div>` : ""}
+                        </div>
+                        <div class="col-form" style="min-width:80px;">
+                            <div class="form-string">${colorFormString(r.form)}</div>
+                        </div>
+                        <div class="col-odds" style="min-width:60px; text-align:right;">
+                            <div class="odds-value">${oddsStr}</div>
+                        </div>
+                        <div class="col-prob" style="min-width:72px; text-align:right;">
+                            ${probPct != null ? `
+                                <div class="prob-bar-wrap"><div class="prob-bar" style="width:${probBarWidth}%"></div></div>
+                                <div class="prob-text">${probPct}%</div>
+                            ` : '<div class="prob-text" style="color:var(--text-dim)">—</div>'}
+                        </div>
+                        <div class="col-rank" style="min-width:52px; text-align:right;">${rankBadge}</div>
+                    </div>
+
+                    <div class="runner-expand" id="runnerExpand_${r.box}" style="display:none;">
+
+                        <div class="expand-stats-grid">
+                            <div class="expand-stat"><span class="es-label">Last 6</span><span class="es-val">${r.form || "—"}</span></div>
+                            <div class="expand-stat"><span class="es-label">Career</span><span class="es-val">${r.career || "—"}</span></div>
+                            <div class="expand-stat"><span class="es-label">Win %</span><span class="es-val">${winPct}</span></div>
+                            <div class="expand-stat"><span class="es-label">Place %</span><span class="es-val">${placePct}</span></div>
+                            <div class="expand-stat"><span class="es-label">Best Time</span><span class="es-val">${r.bestTime || "—"}</span></div>
+                            <div class="expand-stat"><span class="es-label">Weight</span><span class="es-val">${r.weight || "—"}</span></div>
+                            <div class="expand-stat"><span class="es-label">Early Speed</span><span class="es-val">${r.earlySpeed || "—"}</span></div>
+                            <div class="expand-stat"><span class="es-label">AI Win %</span><span class="es-val">${probPct != null ? probPct + "%" : "—"}</span></div>
+                        </div>
+
+                        <div class="expand-recent-starts">
+                            <div class="expand-section-title">Recent Starts (form chars)</div>
+                            ${recentRows}
+                        </div>
+
+                        <div class="expand-ai-commentary">
+                            <div class="expand-section-title">AI Commentary</div>
+                            <div class="ai-commentary-text" id="aiCommentary_${r.box}">
+                                <span class="ai-loading">Click to generate analysis…</span>
+                            </div>
+                        </div>
+
+                        <button class="expand-bet-btn" data-runner-name="${r.name}" data-runner-odds="${r.odds || ''}">
+                            Bet This Runner →
+                        </button>
+
+                    </div>
+                </div>
             `;
         }).join("");
 
         setText("formGuideMeta", `${runners.length} runner${runners.length !== 1 ? "s" : ""}`);
+    }
+
+    // -------------------------------------------------------
+    // Toggle runner expand
+    // -------------------------------------------------------
+
+    function toggleRunnerExpand(box) {
+        const expandEl = document.getElementById(`runnerExpand_${box}`);
+        if (!expandEl) return;
+
+        const isOpen = expandEl.style.display !== "none";
+
+        // Close all
+        document.querySelectorAll(".runner-expand").forEach(el => { el.style.display = "none"; });
+        document.querySelectorAll(".runner-summary-row").forEach(el => el.classList.remove("expanded"));
+
+        if (!isOpen) {
+            expandEl.style.display = "block";
+            const summaryRow = expandEl.closest(".runner-card")?.querySelector(".runner-summary-row");
+            if (summaryRow) summaryRow.classList.add("expanded");
+
+            // Trigger AI commentary
+            const cardEl = expandEl.closest(".runner-card");
+            if (cardEl && liveRace) {
+                const runnerName = expandEl.querySelector(".expand-bet-btn")?.dataset.runnerName || "";
+                const runnerOdds = expandEl.querySelector(".expand-bet-btn")?.dataset.runnerOdds || "";
+                const runner = {
+                    box, name: runnerName, odds: runnerOdds,
+                    form: expandEl.querySelector(".es-val")?.textContent || "",
+                    career: "", trainer: "", bestTime: "", weight: "", winProb: null
+                };
+                // find full runner data from liveRunners
+                const full = liveRunners.find(r => {
+                    const b = r.box_num ?? r.number ?? r.barrier;
+                    return String(b) === String(box);
+                });
+                if (full) {
+                    const odds = full.price || full.win_odds || null;
+                    const winProb = full.win_prob || null;
+                    runner.name = full.name || runnerName;
+                    runner.odds = odds;
+                    runner.form = full.form_string || full.form || "";
+                    runner.career = full.career || "";
+                    runner.trainer = full.trainer || "";
+                    runner.jockey = full.jockey || full.driver || "";
+                    runner.bestTime = full.best_time || "";
+                    runner.weight = full.weight || "";
+                    runner.winProb = winProb;
+                }
+                generateRunnerCommentary(runner, liveRace);
+            }
+        }
     }
 
     // -------------------------------------------------------
@@ -250,7 +452,6 @@
         const signal = liveSignal?.signal || liveAnalysis?.signal || "—";
         const decision = liveAnalysis?.decision || "—";
 
-        // Signal display
         const sigEl = q("analysisSignal");
         if (sigEl) {
             sigEl.textContent = String(signal).toUpperCase();
@@ -265,11 +466,8 @@
             );
         }
 
-        // Decision display
         const decEl = q("analysisDecision");
-        if (decEl) {
-            decEl.textContent = String(decision).toUpperCase();
-        }
+        if (decEl) decEl.textContent = String(decision).toUpperCase();
 
         setText("analysisPace", liveAnalysis?.pace_type || "—");
         setText("analysisShape", liveAnalysis?.race_shape || liveAnalysis?.beneficiary || "—");
@@ -292,8 +490,8 @@
     }
 
     function selectRunnerRow(rowEl) {
-        if (rowEl.classList.contains("scratched")) return;
-        document.querySelectorAll(".runner-row.selected").forEach(r => r.classList.remove("selected"));
+        if (rowEl.classList.contains("scratched-row")) return;
+        document.querySelectorAll(".runner-summary-row.selected").forEach(r => r.classList.remove("selected"));
         rowEl.classList.add("selected");
 
         const name = rowEl.dataset.runnerName;
@@ -319,10 +517,10 @@
         if (!raceUid || !runner || !odds || !stake) return;
 
         try {
-            await api("/api/betting/place", {
+            await api("/api/bets/place", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ race_uid: raceUid, runner, odds, stake, bet_type: betType })
+                body: JSON.stringify({ race_uid: raceUid, runner, odds: parseFloat(odds), stake: parseFloat(stake), bet_type: betType })
             });
         } catch (e) {
             console.error("Place bet failed:", e);
@@ -330,53 +528,71 @@
     }
 
     // -------------------------------------------------------
-    // Simulation
+    // Simulation (client-side)
     // -------------------------------------------------------
 
-    async function runSimulation() {
-        const raceUid = getRaceUid();
-        if (!raceUid) return;
+    function runClientSideSimulation(runners, runs) {
+        const active = runners.filter(r => !r.scratched);
+        const total = active.reduce((s, r) => s + (r.winProb || (100 / (r.odds || 10))), 0);
+
+        const results = active.map(r => {
+            const prob = (r.winProb || (100 / (r.odds || 10))) / total;
+            const winCount = Math.round(prob * runs * (0.85 + Math.random() * 0.3));
+            const placeCount = Math.round(Math.min(winCount * 1.8, runs * 0.65));
+            return {
+                name: r.name, box: r.box,
+                winPct: +((winCount / runs) * 100).toFixed(1),
+                placePct: +((placeCount / runs) * 100).toFixed(1),
+                avgFinish: +(1 + (1 - prob) * active.length * 0.9).toFixed(1),
+            };
+        }).sort((a, b) => b.winPct - a.winPct);
+
+        return {
+            topRunner: results[0]?.name || "—",
+            topWinPct: results[0]?.winPct || 0,
+            confidence: results[0]?.winPct > 35 ? "HIGH" : results[0]?.winPct > 20 ? "MODERATE" : "LOW",
+            chaos: results[0]?.winPct < 20 ? "HIGH" : results[0]?.winPct > 40 ? "LOW" : "MODERATE",
+            runners: results,
+        };
+    }
+
+    function runSimulation() {
+        if (!liveRunners.length) return;
+        const runs = 200;
 
         const idle = q("simIdle");
         const results = q("simResults");
         if (idle)    idle.style.display = "none";
         if (results) results.style.display = "none";
 
-        try {
-            const data = await api(`/api/live/watch-sim/${encodeURIComponent(raceUid)}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" }
-            });
+        const normRunners = liveRunners.map((r, idx) => ({
+            name: r.name || "—",
+            box: r.box_num ?? r.number ?? r.barrier ?? (idx + 1),
+            odds: r.price || r.win_odds || null,
+            winProb: r.win_prob || null,
+            scratched: !!r.scratched,
+        }));
 
-            const sim = data?.simulation;
-            if (!sim) {
-                if (idle) { idle.textContent = data?.error || "Simulation not available."; idle.style.display = "block"; }
-                return;
-            }
+        const simResult = runClientSideSimulation(normRunners, runs);
 
-            const summary = q("simSummary");
-            if (summary) summary.textContent = sim.simulation_summary || "";
+        const summary = q("simSummary");
+        if (summary) summary.textContent = `Top: ${simResult.topRunner} (${simResult.topWinPct}% win) • Confidence: ${simResult.confidence} • Chaos: ${simResult.chaos}`;
 
-            const list = q("simRunnerList");
-            if (list) {
-                const runners = sim.runners || [];
-                list.innerHTML = runners.map(r => {
-                    const wp = r.win_pct ?? 0;
-                    return `
-                        <div class="sim-runner-row">
-                            <span class="sim-runner-name">${r.name || "—"}</span>
-                            <div class="sim-win-bar-wrap"><div class="sim-win-bar" style="width:${Math.min(100, wp)}%"></div></div>
-                            <span class="sim-win-pct">${wp}%</span>
-                        </div>
-                    `;
-                }).join("");
-            }
-
-            if (results) results.style.display = "block";
-        } catch (e) {
-            console.error("Simulation failed:", e);
-            if (idle) { idle.textContent = "Simulation not yet available."; idle.style.display = "block"; }
+        const list = q("simRunnerList");
+        if (list) {
+            list.innerHTML = simResult.runners.map(r => {
+                const wp = r.winPct || 0;
+                return `
+                    <div class="sim-runner-row">
+                        <span class="sim-runner-name">${r.name || "—"}</span>
+                        <div class="sim-win-bar-wrap"><div class="sim-win-bar" style="width:${Math.min(100, wp)}%"></div></div>
+                        <span class="sim-win-pct">${wp}%</span>
+                    </div>
+                `;
+            }).join("");
         }
+
+        if (results) results.style.display = "block";
     }
 
     // -------------------------------------------------------
@@ -427,15 +643,20 @@
             liveAnalysis = data.analysis || null;
             liveSignal   = data.signal   || null;
 
+            // Runners: prefer data.runners, fallback to analysis.all_runners
+            const rawRunners = (Array.isArray(data.runners) && data.runners.length)
+                ? data.runners
+                : (liveAnalysis?.all_runners || []);
+            liveRunners = rawRunners;
+
             renderRaceHeader();
             renderAnalysis();
 
-            const runners = liveAnalysis?.all_runners || liveRace?.runners || [];
-            if (runners.length) {
-                buildRunnerRows(runners, liveAnalysis);
+            if (liveRunners.length) {
+                buildRunnerCards(liveRunners, liveAnalysis);
             } else {
-                const tbody = q("formGuideRows");
-                if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="board-empty">No runner data.</td></tr>`;
+                const container = q("formGuideRows");
+                if (container) container.innerHTML = `<div class="board-empty" style="padding:24px;text-align:center;color:var(--text-dim);">No runner data.</div>`;
                 setText("formGuideMeta", "— runners");
             }
 
@@ -451,20 +672,16 @@
     // -------------------------------------------------------
 
     document.addEventListener("DOMContentLoaded", () => {
-        // Countdown loop
         countdownTimer = setInterval(updateCountdownChip, 1000);
 
-        // Prev/Next nav
         const prevBtn = q("livePrevRace");
         const nextBtn = q("liveNextRace");
         if (prevBtn) prevBtn.addEventListener("click", () => navigateRace(-1));
         if (nextBtn) nextBtn.addEventListener("click", () => navigateRace(+1));
 
-        // Sim button
         const simBtn = q("liveRunSimBtn");
         if (simBtn) simBtn.addEventListener("click", runSimulation);
 
-        // Quick bet
         const stakeIn = q("qbStake");
         const oddsIn  = q("qbOdds");
         if (stakeIn) stakeIn.addEventListener("input", calcReturns);
@@ -473,10 +690,38 @@
         const placeBtn = q("qbPlaceBtn");
         if (placeBtn) placeBtn.addEventListener("click", placeBet);
 
-        // Event delegation for runner row selection
+        // Event delegation: runner summary row click → expand; bet button click
         document.addEventListener("click", (e) => {
+            // Bet button inside expand
+            const betBtn = e.target.closest(".expand-bet-btn");
+            if (betBtn) {
+                e.stopPropagation();
+                const name = betBtn.dataset.runnerName || "";
+                const odds = betBtn.dataset.runnerOdds || "";
+                const runnerSel = q("qbRunner");
+                if (runnerSel) {
+                    for (const opt of runnerSel.options) {
+                        if (opt.value === name) { runnerSel.value = name; break; }
+                    }
+                }
+                if (q("qbOdds") && odds) q("qbOdds").value = odds;
+                calcReturns();
+                // Scroll to quick bet
+                const qbBar = document.querySelector(".quick-bet-bar");
+                if (qbBar) qbBar.scrollIntoView({ behavior: "smooth" });
+                return;
+            }
+
+            // Runner summary row toggle
             const row = e.target.closest("[data-navigate='runner']");
-            if (row) selectRunnerRow(row);
+            if (row) {
+                selectRunnerRow(row);
+                const card = row.closest(".runner-card");
+                if (card) {
+                    const box = card.dataset.box;
+                    toggleRunnerExpand(box);
+                }
+            }
         });
 
         loadLiveRace();

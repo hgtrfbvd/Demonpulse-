@@ -4,34 +4,25 @@
 {% block content %}
 <div class="page-shell settings-page">
 
-    <!-- HERO -->
-    <section class="settings-hero card">
-        <div class="settings-hero-left">
-            <div class="page-kicker">SYSTEM CONTROL</div>
-            <h1 class="page-title">Settings &amp; Admin</h1>
-            <div class="page-subtitle">
-                Manual control center. Environment, refresh settings, data controls, source status, and maintenance actions.
-            </div>
+    <!-- Stats Bar (replaces hero) -->
+    <div class="page-stats-bar">
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">ENV</span>
+            <span class="stats-bar-value" id="settingsEnv">—</span>
         </div>
-        <div class="settings-hero-right">
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">ENV</div>
-                <div class="hero-stat-value" id="settingsEnv">—</div>
-            </div>
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">BOARD RACES</div>
-                <div class="hero-stat-value" id="settingsBoardCount">—</div>
-            </div>
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">DATA STATUS</div>
-                <div class="hero-stat-value" id="settingsDataStatus">—</div>
-            </div>
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">LAST SYNC</div>
-                <div class="hero-stat-value hero-stat-small" id="settingsLastSync">—</div>
-            </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Board Races</span>
+            <span class="stats-bar-value" id="settingsBoardCount">—</span>
         </div>
-    </section>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Data Status</span>
+            <span class="stats-bar-value" id="settingsDataStatus">—</span>
+        </div>
+        <div class="stats-bar-item">
+            <span class="stats-bar-label">Last Sync</span>
+            <span class="stats-bar-value" style="font-size:0.9rem;" id="settingsLastSync">—</span>
+        </div>
+    </div>
 
     <!-- SECTION TABS -->
     <section class="card">
@@ -90,6 +81,10 @@
                 <span class="settings-source-name">FormFav</span>
                 <span class="settings-source-status" id="srcFormFav">—</span>
             </div>
+            <div class="settings-source-row">
+                <span class="settings-source-name">FormFav Last Sync</span>
+                <span class="settings-source-status" id="srcFormFavLastSync">—</span>
+            </div>
         </div>
 
         <div class="settings-note">
@@ -112,8 +107,10 @@
             <div class="settings-field"><label class="settings-label">Greyhound</label><div class="settings-value" id="visGH">—</div></div>
             <div class="settings-field"><label class="settings-label">Horse</label><div class="settings-value" id="visHorse">—</div></div>
             <div class="settings-field"><label class="settings-label">Harness</label><div class="settings-value" id="visHarness">—</div></div>
+            <div class="settings-field"><label class="settings-label">Races Discovered</label><div class="settings-value" id="visDiscovered">—</div></div>
+            <div class="settings-field"><label class="settings-label">Domestic</label><div class="settings-value" id="visDomestic">—</div></div>
+            <div class="settings-field"><label class="settings-label">International Excluded</label><div class="settings-value" id="visIntlExcluded">—</div></div>
             <div class="settings-field"><label class="settings-label">FormFav Synced</label><div class="settings-value" id="visFormfavSynced">—</div></div>
-            <div class="settings-field"><label class="settings-label">Source</label><div class="settings-value" id="visSource">OddsPro</div></div>
         </div>
 
         <div class="section-head" style="margin-top:18px;">
