@@ -7,6 +7,8 @@ import logging
 import threading
 from datetime import datetime
 
+from race_status import parse_jump_time
+
 log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------
@@ -23,7 +25,6 @@ def check_betting_window(jump_time_str, anchor_time_str):
     if not jump_time_str or not anchor_time_str:
         return "UNKNOWN"
     try:
-        from race_status import parse_jump_time
         jump_dt = parse_jump_time(jump_time_str)
         anchor_dt = parse_jump_time(anchor_time_str)
         if jump_dt and anchor_dt:

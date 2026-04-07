@@ -20,6 +20,12 @@ from db import get_db, safe_query, T
 
 log = logging.getLogger(__name__)
 
+# Range of synthetic box numbers assigned to runners whose position cannot be
+# determined from the source data.  Must not collide with real barrier numbers
+# (which are at most a few dozen for any race format).
+_FALLBACK_BOX_BASE = 9000
+_FALLBACK_BOX_RANGE = 1000  # fallback box_nums span 9000-9999
+
 
 def _as_json(val: Any) -> Any:
     """Serialise dict/list values to JSON strings for JSONB columns."""
@@ -282,10 +288,10 @@ def upsert_runners(race_id_uuid: str, runners: list[dict[str, Any]]) -> int:
         if box_num is None:
             # Generate a stable fallback box_num so no runner is ever skipped,
             # and the same runner always gets the same fallback across upsert calls.
-            # Use 9000 + (md5(race_uid:name) % 1000) for deterministic, stable identity.
+            # Use SHA-256 of (race_uid:name) for a deterministic, stable identifier.
             _hash_key = f"{race_uid}:{r.get('name', '')}"
-            _hash_val = int(hashlib.md5(_hash_key.encode()).hexdigest(), 16)
-            box_num = 9000 + (_hash_val % 1000)
+            _hash_val = int(hashlib.sha256(_hash_key.encode()).hexdigest(), 16)
+            box_num = _FALLBACK_BOX_BASE + (_hash_val % _FALLBACK_BOX_RANGE)
             log.info(
                 f"database.upsert_runners: runner missing box_num/barrier/number "
                 f"(race_uid={race_uid!r}, name={r.get('name')!r}) "
@@ -391,7 +397,9 @@ def get_result(race_uid: str) -> dict[str, Any] | None:
     race_date = parts[0]
     code = parts[1]
     race_num_str = parts[-1]
-    track = "_".join(parts[2:-1]) if len(parts) > 3 else parts[2]
+    # When len==4: parts[2:-1] is a one-element list, equivalent to parts[2].
+    # When len>4: track name contained underscores; join them back.
+    track = "_".join(parts[2:-1]) if len(parts) > 4 else parts[2]
     try:
         race_num = int(race_num_str)
     except ValueError:
