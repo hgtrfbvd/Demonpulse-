@@ -25,7 +25,7 @@ services:
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "0"
       - key: ODDSPRO_BASE_URL
-        value: https://oddspro.com.au
+        value: https://oddspro.com.au/api/external/
       - key: ODDSPRO_API_KEY
         sync: false
       - key: FORMFAV_API_KEY
