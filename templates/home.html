@@ -1,122 +1,36 @@
 {% extends "base.html" %}
-{% block title %}Home{% endblock %}
+{% block title %}Races{% endblock %}
 
 {% block content %}
-<div class="page-shell home-page">
+<div class="page-shell home-page" style="gap:0;">
 
-    <section class="home-hero card">
-        <div class="home-hero-left">
-            <div class="page-kicker">MASTER CONTROL BOARD</div>
-            <h1 class="page-title">Unified Live Race Dashboard</h1>
-            <div class="page-subtitle">
-                All next-up Greyhound, Horse, and Harness races in one terminal. Find the next opportunity fast, then drill straight into Live.
-            </div>
+    <!-- Filter Strip -->
+    <div class="race-filter-strip">
+        <div class="filter-tabs">
+            <button class="filter-tab active" data-code="ALL">All Races</button>
+            <button class="filter-tab" data-code="GREYHOUND">🐕 Greyhounds</button>
+            <button class="filter-tab" data-code="HORSE">🐴 Horses</button>
+            <button class="filter-tab" data-code="HARNESS">🏇 Harness</button>
         </div>
-
-        <div class="home-hero-right">
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">VISIBLE RACES</div>
-                <div class="hero-stat-value" id="visibleRaceCount">0</div>
-                <div class="hero-stat-sub">Current board filter</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">HOT RACES</div>
-                <div class="hero-stat-value" id="hotRaceCount">0</div>
-                <div class="hero-stat-sub">SNIPER / VALUE signals</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">NEXT UP</div>
-                <div class="hero-stat-value hero-stat-small" id="nextUpMain">—</div>
-                <div class="hero-stat-sub" id="nextUpSub">Waiting for board</div>
-            </div>
-
-            <div class="hero-stat-card">
-                <div class="hero-stat-label">CODE MIX</div>
-                <div class="hero-stat-value hero-stat-small" id="codeMixValue">0 / 0 / 0</div>
-                <div class="hero-stat-sub">Greyhound / Horse / Harness</div>
-            </div>
+        <div class="filter-strip-right">
+            <span class="refresh-dot" id="refreshDot"></span>
+            <span class="filter-meta" id="filterMeta">Loading…</span>
         </div>
-    </section>
+    </div>
 
-    <section class="home-toolbar card">
-        <div class="home-toolbar-left">
-            <button class="dp-btn dp-btn-primary" id="refreshHomeBoardBtn">Refresh Board</button>
-            <button class="dp-btn" id="clearHomeFilterBtn">Show All</button>
+    <!-- Next to Jump Strip -->
+    <div class="ntj-strip" id="ntjStrip">
+        <div class="ntj-chip ntj-upcoming">
+            <span class="ntj-track">Loading…</span>
+            <span class="ntj-race"></span>
+            <span class="ntj-time">—</span>
         </div>
+    </div>
 
-        <div class="home-toolbar-right">
-            <button class="terminal-filter-btn active" data-code="ALL">ALL</button>
-            <button class="terminal-filter-btn" data-code="GREYHOUND">GREYHOUND</button>
-            <button class="terminal-filter-btn" data-code="HORSE">HORSE</button>
-            <button class="terminal-filter-btn" data-code="HARNESS">HARNESS</button>
-        </div>
-    </section>
-
-    <section class="home-terminal-grid">
-        <div class="card board-terminal-card">
-            <div class="section-head">
-                <div>
-                    <div class="section-kicker">PRIMARY BOARD</div>
-                    <h2 class="section-title">Next-Up Race Terminal</h2>
-                </div>
-                <div class="section-meta" id="boardTerminalMeta">Loading board…</div>
-            </div>
-
-            <div class="board-table-wrap">
-                <table class="board-terminal-table">
-                    <thead>
-                        <tr>
-                            <th>Code</th>
-                            <th>Track</th>
-                            <th>Race</th>
-                            <th>Jump</th>
-                            <th>Countdown</th>
-                            <th>Status</th>
-                            <th>Signal</th>
-                            <th>Confidence</th>
-                            <th>Action</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody id="homeBoardRows">
-                        <tr>
-                            <td colspan="10" class="board-empty">Loading board…</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="home-side-stack">
-            <div class="card quick-feed-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">QUICK FEED</div>
-                        <h2 class="section-title">Board Summary</h2>
-                    </div>
-                </div>
-
-                <div class="quick-feed-list" id="quickFeedList">
-                    <div class="quick-feed-empty">No board data yet.</div>
-                </div>
-            </div>
-
-            <div class="card opportunity-card">
-                <div class="section-head">
-                    <div>
-                        <div class="section-kicker">PRIORITY VIEW</div>
-                        <h2 class="section-title">Hot Race Focus</h2>
-                    </div>
-                </div>
-
-                <div class="priority-focus-box" id="priorityFocusBox">
-                    No hot race found yet.
-                </div>
-            </div>
-        </div>
-    </section>
+    <!-- Race Board -->
+    <div class="race-board" id="raceBoard" style="padding: 16px 20px; display:flex; flex-direction:column; gap:10px;">
+        <div class="board-empty" style="padding:32px; text-align:center; color:var(--text-dim);">Loading board…</div>
+    </div>
 
 </div>
 {% endblock %}
