@@ -1151,6 +1151,9 @@ _FF_VALID_CODES = frozenset({"HORSE", "HARNESS", "GREYHOUND"})
 # FormFav API base URL — shared with the connector, used in log messages.
 _FF_BASE_URL = "https://api.formfav.com"
 
+# Sentinel sort key for races with no jump_time (sorts to end).
+_SORT_KEY_NO_JUMP = 999999.0
+
 # Number of concurrent FormFav calls — safe for API rate limits.
 FORMFAV_BATCH_SIZE = 5
 
@@ -1223,8 +1226,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             ntj = _compute_ntj(r.get("jump_time"), r.get("date"))
             secs = ntj.get("seconds_to_jump")
             if secs is None:
-                return 999999.0
-            return float(secs) if secs >= 0 else 999999.0 + abs(float(secs))
+                return _SORT_KEY_NO_JUMP
+            return float(secs) if secs >= 0 else _SORT_KEY_NO_JUMP + abs(float(secs))
 
         races = sorted(races, key=_sort_key)
     except Exception as _sort_err:
@@ -1239,6 +1242,11 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     skipped_invalid_code = 0         # code is not HORSE, HARNESS, GREYHOUND
     skipped_unsupported_track = 0    # track/country not in FormFav-supported list
     fetched_at = datetime.now(timezone.utc).isoformat()
+
+    # Reset track bias deduplication set for this sync cycle.
+    if not hasattr(formfav_sync, "_bias_fetched"):
+        formfav_sync._bias_fetched = set()
+    formfav_sync._bias_fetched.clear()
 
     # Thread-safe lock for track bias deduplication within this sync cycle.
     _bias_lock = threading.Lock()
@@ -1403,8 +1411,6 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             try:
                 bias_key = f"{ff_track}_{mapped_race_code}"
                 with _bias_lock:
-                    if not hasattr(formfav_sync, "_bias_fetched"):
-                        formfav_sync._bias_fetched = set()
                     already_fetched = bias_key in formfav_sync._bias_fetched
                 if not already_fetched:
                     bias_data = ff.fetch_track_bias(ff_track, race_code=mapped_race_code)
@@ -1523,7 +1529,16 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     with concurrent.futures.ThreadPoolExecutor(max_workers=FORMFAV_BATCH_SIZE) as executor:
         futures = {executor.submit(_enrich_single_race, race): race for race in races}
         for future in concurrent.futures.as_completed(futures):
-            result = future.result()
+            try:
+                result = future.result()
+            except Exception as _fut_exc:
+                # Unexpected exception not caught inside _enrich_single_race
+                race = futures[future]
+                race_uid = race.get("race_uid", "")
+                log.warning(f"[FORMFAV] THREAD_ERROR race_uid={race_uid} error={_fut_exc!r}")
+                errors += 1
+                failed_uids.append(race_uid)
+                continue
             status = result.get("status", "error")
             if status == "success":
                 races_enriched += 1
