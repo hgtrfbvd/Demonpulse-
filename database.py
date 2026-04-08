@@ -640,26 +640,30 @@ def get_formfav_enrichments_for_date(target_date: str) -> list[dict[str, Any]]:
 
 def get_formfav_runner_enrichments_for_races(race_uids: list[str]) -> dict[str, list[dict[str, Any]]]:
     """
-    Fetch all FormFav runner enrichments for a list of race UIDs in a single query.
+    Fetch all FormFav runner enrichments for a list of race UIDs.
+    Queries in chunks of 30 to avoid Supabase URL-length limits.
     Returns a dict mapping race_uid → list of runner enrichment rows (sorted by number).
     """
     if not race_uids:
         return {}
-    rows = safe_query(
-        lambda: get_db()
-        .table(T("formfav_runner_enrichment"))
-        .select("*")
-        .in_("race_uid", race_uids)
-        .order("number")
-        .execute()
-        .data,
-        [],
-    ) or []
+    CHUNK_SIZE = 30
     result: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        uid = row.get("race_uid") or ""
-        if uid:
-            result.setdefault(uid, []).append(row)
+    for i in range(0, len(race_uids), CHUNK_SIZE):
+        chunk = race_uids[i:i + CHUNK_SIZE]
+        rows = safe_query(
+            lambda c=chunk: get_db()
+            .table(T("formfav_runner_enrichment"))
+            .select("*")
+            .in_("race_uid", c)
+            .order("number")
+            .execute()
+            .data,
+            [],
+        ) or []
+        for row in rows:
+            uid = row.get("race_uid") or ""
+            if uid:
+                result.setdefault(uid, []).append(row)
     return result
 
 

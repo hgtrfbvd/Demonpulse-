@@ -134,5 +134,7 @@ async function enforceNavAccess() {
                 link.style.display = "none";
             }
         });
-    } catch (_) {}
+    } catch (_) {
+        // No auth or token expired — show all nav links rather than hiding any
+    }
 }

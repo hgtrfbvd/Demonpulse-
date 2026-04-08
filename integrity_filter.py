@@ -104,6 +104,19 @@ def filter_race(
                     f"integrity_filter: STALE_RACE {race.get('race_uid')} "
                     f"age={age_seconds:.0f}s"
                 )
+                if age_seconds > 3600:
+                    try:
+                        from database import mark_race_blocked
+                        mark_race_blocked(race.get("race_uid", ""), "STALE_EXPIRED")
+                        log.info(
+                            f"integrity_filter: auto-blocked stale race "
+                            f"{race.get('race_uid')} age={age_seconds:.0f}s"
+                        )
+                    except Exception as _be:
+                        log.warning(
+                            f"integrity_filter: failed to auto-block stale race "
+                            f"{race.get('race_uid')}: {_be!r}"
+                        )
                 return False, "STALE_RACE"
         except Exception:
             pass  # If we can't parse the timestamp, allow through (conservative)
