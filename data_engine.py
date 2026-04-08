@@ -38,6 +38,7 @@ Pipeline order (enforced, no exceptions):
   FETCH → NORMALIZE → MERGE → CLASSIFY → FILTER → WRITE
 """
 import logging
+import concurrent.futures
 import threading
 from datetime import date, datetime, timezone
 from typing import Any
@@ -1150,6 +1151,9 @@ _FF_VALID_CODES = frozenset({"HORSE", "HARNESS", "GREYHOUND"})
 # FormFav API base URL — shared with the connector, used in log messages.
 _FF_BASE_URL = "https://api.formfav.com"
 
+# Number of concurrent FormFav calls — safe for API rate limits.
+FORMFAV_BATCH_SIZE = 5
+
 
 # ------------------------------------------------------------
 # FORMFAV PERSISTENT ENRICHMENT SYNC
@@ -1210,6 +1214,22 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         f" — enriching all active domestic races (no AU/NZ pre-filter)"
     )
 
+    # Sort: races jumping soonest first so near-term races get enriched first.
+    # Races with no jump_time sort to the end.
+    try:
+        from race_status import compute_ntj as _compute_ntj
+
+        def _sort_key(r: dict) -> float:
+            ntj = _compute_ntj(r.get("jump_time"), r.get("date"))
+            secs = ntj.get("seconds_to_jump")
+            if secs is None:
+                return 999999.0
+            return float(secs) if secs >= 0 else 999999.0 + abs(float(secs))
+
+        races = sorted(races, key=_sort_key)
+    except Exception as _sort_err:
+        log.debug(f"formfav_sync: sort by jump_time failed, using original order: {_sort_err}")
+
     races_enriched = 0
     runners_enriched = 0
     requests_made = 0
@@ -1220,7 +1240,11 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     skipped_unsupported_track = 0    # track/country not in FormFav-supported list
     fetched_at = datetime.now(timezone.utc).isoformat()
 
-    for race in races:
+    # Thread-safe lock for track bias deduplication within this sync cycle.
+    _bias_lock = threading.Lock()
+
+    def _enrich_single_race(race: dict) -> dict:
+        """Fetch and store FormFav enrichment for one race. Returns a result dict."""
         race_uid = race.get("race_uid") or ""
         _log_id = race_uid or f"{race.get('track','?')}/{race.get('race_num','?')}"
 
@@ -1229,14 +1253,8 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             log.info(
                 f"[FORMFAV] SKIPPED race_uid={_log_id} reason=missing_race_uid"
             )
-            skipped_missing_fields += 1
-            continue
+            return {"race_uid": race_uid, "status": "skipped_missing_fields", "runners_enriched": 0}
 
-        # Map OddsPro canonical code to FormFav code.
-        # OddsPro normalises to HORSE/HARNESS/GREYHOUND; the FormFavConnector's
-        # RACE_CODE_MAP converts these to gallops/harness/greyhounds respectively.
-        # If the code is still stored as GALLOPS (from earlier OddsPro builds),
-        # remap it to HORSE so the connector handles it correctly.
         raw_code = (race.get("code") or "HORSE").upper()
         ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
 
@@ -1246,10 +1264,9 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" reason=invalid_code code={raw_code!r}"
                 f" (expected HORSE, HARNESS or GREYHOUND)"
             )
-            skipped_invalid_code += 1
             if _pipeline_state is not None:
                 _pipeline_state.record_formfav_skipped(race_uid, "invalid_code")
-            continue
+            return {"race_uid": race_uid, "status": "skipped_invalid_code", "runners_enriched": 0}
 
         track = race.get("track") or ""
         race_num = int(race.get("race_num") or 0)
@@ -1260,15 +1277,11 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f"[FORMFAV] SKIPPED race_uid={race_uid}"
                 f" reason=missing_track_or_race_num track={track!r} race_num={race_num}"
             )
-            skipped_missing_fields += 1
             if _pipeline_state is not None:
                 _pipeline_state.record_formfav_skipped(race_uid, "missing_track_or_race_num")
-            continue
+            return {"race_uid": race_uid, "status": "skipped_missing_fields", "runners_enriched": 0}
 
         # --- FormFav track/country gate ---
-        # Validate using classify_track_by_code(): only call FormFav when the
-        # track exists in the correct code-specific hardcoded AU/NZ set.
-        # This prevents wrong FormFav calls (e.g. Mohawk, international tracks).
         ff_country = classify_track_by_code(track, ff_code)
         if ff_country is None:
             log.info(
@@ -1276,10 +1289,9 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f" reason=not_supported_track"
                 f" track={track!r} code={ff_code!r}"
             )
-            skipped_unsupported_track += 1
             if _pipeline_state is not None:
                 _pipeline_state.record_formfav_skipped(race_uid, "not_supported_track")
-            continue
+            return {"race_uid": race_uid, "status": "skipped_unsupported_track", "runners_enriched": 0}
 
         ff_track = apply_track_alias(track)
         mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
@@ -1304,7 +1316,6 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             _pipeline_state.record_formfav_called(race_uid)
 
         try:
-            requests_made += 1
             ff_race, ff_runners = ff.fetch_race_form_with_predictions(
                 target_date=race_date,
                 track=ff_track,
@@ -1313,7 +1324,6 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 country=ff_country,
             )
 
-            # Build race enrichment payload using canonical race_uid from OddsPro
             race_payload = {
                 "race_uid":          race_uid,
                 "date":              ff_race.date,
@@ -1340,9 +1350,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f"[FORMFAV] DB_WRITE race_enrichment race_uid={race_uid}"
                 f" track={track!r} race_num={race_num}"
             )
-            races_enriched += 1
 
-            # Store each runner's enrichment
             race_runners_enriched = 0
             for runner in ff_runners:
                 stats = runner.stats_json or {}
@@ -1387,23 +1395,24 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                     "date":               race_date,
                     "fetched_at":         fetched_at,
                 }
-                # Only store runners with a valid number
                 if runner_payload["number"] is not None:
                     upsert_formfav_runner_enrichment(runner_payload)
-                    runners_enriched += 1
                     race_runners_enriched += 1
 
             # --- Fetch track bias (once per track+code per sync cycle) ---
             try:
-                if not hasattr(formfav_sync, "_bias_fetched"):
-                    formfav_sync._bias_fetched = set()
                 bias_key = f"{ff_track}_{mapped_race_code}"
-                if bias_key not in formfav_sync._bias_fetched:
+                with _bias_lock:
+                    if not hasattr(formfav_sync, "_bias_fetched"):
+                        formfav_sync._bias_fetched = set()
+                    already_fetched = bias_key in formfav_sync._bias_fetched
+                if not already_fetched:
                     bias_data = ff.fetch_track_bias(ff_track, race_code=mapped_race_code)
                     if bias_data:
                         from database import upsert_track_bias
                         upsert_track_bias(bias_data)
-                        formfav_sync._bias_fetched.add(bias_key)
+                        with _bias_lock:
+                            formfav_sync._bias_fetched.add(bias_key)
                         log.info(f"[FORMFAV] TRACK_BIAS stored track={ff_track}")
             except Exception as _be:
                 log.debug(f"formfav_sync: track bias fetch failed: {_be}")
@@ -1439,16 +1448,16 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                                 )
                                 upsert_runner_connection_stats({
                                     **ctx,
-                                    "person_type":       "jockey",
-                                    "person_name":       runner.jockey,
-                                    "total_starts":      jstats.get("totalStarts"),
-                                    "total_wins":        jstats.get("totalWins"),
-                                    "overall_win_rate":  jstats.get("overallWinRate"),
-                                    "overall_place_rate":jstats.get("overallPlaceRate"),
-                                    "recent_win_rate":   (jstats.get("recentStats") or {}).get("winRate"),
-                                    "track_win_rate":    this_track.get("winRate"),
-                                    "track_starts":      this_track.get("totalStarts"),
-                                    "raw_response":      jstats,
+                                    "person_type":        "jockey",
+                                    "person_name":        runner.jockey,
+                                    "total_starts":       jstats.get("totalStarts"),
+                                    "total_wins":         jstats.get("totalWins"),
+                                    "overall_win_rate":   jstats.get("overallWinRate"),
+                                    "overall_place_rate": jstats.get("overallPlaceRate"),
+                                    "recent_win_rate":    (jstats.get("recentStats") or {}).get("winRate"),
+                                    "track_win_rate":     this_track.get("winRate"),
+                                    "track_starts":       this_track.get("totalStarts"),
+                                    "raw_response":       jstats,
                                 })
                         except Exception as _je:
                             log.debug(f"jockey stats fetch failed {runner.jockey}: {_je}")
@@ -1464,16 +1473,16 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                                 )
                                 upsert_runner_connection_stats({
                                     **ctx,
-                                    "person_type":       "trainer",
-                                    "person_name":       runner.trainer,
-                                    "total_starts":      tstats.get("totalStarts"),
-                                    "total_wins":        tstats.get("totalWins"),
-                                    "overall_win_rate":  tstats.get("overallWinRate"),
-                                    "overall_place_rate":tstats.get("overallPlaceRate"),
-                                    "recent_win_rate":   (tstats.get("recentStats") or {}).get("winRate"),
-                                    "track_win_rate":    this_track.get("winRate"),
-                                    "track_starts":      this_track.get("totalStarts"),
-                                    "raw_response":      tstats,
+                                    "person_type":        "trainer",
+                                    "person_name":        runner.trainer,
+                                    "total_starts":       tstats.get("totalStarts"),
+                                    "total_wins":         tstats.get("totalWins"),
+                                    "overall_win_rate":   tstats.get("overallWinRate"),
+                                    "overall_place_rate": tstats.get("overallPlaceRate"),
+                                    "recent_win_rate":    (tstats.get("recentStats") or {}).get("winRate"),
+                                    "track_win_rate":     this_track.get("winRate"),
+                                    "track_starts":       this_track.get("totalStarts"),
+                                    "raw_response":       tstats,
                                 })
                         except Exception as _te:
                             log.debug(f"trainer stats fetch failed {runner.trainer}: {_te}")
@@ -1488,6 +1497,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             log.info(f"[FORMFAV][SYNC] UPDATED race_uid={race_uid}")
             if _pipeline_state is not None:
                 _pipeline_state.record_formfav_success(race_uid)
+            return {"race_uid": race_uid, "status": "success", "runners_enriched": race_runners_enriched}
 
         except Exception as e:
             import requests as _req_lib
@@ -1507,9 +1517,31 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
             )
             if _pipeline_state is not None:
                 _pipeline_state.record_formfav_failed(race_uid)
-            failed_uids.append(race_uid)
-            errors += 1
-            continue
+            return {"race_uid": race_uid, "status": "error", "runners_enriched": 0, "error": str(e)}
+
+    # Run enrichment in parallel — I/O-bound work, threads are appropriate.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=FORMFAV_BATCH_SIZE) as executor:
+        futures = {executor.submit(_enrich_single_race, race): race for race in races}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            status = result.get("status", "error")
+            if status == "success":
+                races_enriched += 1
+                runners_enriched += result.get("runners_enriched", 0)
+                requests_made += 1
+            elif status == "skipped_missing_fields":
+                skipped_missing_fields += 1
+            elif status == "skipped_invalid_code":
+                skipped_invalid_code += 1
+            elif status == "skipped_unsupported_track":
+                skipped_unsupported_track += 1
+            else:
+                errors += 1
+                failed_uids.append(result.get("race_uid", ""))
+                log.warning(
+                    f"[FORMFAV] FAILED race_uid={result.get('race_uid')} "
+                    f"error={result.get('error', '')!r}"
+                )
 
     _total_skipped = skipped_missing_fields + skipped_invalid_code + skipped_unsupported_track
 

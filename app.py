@@ -339,7 +339,7 @@ def api_live_race(race_uid: str):
     Used by live.html, race_view.html, and simulator.html.
     """
     try:
-        from database import get_race, get_runners_for_race, get_formfav_enrichments_for_date
+        from database import get_race, get_runners_for_race
         from race_status import compute_ntj
         from datetime import date as _date
 
@@ -431,11 +431,10 @@ def api_live_race(race_uid: str):
         # Attach stored FormFav enrichment if available
         ff_data: dict = {}
         try:
-            today = race.get("date") or _date.today().isoformat()
-            for ff_row in get_formfav_enrichments_for_date(today):
-                if (ff_row.get("race_uid") or "") == race_uid:
-                    ff_data = ff_row
-                    break
+            from database import get_formfav_race_enrichment
+            ff_row = get_formfav_race_enrichment(race_uid)
+            if ff_row:
+                ff_data = ff_row
         except Exception:
             pass
 
@@ -477,7 +476,11 @@ def api_live_race(race_uid: str):
             "signal": None,
         })
     except Exception as e:
-        log.error(f"/api/live/race/{race_uid} failed: {e}")
+        import traceback
+        log.error(
+            f"/api/live/race/{race_uid} failed: {type(e).__name__}: {e}\n"
+            f"{traceback.format_exc()}"
+        )
         return jsonify({"ok": False, "error": "Race data unavailable"}), 500
 
 
@@ -893,31 +896,47 @@ def api_ai_commentary():
 def api_ai_learning_status():
     """AI learning engine status — paper bets placed, results reviewed, model progress."""
     try:
-        from database import get_races_for_date
-        from ai.learning_store import get_performance_summary
+        from database import get_active_races, get_formfav_enrichments_for_date
+        from race_status import compute_ntj
         from datetime import date
+
         today = date.today().isoformat()
+        races = get_active_races(today)
 
-        perf = get_performance_summary(limit=200)
+        # Split into next-60-min window vs later
+        next_hour = []
+        later = []
+        for r in races:
+            ntj = compute_ntj(r.get("jump_time"), r.get("date"))
+            secs = ntj.get("seconds_to_jump")
+            if secs is not None and 0 < secs <= 3600:
+                next_hour.append(r)
+            elif secs is not None and secs > 3600:
+                later.append(r)
 
-        all_races = get_races_for_date(today)
-        predicted = [r for r in all_races if r.get("status") in ("final", "result_posted", "paying")]
+        # Check FormFav enrichment coverage for next-hour races
+        enriched_uids = {
+            row.get("race_uid")
+            for row in get_formfav_enrichments_for_date(today)
+            if row.get("race_uid")
+        }
+        next_hour_enriched = sum(
+            1 for r in next_hour if r.get("race_uid") in enriched_uids
+        )
 
         return jsonify({
             "ok": True,
-            "model_version": perf.get("model_version", "baseline_v1"),
-            "total_predictions": perf.get("total_predictions", 0),
-            "total_evaluated": perf.get("total_evaluated", 0),
-            "win_rate": perf.get("win_rate", 0),
-            "roi": perf.get("roi", 0),
-            "paper_bets_today": len(predicted),
-            "results_reviewed_today": len([r for r in predicted if r.get("status") in ("final", "paying", "result_posted")]),
-            "enrichment_rate": perf.get("enrichment_rate", 0),
-            "active": True,
+            "next_hour_races": len(next_hour),
+            "next_hour_enriched": next_hour_enriched,
+            "next_hour_pending": len(next_hour) - next_hour_enriched,
+            "later_races": len(later),
+            "formfav_coverage_pct": round(
+                (next_hour_enriched / len(next_hour) * 100) if next_hour else 0, 1
+            ),
         })
     except Exception as e:
         log.error(f"/api/ai/learning/status failed: {e}")
-        return jsonify({"ok": False, "error": "Learning status unavailable"}), 500
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ------------------------------------------------------------
