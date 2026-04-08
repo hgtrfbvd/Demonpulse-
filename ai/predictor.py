@@ -154,7 +154,7 @@ def predict_from_snapshot(
 
     try:
         from signals import generate_signal
-        top_runner = sorted(scored, key=lambda x: x.get("predicted_rank", 99))[0] if scored else {}
+        top_runner = min(scored, key=lambda x: x.get("predicted_rank", 99)) if scored else {}
         scored_for_signal = {
             "confidence":     top_runner.get("confidence", "LOW"),
             "ev":             top_runner.get("ev"),

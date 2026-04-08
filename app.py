@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import requests as _requests
 from flask import Flask, jsonify, request, render_template, redirect, url_for
@@ -403,10 +404,9 @@ def api_live_race(race_uid: str):
 
                 # recent_starts: extract from stats_full JSON blob if not present
                 if not merged.get("recent_starts"):
-                    import json as _json
                     stats_full = merged.get("ff_stats_full") or merged.get("stats_full") or {}
                     if isinstance(stats_full, str):
-                        try:    stats_full = _json.loads(stats_full)
+                        try:    stats_full = json.loads(stats_full)
                         except: stats_full = {}
                     merged["recent_starts"] = (
                         stats_full.get("recent_starts") or
