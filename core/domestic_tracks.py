@@ -280,7 +280,8 @@ TRACK_ALIASES: dict[str, str] = {
     # Darwin (NT greyhound)
     "darwin-greyhound":          "darwin",
     "darwin-raceway":            "darwin",
-    # Murray Bridge Straight — separate SA straight track venue (NOT an alias for murray-bridge)
+    # Murray Bridge Straight — canonical slug for the separate SA straight track venue.
+    # NOT aliased to murray-bridge (separate race meeting with different FormFav config).
     "murray-bridge-straight-greyhound": "murray-bridge-straight",
     "murray-bridge-str":                "murray-bridge-straight",
     # Avondale (NZ horse): OddsPro variant names
@@ -400,7 +401,8 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     "temora",         # Temora Greyhounds (NSW)
     # QLD — additional venues
     "rockhampton",    # Rockhampton Greyhounds (QLD)
-    "albion-park",    # Albion Park QLD — runs BOTH greyhound and harness
+    "albion-park",    # Albion Park QLD — runs BOTH greyhound and harness;
+                      # greyhound code uses FORMFAV_CODE_TRACK_MAP → albion-park-greyhound
     "q-2-parklands",  # Q2 Parklands QLD — SEPARATE CONFIG
     "q-straight",     # Q Straight QLD — SEPARATE CONFIG
     # NT
