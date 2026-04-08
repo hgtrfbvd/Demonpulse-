@@ -637,16 +637,16 @@ CODE_GATED_TRACKS: dict[str, frozenset[str]] = {
 # ---------------------------------------------------------------------------
 # FORMFAV TRACK SUPPORT — separate from domestic classification
 # ---------------------------------------------------------------------------
+# NOTE: FORMFAV_AU_TRACKS, FORMFAV_NZ_TRACKS, FORMFAV_TRACK_ALIASES,
+# and FORMFAV_CODE_TRACK_MAP are no longer used as a pre-validation gate.
+# FormFav resolves venue names server-side. These sets are retained for
+# reference only. The active gate is classify_track_by_code() which
+# prevents international tracks from hitting the FormFav API.
+#
 # These frozensets represent tracks that the FormFav API is known to support.
 # A race can be classified as domestic (AU/NZ) but still NOT be in FormFav's
 # database — especially small country meetings or overseas tracks that are
 # incorrectly labelled with country='au' by OddsPro.
-#
-# Rules:
-#   - Only tracks confirmed to exist in FormFav's venue list are included.
-#   - Tracks NOT in this set are skipped before any FormFav API call is made.
-#   - This set is intentionally defined independently of AU_TRACKS / NZ_TRACKS
-#     so that each can evolve without coupling.
 #
 # Known excluded examples (produce FormFav 404):
 #   - "riverton"  — small SA country harness venue; not in FormFav
