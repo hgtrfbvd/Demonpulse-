@@ -423,7 +423,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 ff_win_prob:      r.ff_win_prob,
                 ff_model_rank:    r.ff_model_rank,
                 ff_confidence:    r.ff_confidence,
-                ff_decorators:    r.ff_decorators || [],
+                ff_decorators:    Array.isArray(r.ff_decorators) ? r.ff_decorators : [],
                 ff_speed_map:     r.ff_speed_map,
                 ff_class_profile: r.ff_class_profile,
                 ff_stats_full:    r.ff_stats_full || {},
@@ -920,7 +920,32 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             if (["final", "paying", "result_posted", "abandoned"].includes(status)) {
                 loadAndRenderResult(raceUid);
             } else if (liveRunners.length) {
-                buildRunnerCards(liveRunners, liveAnalysis);
+                try {
+                    buildRunnerCards(liveRunners, liveAnalysis);
+                } catch (err) {
+                    console.error("buildRunnerCards failed:", err);
+                    const container = q("formGuideRows");
+                    if (container) container.innerHTML = `
+                        <div style="padding:24px;text-align:center;">
+                            <div style="color:var(--text-dim);margin-bottom:8px;">
+                                ${liveRunners.length} runner${liveRunners.length !== 1 ? "s" : ""} loaded
+                            </div>
+                            <div style="font-size:0.8rem;color:var(--text-dim);">
+                                Form display error — runner names available in Quick Bet below.
+                            </div>
+                        </div>`;
+                    // Still populate Quick Bet dropdown even if cards failed
+                    const runnerSelect = q("qbRunner");
+                    if (runnerSelect) {
+                        runnerSelect.innerHTML = `<option value="">Select runner…</option>` +
+                            liveRunners.map(r =>
+                                `<option value="${esc(r.name || '')}" data-odds="${esc(String(r.price || r.win_odds || ''))}">
+                                    ${esc(r.name || "—")}
+                                </option>`
+                            ).join("");
+                    }
+                    setText("formGuideMeta", `${liveRunners.length} runners`);
+                }
             } else {
                 const container = q("formGuideRows");
                 if (container) container.innerHTML = `

@@ -51,8 +51,6 @@ from core.domestic_tracks import (
     NZ_COUNTRY_CODES, NZ_STATE_IDS, NZ_TRACKS,
     normalize_track, apply_track_alias,
     classify_track_by_code,
-    resolve_formfav_track,
-    FORMFAV_CODE_TRACK_MAP,
 )
 
 log = logging.getLogger(__name__)
@@ -640,6 +638,14 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         _track = (race_dict.get("track") or "").strip()
         track_key = apply_track_alias(_track)
 
+        # TEMP DEBUG: log raw OddsPro track names that contain "bridge" or "straight"
+        # Remove after identifying the Murray Bridge Straight slug
+        if "bridge" in _track.lower() or "straight" in _track.lower():
+            log.info(
+                f"[TRACK_DEBUG] raw={_track!r} normalised={track_key!r} "
+                f"code={race_dict.get('code')!r}"
+            )
+
         # Step 8 — DOMESTIC CLASSIFICATION
         # Country is determined SOLELY from classify_track_by_code():
         # checks track membership in the appropriate code-specific hardcoded
@@ -1071,15 +1077,8 @@ def formfav_overlay(race_uid: str, race: dict[str, Any]) -> dict[str, Any]:
         ff_code = "HORSE" if raw_code == "GALLOPS" else raw_code
 
         ff_country = _get_formfav_country(race)
-        ff_track = resolve_formfav_track(race.get("track") or "", ff_country)
-        if ff_track is None:
-            log.debug(
-                f"data_engine: FormFav overlay skipped for {race_uid}"
-                f" — unsupported track/country"
-                f" track={race.get('track')!r} country={ff_country!r}"
-            )
-            return race
-
+        # FormFav resolves venue names itself — pass the canonical slug directly.
+        ff_track = apply_track_alias(race.get("track") or "")
         ff_race, ff_runners = ff.fetch_race_form(
             target_date=race.get("date") or date.today().isoformat(),
             track=ff_track,
@@ -1302,18 +1301,10 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 _pipeline_state.record_formfav_skipped(race_uid, "not_supported_track")
             return {"race_uid": race_uid, "status": "skipped_unsupported_track", "runners_enriched": 0}
 
-        ff_track = resolve_formfav_track(track, ff_country)
-        if ff_track is None:
-            log.info(
-                f"[FORMFAV] SKIPPED race_uid={race_uid}"
-                f" reason=not_in_formfav track={track!r} country={ff_country!r}"
-            )
-            if _pipeline_state is not None:
-                _pipeline_state.record_formfav_skipped(race_uid, "not_in_formfav")
-            return {"race_uid": race_uid, "status": "skipped_unsupported_track", "runners_enriched": 0}
-
+        # FormFav resolves venue names itself (slug → title-case → DB lookup).
+        # Just pass the canonical slug and let FormFav return 404 if unsupported.
+        ff_track = apply_track_alias(track)
         mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
-        ff_track = FORMFAV_CODE_TRACK_MAP.get((ff_track, mapped_race_code), ff_track)
 
         # --- Issue FormFav API call ---
         log.info(
@@ -1526,9 +1517,21 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                     resp_body = e.response.text[:300]
                 except Exception:
                     pass
+
+            if status_code == 404:
+                # FormFav doesn't have this track/race — clean skip, not an error
+                log.info(
+                    f"[FORMFAV] NOT_FOUND race_uid={race_uid} track={ff_track!r} "
+                    f"race_code={mapped_race_code!r} (404 — venue not in FormFav)"
+                )
+                if _pipeline_state is not None:
+                    _pipeline_state.record_formfav_skipped(race_uid, "not_in_formfav")
+                return {"race_uid": race_uid, "status": "skipped_unsupported_track",
+                        "runners_enriched": 0, "requests_made": 1}
+
             log.warning(
                 f"[FORMFAV] FAILED race_uid={race_uid}"
-                f" track={track!r} race_num={race_num} code={ff_code!r}"
+                f" track={ff_track!r} race_num={race_num} code={ff_code!r}"
                 f" country={ff_country!r} status={status_code}"
                 f" body={resp_body!r} error={e!r}"
             )
