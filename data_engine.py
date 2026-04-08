@@ -1214,6 +1214,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
     runners_enriched = 0
     requests_made = 0
     errors = 0
+    failed_uids: list[str] = []
     skipped_missing_fields = 0       # race_uid / track / race_num absent
     skipped_invalid_code = 0         # code is not HORSE, HARNESS, GREYHOUND
     skipped_unsupported_track = 0    # track/country not in FormFav-supported list
@@ -1502,10 +1503,11 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 f"[FORMFAV] FAILED race_uid={race_uid}"
                 f" track={track!r} race_num={race_num} code={ff_code!r}"
                 f" country={ff_country!r} status={status_code}"
-                f" body={resp_body!r} error={e}"
+                f" body={resp_body!r} error={e!r}"
             )
             if _pipeline_state is not None:
                 _pipeline_state.record_formfav_failed(race_uid)
+            failed_uids.append(race_uid)
             errors += 1
             continue
 
@@ -1517,6 +1519,7 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
         f" requests_made={requests_made}"
         f" races_enriched={races_enriched} runners_enriched={runners_enriched}"
         f" errors={errors}"
+        f" failed_uids={failed_uids[:10]}"
         f" skipped_missing_fields={skipped_missing_fields}"
         f" skipped_invalid_code={skipped_invalid_code}"
         f" skipped_unsupported_track={skipped_unsupported_track}"

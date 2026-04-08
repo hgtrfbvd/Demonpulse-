@@ -210,8 +210,6 @@ def _board_item(race: dict[str, Any], ntj: dict[str, Any], confidence: float) ->
         "jump_dt_iso": ntj.get("jump_dt_iso"),
         # FormFav persistent enrichment (attached separately; None if not yet synced)
         "formfav": race.get("formfav"),
-        # FormFav per-runner enrichment (win_prob, model_rank, decorators, etc.)
-        "formfav_runners": race.get("formfav_runners"),
     }
 
 
@@ -241,8 +239,8 @@ def get_board_for_today(
 
     Stored FormFav enrichment (formfav_race_enrichment table) is attached
     to each board item under the "formfav" key.
-    Per-runner FormFav enrichment (formfav_runner_enrichment table) is
-    attached under the "formfav_runners" key (list, sorted by number).
+    Per-runner FormFav enrichment is NOT included in the board payload —
+    it is served on demand from /api/live/race/<race_uid> only.
     """
     try:
         from database import get_active_races, get_races_for_date, get_blocked_races
@@ -259,30 +257,24 @@ def get_board_for_today(
             except Exception:
                 formfav_overlays = {}
 
-        # Load stored FormFav enrichment and index by race_uid
+        # Load stored FormFav race-level enrichment and index by race_uid
         ff_enrichment: dict[str, dict[str, Any]] = {}
-        ff_runner_enrichment: dict[str, list[dict[str, Any]]] = {}
         try:
-            from database import get_formfav_enrichments_for_date, get_formfav_runner_enrichments_for_races
+            from database import get_formfav_enrichments_for_date
             for ff_row in get_formfav_enrichments_for_date(today):
                 uid = ff_row.get("race_uid") or ""
                 if uid:
                     ff_enrichment[uid] = ff_row
-            # Bulk-load runner enrichments for all FormFav-enriched races in one query
-            if ff_enrichment:
-                ff_runner_enrichment = get_formfav_runner_enrichments_for_races(list(ff_enrichment.keys()))
         except Exception:
             pass
 
-        # Attach stored FormFav enrichment (race + runners) to each race before board build
+        # Attach stored FormFav race-level enrichment to each race before board build
         if ff_enrichment:
             enriched_races = []
             for race in races:
                 uid = race.get("race_uid") or ""
                 if uid in ff_enrichment:
                     race = {**race, "formfav": ff_enrichment[uid]}
-                if uid in ff_runner_enrichment:
-                    race = {**race, "formfav_runners": ff_runner_enrichment[uid]}
                 enriched_races.append(race)
             races = enriched_races
 
@@ -306,7 +298,6 @@ def get_board_for_today(
             "integrity_blocked_count": build_stats["blocked_count"],
             "validation_rejected_count": build_stats["validation_rejected_count"],
             "formfav_enriched_count": len(ff_enrichment),
-            "formfav_runner_enriched_count": sum(len(v) for v in ff_runner_enrichment.values()),
         }
 
         if not board:
