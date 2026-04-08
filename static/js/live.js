@@ -196,7 +196,32 @@
     // Form string → recent starts rows (for expanded detail)
     // -------------------------------------------------------
 
-    function buildRecentStartsRows(formStr) {
+    function buildRecentStartsRows(runner) {
+        // Use structured recent_starts if available
+        if (runner.recent_starts && runner.recent_starts.length) {
+            return runner.recent_starts.map(s => {
+                const c = String(s.finish ?? "");
+                let cls = "finish-bad";
+                let label = c;
+                if (c === "1") { cls = "finish-win"; label = "1st"; }
+                else if (c === "2") { cls = "finish-win"; label = "2nd"; }
+                else if (c === "3") { cls = "finish-place"; label = "3rd"; }
+                else if (c === "F" || c === "W") { cls = "finish-bad"; label = c === "F" ? "Fell" : "W/D"; }
+                else if (c === "V") { cls = "finish-place"; label = "Vac"; }
+                else if (c) { label = c + "th"; }
+                return `
+                <div class="recent-run-row">
+                    <span class="rr-track">${esc(s.track || "—")}</span>
+                    <span class="rr-time">${esc(s.time || "—")}</span>
+                    <span class="rr-dist">${esc(s.distance || "—")}</span>
+                    <span class="rr-date">${esc(s.date || "—")}</span>
+                    <span class="rr-finish ${cls}">${label}</span>
+                </div>
+            `;
+            }).join("");
+        }
+        // Fall back to form string
+        const formStr = runner.form || (typeof runner === "string" ? runner : "");
         if (!formStr) return '<div class="rr-empty">No form data.</div>';
         const chars = formStr.slice(-6).split("");
         return chars.map(c => {
@@ -301,7 +326,24 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             ["AI Win %",      r.ff_win_prob != null ? r.ff_win_prob.toFixed(1) + "%" : (r.winProb != null ? r.winProb.toFixed(1) + "%" : null)],
             ["AI Rank",       r.ff_model_rank != null ? `#${r.ff_model_rank}` : null],
             ["AI Confidence", r.ff_confidence || null],
-            ["Race Class Fit",r.ff_class_profile ? JSON.stringify(r.ff_class_profile).slice(0, 30) : null],
+            ["Rating", (() => {
+                const p = typeof r.ff_class_profile === "string"
+                    ? (() => { try { return JSON.parse(r.ff_class_profile); } catch(e) { return null; } })()
+                    : r.ff_class_profile;
+                if (!p || (p.currentRating == null && !p.paceStyle)) return null;
+                const parts = [p.currentRating != null ? `Rtg ${p.currentRating}` : null, p.paceStyle || null].filter(Boolean);
+                return parts.length ? parts.join(" · ") : null;
+            })()],
+            ["Class Fit", (() => {
+                const f = typeof r.race_class_fit === "string"
+                    ? (() => { try { return JSON.parse(r.race_class_fit); } catch(e) { return null; } })()
+                    : r.race_class_fit;
+                if (!f) return null;
+                const fit = f.fit ?? f.fitScore;
+                const label = f.label ?? f.fitLabel;
+                if (fit == null && !label) return null;
+                return `${fit != null ? Math.round(fit * 100) + "%" : "—"} — ${label || "—"}`;
+            })()],
             ["Trainer",       r.trainer || null],
             ["Jockey/Driver", r.jockey || null],
         ].filter(([, v]) => v != null);
@@ -426,8 +468,10 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 ff_decorators:    Array.isArray(r.ff_decorators) ? r.ff_decorators : [],
                 ff_speed_map:     r.ff_speed_map,
                 ff_class_profile: r.ff_class_profile,
+                race_class_fit:   r.race_class_fit,
                 ff_stats_full:    r.ff_stats_full || {},
                 ff_career_stats:  r.ff_career_stats,
+                recent_starts:    Array.isArray(r.recent_starts) ? r.recent_starts : [],
             };
         });
 
@@ -454,7 +498,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 rankBadge = `<div class="rank-text">—</div>`;
             }
 
-            const recentRows = buildRecentStartsRows(r.form);
+            const recentRows = buildRecentStartsRows(r);
 
             // Top decorator badges for summary row
             const topBadges = (r.ff_decorators || []).slice(0, 4).map(d => {
