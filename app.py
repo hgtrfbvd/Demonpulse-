@@ -396,6 +396,27 @@ def api_live_race(race_uid: str):
                     merged["ff_class_profile"] = ff.get("class_profile")
                     merged["ff_stats_full"]    = ff.get("stats_full") or {}
                     merged["ff_career_stats"]  = ff.get("stats_overall")
+
+                # Camelcase aliases expected by frontend
+                merged["earlySpeed"] = merged.get("early_speed") or ""
+                merged["bestTime"]   = merged.get("best_time")   or ""
+
+                # recent_starts: extract from stats_full JSON blob if not present
+                if not merged.get("recent_starts"):
+                    import json as _json
+                    stats_full = merged.get("ff_stats_full") or merged.get("stats_full") or {}
+                    if isinstance(stats_full, str):
+                        try:    stats_full = _json.loads(stats_full)
+                        except: stats_full = {}
+                    merged["recent_starts"] = (
+                        stats_full.get("recent_starts") or
+                        stats_full.get("recentStarts") or []
+                    )
+
+                # career fallback
+                if not merged.get("career"):
+                    merged["career"] = merged.get("stats_career") or ""
+
                 enriched_runners.append(merged)
             runners = enriched_runners
         except Exception:
@@ -441,39 +462,68 @@ def api_live_race(race_uid: str):
         if ff_data:
             race_out["formfav"] = ff_data
 
-        # Build a lightweight analysis dict from available data
+        # Fetch stored prediction snapshot for signal/decision/selection/ev
+        stored_pred = {}
+        try:
+            from ai.learning_store import get_stored_prediction
+            pred_result = get_stored_prediction(race_uid)
+            if pred_result.get("ok"):
+                snap = pred_result.get("snapshot") or {}
+                runner_outputs = pred_result.get("runner_outputs") or []
+                top = next((r for r in runner_outputs if r.get("predicted_rank") == 1), None)
+                stored_pred = {
+                    "signal":    snap.get("signal") or "—",
+                    "decision":  snap.get("decision") or "—",
+                    "confidence": snap.get("confidence"),
+                    "ev":        snap.get("ev"),
+                    "selection": top.get("runner_name") if top else None,
+                    "runner_prob_map": {
+                        r.get("runner_name"): r.get("win_prob") for r in runner_outputs
+                    },
+                }
+        except Exception:
+            pass
+
+        # Build analysis dict from stored prediction and available FormFav data
         formfav = race_out.get("formfav") or {}
+        race_out_signal = race_out.get("signal")
+        race_out_decision = race_out.get("decision")
         analysis: dict = {
-            "signal": race_out.get("signal") or "—",
-            "decision": race_out.get("decision") or "—",
-            "confidence": race_out.get("confidence"),
-            "selection": None,
-            "ev": None,
-            "pace_type": formfav.get("paceScenario"),
+            "signal":     stored_pred.get("signal")     or race_out_signal   or "—",
+            "decision":   stored_pred.get("decision")   or race_out_decision or "—",
+            "confidence": stored_pred.get("confidence") or race_out.get("confidence"),
+            "selection":  stored_pred.get("selection"),
+            "ev":         stored_pred.get("ev"),
+            "pace_type":  formfav.get("paceScenario"),
             "race_shape": formfav.get("weather"),
             "pass_reason": None,
             "all_runners": [
                 {
-                    "box": r.get("box_num"),
-                    "barrier": r.get("barrier"),
-                    "number": r.get("number"),
-                    "name": r.get("name") or r.get("runner_name") or "—",
-                    "odds": r.get("price") or r.get("win_odds"),
-                    "trainer": r.get("trainer") or "—",
-                    "jockey": r.get("jockey") or r.get("driver") or "—",
+                    "box":      r.get("box_num"),
+                    "barrier":  r.get("barrier"),
+                    "number":   r.get("number"),
+                    "name":     r.get("name") or r.get("runner_name") or "—",
+                    "odds":     r.get("price") or r.get("win_odds"),
+                    "win_prob": r.get("ff_win_prob") or r.get("win_prob"),
+                    "trainer":  r.get("trainer") or "—",
+                    "jockey":   r.get("jockey") or r.get("driver") or "—",
                     "scratched": r.get("scratched", False),
-                    "status": "SCR" if r.get("scratched") else "OK",
+                    "status":   "SCR" if r.get("scratched") else "OK",
                 }
                 for r in runners
             ],
         }
 
         return jsonify({
-            "ok": True,
-            "race": race_out,
-            "runners": runners,
+            "ok":       True,
+            "race":     race_out,
+            "runners":  runners,
             "analysis": analysis,
-            "signal": None,
+            "signal": {
+                "signal":     stored_pred.get("signal"),
+                "confidence": stored_pred.get("confidence"),
+                "ev":         stored_pred.get("ev"),
+            } if stored_pred else None,
         })
     except Exception as e:
         import traceback
@@ -864,28 +914,23 @@ def api_health():
 
 @app.route("/api/ai/commentary", methods=["POST"])
 def api_ai_commentary():
-    data = request.get_json(silent=True) or {}
-    prompt = data.get("prompt") or ""
-    if not prompt:
-        return jsonify({"ok": False, "error": "No prompt"}), 400
-    api_key = os.environ.get("CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
-    if not api_key:
-        return jsonify({"ok": False, "error": "AI not configured"}), 503
     try:
-        resp = _requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                     "Content-Type": "application/json"},
-            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 150,
-                  "messages": [{"role": "user", "content": prompt}]},
-            timeout=15,
+        import anthropic
+        data    = request.get_json(silent=True) or {}
+        prompt  = data.get("prompt") or ""
+        if not prompt:
+            return jsonify({"ok": False, "error": "prompt required"}), 400
+        client  = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}]
         )
-        resp.raise_for_status()
-        text = resp.json()["content"][0]["text"]
+        text = message.content[0].text if message.content else "Commentary unavailable."
         return jsonify({"ok": True, "text": text})
     except Exception as e:
-        log.warning(f"AI commentary failed: {e}")
-        return jsonify({"ok": False, "error": "AI unavailable"}), 503
+        log.error(f"/api/ai/commentary failed: {e}")
+        return jsonify({"ok": False, "text": "Commentary unavailable."}), 500
 
 
 # ------------------------------------------------------------

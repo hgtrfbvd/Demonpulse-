@@ -152,6 +152,39 @@ def predict_from_snapshot(
     except Exception as e:
         log.warning(f"predictor: learning_store save failed for {race_uid}: {e}")
 
+    try:
+        from signals import generate_signal
+        top_runner = sorted(scored, key=lambda x: x.get("predicted_rank", 99))[0] if scored else {}
+        scored_for_signal = {
+            "confidence":     top_runner.get("confidence", "LOW"),
+            "ev":             top_runner.get("ev"),
+            "decision":       top_runner.get("decision", "PASS"),
+            "top_runner":     top_runner,
+            "chaos_score":    5,
+            "collapse_risk":  "MODERATE",
+            "separation":     "MODERATE",
+            "false_favourite": False,
+            "filters":        {},
+        }
+        sig = generate_signal(scored_for_signal)
+        result["signal"]   = sig.get("signal", "—")
+        result["decision"] = sig.get("decision") or top_runner.get("decision", "—")
+        result["ev"]       = sig.get("ev")
+
+        # Persist signal columns back to the snapshot row
+        try:
+            from db import get_db, T
+            get_db().table(T("prediction_snapshots")).update({
+                "signal":     result["signal"],
+                "decision":   result["decision"],
+                "ev":         result["ev"],
+                "confidence": result.get("confidence") or scored_for_signal.get("confidence"),
+            }).eq("prediction_snapshot_id", prediction_snapshot_id).execute()
+        except Exception as _e:
+            log.warning(f"predictor: could not persist signal to snapshot: {_e}")
+    except Exception as _e:
+        log.warning(f"predictor: signal generation failed: {_e}")
+
     return result
 
 

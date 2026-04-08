@@ -422,6 +422,15 @@ _SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("test_prediction_snapshots", "has_enrichment",       "INTEGER",  "DEFAULT 0"),
     ("test_prediction_snapshots", "source_type",          "TEXT",     "DEFAULT 'pre_race'"),
     ("test_prediction_snapshots", "feature_snapshot_id",  "TEXT",     "DEFAULT ''"),
+    # Signal/decision/ev/confidence columns for AI predictor output (Phase 5)
+    ("prediction_snapshots",      "signal",               "TEXT",          ""),
+    ("prediction_snapshots",      "decision",             "TEXT",          ""),
+    ("prediction_snapshots",      "ev",                   "NUMERIC",       ""),
+    ("prediction_snapshots",      "confidence",           "NUMERIC",       ""),
+    ("test_prediction_snapshots", "signal",               "TEXT",          ""),
+    ("test_prediction_snapshots", "decision",             "TEXT",          ""),
+    ("test_prediction_snapshots", "ev",                   "NUMERIC",       ""),
+    ("test_prediction_snapshots", "confidence",           "NUMERIC",       ""),
 
     # ── learning_evaluations ─────────────────────────────────────────────────
     # Phase 4.6 adds enrichment tracking and disagreement metrics.
