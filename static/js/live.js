@@ -291,20 +291,26 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
         if (stats.place_pct != null) placePct = stats.place_pct.toFixed(1) + "%";
 
         const fields = [
-            ["Last 6",        r.form || "—"],
-            ["Career",        r.career || "—"],
-            ["Win %",         winPct],
-            ["Place %",       placePct],
-            ["Best Time",     r.bestTime || "—"],
-            ["Weight",        r.weight || "—"],
-            ["Early Speed",   r.earlySpeed || "—"],
-            ["AI Win %",      r.ff_win_prob != null ? r.ff_win_prob.toFixed(1) + "%" : (r.winProb != null ? r.winProb.toFixed(1) + "%" : "—")],
-            ["AI Rank",       r.ff_model_rank != null ? `#${r.ff_model_rank}` : "—"],
-            ["AI Confidence", r.ff_confidence || "—"],
-            ["Race Class Fit",r.ff_class_profile ? JSON.stringify(r.ff_class_profile).slice(0, 30) : "—"],
-            ["Trainer",       r.trainer || "—"],
-            ["Jockey/Driver", r.jockey || "—"],
-        ].filter(([, v]) => v && v !== "—");
+            ["Last 6",        r.form || null],
+            ["Career",        r.career || null],
+            ["Win %",         winPct !== "—" ? winPct : null],
+            ["Place %",       placePct !== "—" ? placePct : null],
+            ["Best Time",     r.bestTime || null],
+            ["Weight",        r.weight || null],
+            ["Early Speed",   r.earlySpeed || null],
+            ["AI Win %",      r.ff_win_prob != null ? r.ff_win_prob.toFixed(1) + "%" : (r.winProb != null ? r.winProb.toFixed(1) + "%" : null)],
+            ["AI Rank",       r.ff_model_rank != null ? `#${r.ff_model_rank}` : null],
+            ["AI Confidence", r.ff_confidence || null],
+            ["Race Class Fit",r.ff_class_profile ? JSON.stringify(r.ff_class_profile).slice(0, 30) : null],
+            ["Trainer",       r.trainer || null],
+            ["Jockey/Driver", r.jockey || null],
+        ].filter(([, v]) => v != null);
+
+        if (!fields.length) {
+            return `<div class="expand-empty-note" style="color:var(--text-dim);font-size:0.8rem;padding:8px 0;">
+                Form data loading… Check back after next FormFav sync.
+            </div>`;
+        }
 
         return `<div class="expand-stats-grid">${
             fields.map(([k, v]) => `<div class="expand-stat"><span class="es-label">${esc(k)}</span><span class="es-val">${esc(String(v))}</span></div>`).join("")
@@ -919,8 +925,11 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 const container = q("formGuideRows");
                 if (container) container.innerHTML = `
                     <div style="padding:32px;text-align:center;color:var(--text-dim);">
-                        <div style="font-size:1.1rem;margin-bottom:8px;">Runners loading…</div>
-                        <div style="font-size:0.85rem;">Runner data will appear when available from OddsPro.</div>
+                        <div style="font-size:1rem;margin-bottom:8px;">No runner data yet</div>
+                        <div style="font-size:0.8rem;">
+                            Runners will appear once OddsPro confirms the field.<br>
+                            FormFav enrichment syncs every 5 minutes.
+                        </div>
                     </div>`;
                 setText("formGuideMeta", "0 runners");
             }

@@ -351,6 +351,8 @@ def api_live_race(race_uid: str):
         race_out = {**race, **ntj}
 
         runners = get_runners_for_race(race_uid)
+        if not runners:
+            log.warning(f"/api/live/race: race {race_uid!r} found in today_races but get_runners_for_race returned 0 rows")
 
         # Merge FormFav runner enrichment data — two-pass join (number then name)
         try:
