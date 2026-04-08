@@ -52,6 +52,7 @@ from core.domestic_tracks import (
     normalize_track, apply_track_alias,
     classify_track_by_code,
     resolve_formfav_track,
+    FORMFAV_CODE_TRACK_MAP,
 )
 
 log = logging.getLogger(__name__)
@@ -1301,8 +1302,18 @@ def formfav_sync(target_date: str | None = None) -> dict[str, Any]:
                 _pipeline_state.record_formfav_skipped(race_uid, "not_supported_track")
             return {"race_uid": race_uid, "status": "skipped_unsupported_track", "runners_enriched": 0}
 
-        ff_track = apply_track_alias(track)
+        ff_track = resolve_formfav_track(track, ff_country)
+        if ff_track is None:
+            log.info(
+                f"[FORMFAV] SKIPPED race_uid={race_uid}"
+                f" reason=not_in_formfav track={track!r} country={ff_country!r}"
+            )
+            if _pipeline_state is not None:
+                _pipeline_state.record_formfav_skipped(race_uid, "not_in_formfav")
+            return {"race_uid": race_uid, "status": "skipped_unsupported_track", "runners_enriched": 0}
+
         mapped_race_code = _FF_CODE_DISPLAY.get(ff_code, ff_code.lower())
+        ff_track = FORMFAV_CODE_TRACK_MAP.get((ff_track, mapped_race_code), ff_track)
 
         # --- Issue FormFav API call ---
         log.info(

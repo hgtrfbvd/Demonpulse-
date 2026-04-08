@@ -137,8 +137,9 @@ TRACK_ALIASES: dict[str, str] = {
     "meadows":                   "the-meadows",
     # Wentworth Park (NSW greyhound): no-space variant
     "wentworthpark":             "wentworth-park",
-    # Albion Park: API may return "Albion Park Raceway"
+    # Albion Park: API may return "Albion Park Raceway" or code-qualified name
     "albion-park-raceway":       "albion-park",
+    "albion-park-greyhound":     "albion-park",
     # Sandown (VIC thoroughbred): "Sandown Racecourse" → "sandown"
     "sandown-racecourse":        "sandown",
     # Gold Coast: "Gold Coast Turf" → "gold-coast"
@@ -272,17 +273,28 @@ TRACK_ALIASES: dict[str, str] = {
     "taree-raceway":             "taree",
     # Temora (NSW greyhound)
     "temora-greyhound":          "temora",
+    "temora-raceway":            "temora",
     # Rockhampton (QLD greyhound)
     "rockhampton-greyhound":     "rockhampton",
     "rockhampton-raceway":       "rockhampton",
     # Darwin (NT greyhound)
     "darwin-greyhound":          "darwin",
     "darwin-raceway":            "darwin",
-    # Murray Bridge Straight — separate SA straight track venue
-    "murray-bridge-straight":    "murray-bridge",
+    # Murray Bridge Straight — separate SA straight track venue (NOT an alias for murray-bridge)
+    "murray-bridge-straight-greyhound": "murray-bridge-straight",
+    "murray-bridge-str":                "murray-bridge-straight",
     # Avondale (NZ horse): OddsPro variant names
     "avondale-jockey-club":      "avondale",
     "avondale-racecourse":       "avondale",
+    # Q2 Parklands QLD — SEPARATE config from Q1 Lakeside
+    "q2-parklands":              "q-2-parklands",
+    "q-2-parklands-greyhound":   "q-2-parklands",
+    "q2parklands":               "q-2-parklands",
+    # Q Straight QLD — SEPARATE config
+    "qstraight":                 "q-straight",
+    "q-straight-greyhound":      "q-straight",
+    # Q1 Lakeside extra variant seen in production logs
+    "q1-lakeside-extra":         "q-1-lakeside",
 }
 
 
@@ -388,8 +400,13 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     "temora",         # Temora Greyhounds (NSW)
     # QLD — additional venues
     "rockhampton",    # Rockhampton Greyhounds (QLD)
+    "albion-park",    # Albion Park QLD — runs BOTH greyhound and harness
+    "q-2-parklands",  # Q2 Parklands QLD — SEPARATE CONFIG
+    "q-straight",     # Q Straight QLD — SEPARATE CONFIG
     # NT
     "darwin",         # Darwin Greyhounds (NT)
+    # SA
+    "murray-bridge-straight",  # Separate straight track at Murray Bridge complex
 })
 
 #: New Zealand greyhound venues.
@@ -722,6 +739,35 @@ FORMFAV_TRACK_ALIASES: dict[str, str] = {
     "ballarat-racecourse":   "ballarat",
     # FormFav uses plain "mornington" (no suffix).
     "mornington-racecourse": "mornington",
+    # FormFav has no plain 'hobart' entry — all hobart greyhound races use hobart-greyhound.
+    "hobart":                "hobart-greyhound",
+}
+
+
+#: Code-specific FormFav track slug overrides.
+#: Used when the same venue name is used by multiple race codes but FormFav
+#: requires a code-qualified slug for one of them.
+#: Key: (canonical_slug, formfav_race_code)  e.g. ("rockhampton", "greyhounds")
+#: Value: FormFav slug to use for that specific code
+FORMFAV_CODE_TRACK_MAP: dict[tuple[str, str], str] = {
+    # Rockhampton: horse uses plain "rockhampton", greyhound needs "rockhampton-greyhound"
+    ("rockhampton", "greyhounds"):      "rockhampton-greyhound",
+    # Albion Park QLD: harness uses "albion-park", greyhound needs "albion-park-greyhound"
+    ("albion-park", "greyhounds"):      "albion-park-greyhound",
+    # Launceston: FormFav has both launceston and launceston-greyhound
+    ("launceston", "greyhounds"):       "launceston-greyhound",
+    # Ipswich: FormFav has both ipswich and ipswich-greyhound
+    ("ipswich", "greyhounds"):          "ipswich-greyhound",
+    # Lismore: FormFav has both lismore and lismore-greyhound
+    ("lismore", "greyhounds"):          "lismore-greyhound",
+    # NZ greyhound: FormFav uses 'dogs' suffix venues
+    ("hatrick-straight", "greyhounds"): "manawatu-dogs",
+    ("ascot-park",       "greyhounds"): "invercargill-dogs",
+    ("avondale",         "greyhounds"): "auckland-dogs",
+    ("christchurch",     "greyhounds"): "christchurch-dogs",
+    ("manukau",          "greyhounds"): "auckland-dogs",
+    ("palmerston-north", "greyhounds"): "manawatu-dogs",
+    ("invercargill",     "greyhounds"): "invercargill-dogs",
 }
 
 
