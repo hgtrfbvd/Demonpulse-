@@ -264,6 +264,25 @@ TRACK_ALIASES: dict[str, str] = {
     # Capalaba (QLD greyhound)
     "capalaba-greyhound":        "capalaba",
     "capalaba-raceway":          "capalaba",
+    # Gunnedah (NSW greyhound): OddsPro variant names
+    "gunnedah-greyhound":        "gunnedah",
+    "gunnedah-raceway":          "gunnedah",
+    # Taree (NSW greyhound)
+    "taree-greyhound":           "taree",
+    "taree-raceway":             "taree",
+    # Temora (NSW greyhound)
+    "temora-greyhound":          "temora",
+    # Rockhampton (QLD greyhound)
+    "rockhampton-greyhound":     "rockhampton",
+    "rockhampton-raceway":       "rockhampton",
+    # Darwin (NT greyhound)
+    "darwin-greyhound":          "darwin",
+    "darwin-raceway":            "darwin",
+    # Murray Bridge Straight — separate SA straight track venue
+    "murray-bridge-straight":    "murray-bridge",
+    # Avondale (NZ horse): OddsPro variant names
+    "avondale-jockey-club":      "avondale",
+    "avondale-racecourse":       "avondale",
 }
 
 
@@ -336,6 +355,7 @@ HORSE_NZ_TRACKS: frozenset[str] = frozenset({
     "new-plymouth", "whanganui", "woodville", "otaki", "trentham",
     "riccarton", "ashburton", "timaru", "oamaru", "wingatui", "riverton",
     "palmerston-north",  # alias target: palmy → palmerston-north
+    "avondale",          # Avondale Jockey Club (Auckland, NZ)
 })
 
 #: Australian greyhound venues.
@@ -362,6 +382,14 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     # WA
     "cannington", "mandurah", "northam",
     "albany",
+    # NSW — additional venues
+    "gunnedah",       # Gunnedah Greyhounds (NSW)
+    "taree",          # Taree Greyhounds (NSW)
+    "temora",         # Temora Greyhounds (NSW)
+    # QLD — additional venues
+    "rockhampton",    # Rockhampton Greyhounds (QLD)
+    # NT
+    "darwin",         # Darwin Greyhounds (NT)
 })
 
 #: New Zealand greyhound venues.
