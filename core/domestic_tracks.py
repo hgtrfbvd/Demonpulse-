@@ -253,6 +253,17 @@ TRACK_ALIASES: dict[str, str] = {
     "q-1-lakeside-park":         "q-1-lakeside",
     # Bulli (NSW greyhound): "Bulli Raceway" → "bulli"
     "bulli-raceway":             "bulli",
+    # Avondale (NZ greyhound): OddsPro may send "Avondale Park" or "Avondale Raceway"
+    "avondale-park":             "avondale",
+    "avondale-raceway":          "avondale",
+    # Ascot Park (NZ greyhound): OddsPro may send "Ascot Park Raceway"
+    "ascot-park-raceway":        "ascot-park",
+    # Healesville (VIC greyhound): OddsPro may send "Healesville Greyhound"
+    "healesville-greyhound":     "healesville",
+    "healesville-racecourse":    "healesville",
+    # Capalaba (QLD greyhound)
+    "capalaba-greyhound":        "capalaba",
+    "capalaba-raceway":          "capalaba",
 }
 
 
@@ -333,6 +344,7 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     "the-meadows", "sandown-park", "sale", "ballarat", "bendigo", "geelong",
     "traralgon", "shepparton", "warragul",
     "horsham", "mildura", "swan-hill",
+    "healesville",            # Healesville Greyhound Racing (VIC)
     # SA
     "angle-park", "gawler", "murray-bridge",
     # VIC/NSW
@@ -343,6 +355,8 @@ GREYHOUND_AU_TRACKS: frozenset[str] = frozenset({
     "bulli", "grafton", "tamworth", "maitland", "bathurst",
     # QLD
     "ipswich", "albany-creek", "q-1-lakeside",
+    "capalaba",               # Capalaba Greyhounds (Brisbane, QLD)
+    "gold-coast-greyhound",   # Gold Coast Greyhounds
     # TAS
     "hobart", "launceston", "devonport",
     # WA
@@ -360,6 +374,11 @@ GREYHOUND_NZ_TRACKS: frozenset[str] = frozenset({
     "palmerston-north",
     "invercargill",
     "christchurch",
+    "avondale",           # Avondale Greyhound Racing (Auckland, NZ)
+    "ascot-park",         # Ascot Park Greyhound Racing (Invercargill, NZ)
+    "auckland-dogs",      # Auckland Dogs (alternate slug used by OddsPro)
+    "manawatu-dogs",      # Manawatu Dogs (alternate slug)
+    "christchurch-dogs",  # Christchurch Dogs (alternate slug)
 })
 
 #: Australian harness venues.
