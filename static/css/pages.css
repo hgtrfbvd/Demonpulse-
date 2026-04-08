@@ -2428,3 +2428,64 @@
 .role-admin    { background:rgba(255,45,45,0.15); color:var(--red-1); }
 .role-operator { background:rgba(90,180,255,0.12); color:var(--blue); }
 .role-viewer   { background:var(--bg-4); color:var(--text-dim); }
+
+/* -------------------------------------------------------
+   Form guide career stats grid (live.js redesign)
+   ------------------------------------------------------- */
+
+/* Form guide career stats grid */
+.form-stats-section {
+    margin-bottom: 12px;
+}
+.form-stats-label {
+    font-size: 0.65rem;
+    letter-spacing: .1em;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+.form-career-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 6px 12px;
+}
+.fcs-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.fcs-k {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+.fcs-v {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+}
+.fcs-highlight {
+    color: var(--green);
+}
+
+/* Recent starts row — add condition column */
+.recent-run-row {
+    display: grid;
+    grid-template-columns: 52px 44px 52px 88px 52px;
+    gap: 4px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--bg-3);
+    font-size: 0.78rem;
+    align-items: center;
+}
+.rr-cond {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+}
+
+/* FormFav sync button state */
+.formfav-sync-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
