@@ -748,6 +748,12 @@ ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS has_collision   INTEGE
 ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS has_enrichment  INTEGER DEFAULT 0;
 ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS source_type     TEXT    DEFAULT 'pre_race';
 
+-- Signal/decision/ev/confidence columns added for AI predictor output
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS signal      TEXT;
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS decision    TEXT;
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS ev          NUMERIC;
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS confidence  NUMERIC;
+
 -- ----------------------------------------------------------------
 -- prediction_runner_outputs
 -- Per-runner scores and predicted ranks within a prediction run.

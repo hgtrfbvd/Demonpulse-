@@ -11,3 +11,4 @@ schedule==1.2.1
 playwright==1.44.0
 pandas==2.2.2
 numpy==1.26.4
+anthropic>=0.25.0
