@@ -196,52 +196,46 @@
     // Form string → recent starts rows (for expanded detail)
     // -------------------------------------------------------
 
-    function buildRecentStartsRows(runner) {
-        // Use structured recent_starts if available
-        if (runner.recent_starts && runner.recent_starts.length) {
-            return runner.recent_starts.map(s => {
-                const c = String(s.finish ?? "");
-                let cls = "finish-bad";
-                let label = c;
-                if (c === "1") { cls = "finish-win"; label = "1st"; }
-                else if (c === "2") { cls = "finish-win"; label = "2nd"; }
-                else if (c === "3") { cls = "finish-place"; label = "3rd"; }
-                else if (c === "F" || c === "W") { cls = "finish-bad"; label = c === "F" ? "Fell" : "W/D"; }
-                else if (c === "V") { cls = "finish-place"; label = "Vac"; }
-                else if (c) { label = c + "th"; }
+    function buildRecentStartsRows(formStr, recentStarts) {
+        // Use structured recent_starts array if available
+        if (Array.isArray(recentStarts) && recentStarts.length) {
+            return recentStarts.slice(-6).reverse().map(s => {
+                const finish = s.finish || s.position || s.result || "—";
+                const finishNum = parseInt(finish, 10);
+                let cls = "finish-bad", label = String(finish);
+                if (finishNum === 1)        { cls = "finish-win";   label = "1st"; }
+                else if (finishNum === 2)   { cls = "finish-win";   label = "2nd"; }
+                else if (finishNum === 3)   { cls = "finish-place"; label = "3rd"; }
+                else if (!isNaN(finishNum)) { label = finishNum + "th"; }
                 return `
                 <div class="recent-run-row">
-                    <span class="rr-track">${esc(s.track || "—")}</span>
-                    <span class="rr-time">${esc(s.time || "—")}</span>
-                    <span class="rr-dist">${esc(s.distance || "—")}</span>
+                    <span class="rr-track">${esc(s.track || s.venue || "—")}</span>
+                    <span class="rr-cond">${esc(s.condition || s.track_condition || "—")}</span>
+                    <span class="rr-dist">${s.distance ? s.distance + "m" : "—"}</span>
                     <span class="rr-date">${esc(s.date || "—")}</span>
                     <span class="rr-finish ${cls}">${label}</span>
-                </div>
-            `;
+                </div>`;
             }).join("");
         }
-        // Fall back to form string
-        const formStr = runner.form || (typeof runner === "string" ? runner : "");
+
+        // Fallback: form string chars only
         if (!formStr) return '<div class="rr-empty">No form data.</div>';
-        const chars = formStr.slice(-6).split("");
-        return chars.map(c => {
-            let cls = "finish-bad";
-            let label = c;
-            if (c === "1") { cls = "finish-win"; label = "1st"; }
-            else if (c === "2") { cls = "finish-win"; label = "2nd"; }
+        return formStr.slice(-6).split("").map(c => {
+            let cls = "finish-bad", label = c + "th";
+            if (c === "1")      { cls = "finish-win";   label = "1st"; }
+            else if (c === "2") { cls = "finish-win";   label = "2nd"; }
             else if (c === "3") { cls = "finish-place"; label = "3rd"; }
-            else if (c === "F" || c === "W") { cls = "finish-bad"; label = c === "F" ? "Fell" : "W/D"; }
+            else if (c === "F") { cls = "finish-bad";   label = "Fell"; }
+            else if (c === "W") { cls = "finish-bad";   label = "W/D"; }
             else if (c === "V") { cls = "finish-place"; label = "Vac"; }
-            else { label = c + "th"; }
             return `
                 <div class="recent-run-row">
                     <span class="rr-track">—</span>
-                    <span class="rr-time">—</span>
+                    <span class="rr-cond">—</span>
                     <span class="rr-dist">—</span>
                     <span class="rr-date">—</span>
                     <span class="rr-finish ${cls}">${label}</span>
-                </div>
-            `;
+                </div>`;
         }).join("");
     }
 
@@ -298,65 +292,96 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
     // -------------------------------------------------------
 
     function buildExpandGrid(r) {
-        let winPct = "—", placePct = "—";
+        // ---- Parse career string "starts: W-P-S" ----
+        let careerStarts = 0, careerWins = 0, careerPlaces = 0, careerShows = 0;
         if (r.career) {
             const m = r.career.match(/^(\d+):\s*(\d+)-(\d+)-(\d+)/);
             if (m) {
-                const starts = parseInt(m[1], 10);
-                const wins = parseInt(m[2], 10);
-                const places = parseInt(m[3], 10);
-                if (starts > 0) {
-                    winPct  = ((wins / starts) * 100).toFixed(1) + "%";
-                    placePct = (((wins + places) / starts) * 100).toFixed(1) + "%";
-                }
+                careerStarts = parseInt(m[1], 10);
+                careerWins   = parseInt(m[2], 10);
+                careerPlaces = parseInt(m[3], 10);
+                careerShows  = parseInt(m[4], 10);
             }
         }
         const stats = r.ff_career_stats || {};
-        if (stats.win_pct  != null) winPct   = stats.win_pct.toFixed(1) + "%";
-        if (stats.place_pct != null) placePct = stats.place_pct.toFixed(1) + "%";
+        const winPct   = stats.win_pct   != null ? stats.win_pct.toFixed(1) + "%"
+                       : careerStarts > 0 ? ((careerWins / careerStarts) * 100).toFixed(1) + "%" : "—";
+        const placePct = stats.place_pct != null ? stats.place_pct.toFixed(1) + "%"
+                       : careerStarts > 0 ? (((careerWins + careerPlaces) / careerStarts) * 100).toFixed(1) + "%" : "—";
 
-        const fields = [
-            ["Last 6",        r.form || null],
-            ["Career",        r.career || null],
-            ["Win %",         winPct !== "—" ? winPct : null],
-            ["Place %",       placePct !== "—" ? placePct : null],
-            ["Best Time",     r.bestTime || null],
-            ["Weight",        r.weight || null],
-            ["Early Speed",   r.earlySpeed || null],
-            ["AI Win %",      r.ff_win_prob != null ? r.ff_win_prob.toFixed(1) + "%" : (r.winProb != null ? r.winProb.toFixed(1) + "%" : null)],
-            ["AI Rank",       r.ff_model_rank != null ? `#${r.ff_model_rank}` : null],
-            ["AI Confidence", r.ff_confidence || null],
-            ["Rating", (() => {
-                const p = typeof r.ff_class_profile === "string"
-                    ? (() => { try { return JSON.parse(r.ff_class_profile); } catch(e) { return null; } })()
-                    : r.ff_class_profile;
-                if (!p || (p.currentRating == null && !p.paceStyle)) return null;
-                const parts = [p.currentRating != null ? `Rtg ${p.currentRating}` : null, p.paceStyle || null].filter(Boolean);
-                return parts.length ? parts.join(" · ") : null;
-            })()],
-            ["Class Fit", (() => {
-                const f = typeof r.race_class_fit === "string"
-                    ? (() => { try { return JSON.parse(r.race_class_fit); } catch(e) { return null; } })()
-                    : r.race_class_fit;
-                if (!f) return null;
-                const fit = f.fit ?? f.fitScore;
-                const label = f.label ?? f.fitLabel;
-                if (fit == null && !label) return null;
-                return `${fit != null ? Math.round(fit * 100) + "%" : "—"} — ${label || "—"}`;
-            })()],
-            ["Trainer",       r.trainer || null],
-            ["Jockey/Driver", r.jockey || null],
-        ].filter(([, v]) => v != null);
-
-        if (!fields.length) {
-            return `<div class="expand-empty-note" style="color:var(--text-dim);font-size:0.8rem;padding:8px 0;">
-                Form data loading… Check back after next FormFav sync.
-            </div>`;
+        // ---- Parse class profile ----
+        let ratingStr = "—", paceStyle = "—";
+        const cp = r.ff_class_profile;
+        if (cp) {
+            const obj = typeof cp === "string" ? (() => { try { return JSON.parse(cp); } catch(_) { return null; } })() : cp;
+            if (obj) {
+                const rating = obj.currentRating ?? obj.rating ?? obj.classRating;
+                if (rating != null) ratingStr = String(rating);
+                paceStyle = obj.paceStyle ?? obj.pace ?? "—";
+            }
         }
 
-        return `<div class="expand-stats-grid">${
-            fields.map(([k, v]) => `<div class="expand-stat"><span class="es-label">${esc(k)}</span><span class="es-val">${esc(String(v))}</span></div>`).join("")
-        }</div>`;
+        // ---- Parse class fit ----
+        let classFitStr = "—";
+        const cf = r.race_class_fit;
+        if (cf) {
+            const obj = typeof cf === "string" ? (() => { try { return JSON.parse(cf); } catch(_) { return null; } })() : cf;
+            if (obj) {
+                const fit   = obj.fit ?? obj.fitScore ?? obj.classMatch;
+                const label = obj.label ?? obj.fitLabel ?? obj.verdict;
+                if (typeof fit === "number") classFitStr = label ? (fit * 100).toFixed(0) + "% — " + label : (fit * 100).toFixed(0) + "%";
+                else if (label) classFitStr = label;
+            }
+        }
+
+        // ---- AI win prob ----
+        const aiWinProb = r.ff_win_prob != null ? r.ff_win_prob.toFixed(1) + "%"
+                        : r.winProb     != null ? r.winProb.toFixed(1) + "%" : "—";
+
+        const hasData = r.career || r.form || r.bestTime || r.ff_win_prob != null;
+
+        if (!hasData) {
+            return `
+        <div class="expand-empty-note" style="display:flex;align-items:center;gap:10px;padding:8px 0;">
+            <span style="color:var(--text-dim);font-size:0.8rem;">Form data not yet loaded from FormFav.</span>
+            <button class="dp-btn dp-btn-small formfav-sync-btn"
+                    data-race-uid="${esc(window._currentRaceUid || '')}">⟳ Sync FormFav</button>
+            <span class="formfav-sync-status" style="font-size:0.75rem;color:var(--text-dim);"></span>
+        </div>`;
+        }
+
+        // ---- Career stats grid (Sportsbet-style) ----
+        const careerGrid = `
+    <div class="form-stats-section">
+        <div class="form-stats-label">CAREER &amp; STATS</div>
+        <div class="form-career-grid">
+            <div class="fcs-cell"><span class="fcs-k">Last 6</span><span class="fcs-v">${esc(r.form || "—")}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Career</span><span class="fcs-v">${esc(r.career || "—")}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Win %</span><span class="fcs-v">${esc(winPct)}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Place %</span><span class="fcs-v">${esc(placePct)}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Best Time</span><span class="fcs-v">${esc(r.bestTime || "—")}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Weight</span><span class="fcs-v">${esc(r.weight || "—")}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Early Speed</span><span class="fcs-v">${esc(r.earlySpeed || "—")}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Pace Style</span><span class="fcs-v">${esc(paceStyle)}</span></div>
+        </div>
+    </div>`;
+
+        // ---- FormFav AI intel block ----
+        const aiBlock = `
+    <div class="form-stats-section">
+        <div class="form-stats-label">AI INTEL (FORMFAV)</div>
+        <div class="form-career-grid">
+            <div class="fcs-cell"><span class="fcs-k">AI Win %</span><span class="fcs-v fcs-highlight">${esc(aiWinProb)}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">AI Rank</span><span class="fcs-v">${r.ff_model_rank != null ? "#" + r.ff_model_rank : "—"}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Confidence</span><span class="fcs-v">${esc(r.ff_confidence || "—")}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Rating</span><span class="fcs-v">${esc(ratingStr)}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Class Fit</span><span class="fcs-v">${esc(classFitStr)}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Trainer</span><span class="fcs-v">${esc(r.trainer || "—")}</span></div>
+            <div class="fcs-cell"><span class="fcs-k">Jockey/Driver</span><span class="fcs-v">${esc(r.jockey || "—")}</span></div>
+        </div>
+    </div>`;
+
+        return careerGrid + aiBlock;
     }
 
     function buildDecoratorBadges(decorators) {
@@ -471,7 +496,9 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 race_class_fit:   r.race_class_fit,
                 ff_stats_full:    r.ff_stats_full || {},
                 ff_career_stats:  r.ff_career_stats,
-                recent_starts:    Array.isArray(r.recent_starts) ? r.recent_starts : [],
+                recent_starts:    Array.isArray(r.recent_starts) ? r.recent_starts
+                             : Array.isArray(r.ff_stats_full?.recent_starts) ? r.ff_stats_full.recent_starts
+                             : [],
             };
         });
 
@@ -498,7 +525,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 rankBadge = `<div class="rank-text">—</div>`;
             }
 
-            const recentRows = buildRecentStartsRows(r);
+            const recentRows = buildRecentStartsRows(r.form, r.recent_starts);
 
             // Top decorator badges for summary row
             const topBadges = (r.ff_decorators || []).slice(0, 4).map(d => {
@@ -560,7 +587,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                         })()}
 
                         <div class="expand-recent-starts">
-                            <div class="expand-section-title">Recent Starts (form chars)</div>
+                            <div class="expand-section-title">Recent Starts</div>
                             ${recentRows}
                         </div>
 
@@ -941,6 +968,8 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             return;
         }
 
+        window._currentRaceUid = raceUid;
+
         try {
             const data = await api(`/api/live/race/${encodeURIComponent(raceUid)}`);
             liveRace     = data.race     || null;
@@ -1036,6 +1065,33 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
 
         // Event delegation: runner summary row click → expand; bet button click
         document.addEventListener("click", (e) => {
+            // FormFav sync button inside expand
+            const syncBtn = e.target.closest(".formfav-sync-btn");
+            if (syncBtn) {
+                e.stopPropagation();
+                const statusEl = syncBtn.nextElementSibling;
+                syncBtn.disabled = true;
+                syncBtn.textContent = "Syncing…";
+                if (statusEl) statusEl.textContent = "";
+                fetch("/api/formfav/sync", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ date: new Date().toISOString().slice(0, 10) })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (statusEl) statusEl.textContent = data.ok ? "✓ Synced — reload race to see data" : "✗ Sync failed";
+                    syncBtn.textContent = "⟳ Sync FormFav";
+                    syncBtn.disabled = false;
+                })
+                .catch(() => {
+                    if (statusEl) statusEl.textContent = "✗ Network error";
+                    syncBtn.textContent = "⟳ Sync FormFav";
+                    syncBtn.disabled = false;
+                });
+                return;
+            }
+
             // Bet button inside expand
             const betBtn = e.target.closest(".expand-bet-btn");
             if (betBtn) {
