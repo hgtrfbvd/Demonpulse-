@@ -939,8 +939,8 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                     if (runnerSelect) {
                         runnerSelect.innerHTML = `<option value="">Select runner…</option>` +
                             liveRunners.map(r =>
-                                `<option value="${r.name || ''}" data-odds="${r.price || r.win_odds || ''}">
-                                    ${r.name || "—"}
+                                `<option value="${esc(r.name || '')}" data-odds="${esc(String(r.price || r.win_odds || ''))}">
+                                    ${esc(r.name || "—")}
                                 </option>`
                             ).join("");
                     }
