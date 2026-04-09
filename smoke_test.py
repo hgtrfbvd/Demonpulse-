@@ -1098,8 +1098,16 @@ def test_predictions_today_get_route() -> _Result:
             f"predictions_sample={body.get('predictions', [])[:1]}"
         )
 
+    except (ConnectionRefusedError, TimeoutError) as e:
+        r.fail(
+            f"App not running at {base_url}. "
+            f"Start it first: DP_ENV=TEST python app.py "
+            f"then re-run this test. "
+            f"Or set APP_BASE_URL env var if running elsewhere."
+        )
     except OSError as e:
-        if "Connection refused" in str(e) or "timed out" in str(e):
+        reason = getattr(e, "reason", None)
+        if isinstance(reason, (ConnectionRefusedError, TimeoutError)):
             r.fail(
                 f"App not running at {base_url}. "
                 f"Start it first: DP_ENV=TEST python app.py "
