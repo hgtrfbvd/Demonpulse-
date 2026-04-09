@@ -1,789 +1,476 @@
-# DEMONPULSE — v72 DEEP SYSTEM FIX (PART 2)
+# DEMONPULSE — v74 CRITICAL FIX: SCHEDULER + RESULT PARSER
 
 Generated: 2026-04-09
-Based on: Full deep-dive audit of Demonpulse–main_72.zip
+Source: Log analysis + API doc audit of Demonpulse–main_74.zip
 
-This file covers ROOT CAUSES found after Part 1. Apply ALL sections.
-
-CONFIRMED ROOT CAUSES THIS AUDIT:
-❌ evaluate_prediction() NEVER called from _write_result() — learning_evaluations
-table is permanently empty — all Learning/Performance data shows “—”
-❌ prediction_snapshots missing race_date/track/race_num/top_runner columns —
-GET /api/predictions/today cannot filter or display correctly
-❌ Backtest BLOCKED by @require_role(“admin”) — the UI calls /api/admin/backtest
-but the cookie-based token (httponly) is not sent by fetch() — every Run
-Backtest silently gets 401 Unauthorized, shows “FAILED”
-❌ Backtest returns flat fields (total_races, hit_rate) but backtesting.js reads
-nested data.summary.samples, data.rows, data.errors — table always empty
-❌ Backtest has no ROI/profit calculation in the response
-❌ GET /api/predictions/today endpoint does not exist — learning activity feed
-always shows “No predictions yet today”
+TWO ROOT CAUSES CONFIRMED BY LOGS:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 1 — CRITICAL: evaluate_prediction() NEVER CALLED
+ROOT CAUSE 1 — SCHEDULER NEVER RUNS IN PRODUCTION (CRITICAL)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: data_engine.py — _write_result()
 
-PROBLEM: _write_result() writes the result and updates race status but
-NEVER calls evaluate_prediction(). The learning_evaluations table is
-therefore always empty. Win rate, ROI, performance chart, paper bets —
-all show “—” forever because there is no evaluation data.
+PROOF: The entire session log shows only startup writes to Supabase.
+Zero scheduler log entries after startup. No check_results, no
+formfav_sync, no rolling_refresh — nothing. The scheduler thread
+does not exist in the running process.
 
-The full evaluation pipeline exists in result_service.confirm_race_result()
-but that function is NEVER called by the scheduler. The scheduler calls
-check_results() → _write_result() which skips evaluation entirely.
+WHY: gunicorn forks worker processes AFTER importing app.py.
+startup() is called at module import time and starts a daemon
+background thread. But daemon threads DO NOT survive a fork.
+The gunicorn worker process that handles all requests has no
+scheduler thread. This has been true since day one on Render.
 
-FIX — Update _write_result() to trigger evaluation after writing:
+The initial full_sweep (races writing to Supabase) works because
+it runs synchronously during startup() before gunicorn forks.
+Everything after that — result checks, FormFav syncs, status
+updates — never fires.
 
-def _write_result(result: Any) -> None:
-“”“Write an OddsPro RaceResult to results_log as official truth.”””
+═══════════════════════════════════════════════════════════════
+FIX 1A — Add –preload flag to gunicorn (simplest fix)
+═══════════════════════════════════════════════════════════════
+FILE: Procfile
+
+FIND:
+web: gunicorn app:app –bind 0.0.0.0:$PORT –workers 1 –timeout 120
+
+REPLACE WITH:
+web: gunicorn app:app –bind 0.0.0.0:$PORT –workers 1 –timeout 120 –preload
+
+The –preload flag tells gunicorn to import and run the application
+code IN THE MASTER PROCESS before forking workers. This means
+startup() runs in the master, the scheduler thread starts in the
+master, and it stays alive for the lifetime of the process.
+
+FILE: render.yaml — update startCommand to match:
+startCommand: gunicorn app:app –workers 1 –timeout 120 –bind 0.0.0.0:$PORT –preload
+
+═══════════════════════════════════════════════════════════════
+FIX 1B — Add gunicorn config file as safety net
+═══════════════════════════════════════════════════════════════
+Create a new file: gunicorn.conf.py in the project root:
+
+# gunicorn.conf.py
+
+# Safety net: restart the scheduler in the worker if it’s not running.
+
+# This handles cases where –preload is not used or the thread dies.
+
+import threading
+
+def post_fork(server, worker):
+“”“Called in the worker process after forking.”””
 try:
-from database import upsert_result, update_race_status
-result_dict = result.**dict** if hasattr(result, “**dict**”) else result
-upsert_result(result_dict)
+import scheduler
+if not scheduler._scheduler_thread or not scheduler._scheduler_thread.is_alive():
+scheduler.start_scheduler()
+server.log.info(“DemonPulse: scheduler restarted in worker post-fork”)
+except Exception as e:
+server.log.warning(f”DemonPulse: scheduler post-fork start failed: {e}”)
 
-```
-      race_uid = result_dict.get("race_uid") or ""
-      if race_uid:
-          rows_updated = update_race_status(race_uid, "final")
-          if not rows_updated:
-              # Fallback: update by date/track/race_num/code
-              _update_race_status_fallback(
-                  date=result_dict.get("date"),
-                  track=result_dict.get("track"),
-                  race_num=result_dict.get("race_num"),
-                  code=result_dict.get("code"),
-              )
+def on_starting(server):
+server.log.info(“DemonPulse: gunicorn starting”)
 
-      # CRITICAL: trigger prediction evaluation for learning
-      if race_uid:
-          try:
-              from ai.learning_store import evaluate_prediction
-              from database import get_result
-              stored = get_result(race_uid)
-              if stored:
-                  eval_result = evaluate_prediction(race_uid, stored)
-                  eval_count = eval_result.get("evaluated", 0)
-                  if eval_count > 0:
-                      log.info(
-                          f"data_engine: evaluated {eval_count} predictions "
-                          f"for {race_uid}"
-                      )
-          except Exception as _eval_err:
-              log.warning(
-                  f"data_engine: _write_result evaluation failed "
-                  f"for {race_uid}: {_eval_err}"
-              )
+Then update Procfile to use the config:
+web: gunicorn app:app –bind 0.0.0.0:$PORT –workers 1 –timeout 120 –preload –config gunicorn.conf.py
 
-  except Exception as e:
-      log.error(f"data_engine: _write_result failed: {e}")
-```
+═══════════════════════════════════════════════════════════════
+FIX 1C — Add scheduler health check to /api/system/status
+═══════════════════════════════════════════════════════════════
+FILE: app.py — in the /api/system/status endpoint
 
-def *update_race_status_fallback(
-date: str, track: str, race_num: int, code: str
-) -> None:
-“”“Fallback status update when race_uid lookup hits 0 rows.”””
-if not all([date, track, race_num, code]):
-return
-from datetime import datetime, timezone
-from db import get_db, safe_query, T
-for tv in [track, track.lower(), track.lower().replace(” “, “-”),
-track.lower().replace(” “, “*”)]:
-result = safe_query(
-lambda: get_db()
-.table(T(“today_races”))
-.update({
-“status”: “final”,
-“updated_at”: datetime.now(timezone.utc).isoformat()
-})
-.eq(“date”, date)
-.eq(“race_num”, race_num)
-.eq(“code”, code)
-.ilike(“track”, tv)
-.execute()
-.data
-)
-if result:
-break
+After getting sched_status, add a self-healing check. If the
+scheduler thread is dead, restart it:
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 2 — prediction_snapshots MISSING COLUMNS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: migrations.py — COLUMN_MIGRATIONS list
+import scheduler as _sched_module
+sched_status = _sched_module.get_status()
 
-PROBLEM: prediction_snapshots has no race_date, track, race_num, code,
-or top_runner columns. The GET /api/predictions/today endpoint (Part 1
-Fix B2) queries by race_date and returns track/race_num — these will
-fail or return nulls without the columns.
+# Self-heal: restart scheduler if thread died
 
-Also needed: the predictor’s update() call that writes signal/decision/
-confidence/ev already exists in migrations (Phase 5) — confirm it was
-applied to Supabase by running migrations on startup.
-
-FIX — Add to migrations.py COLUMN_MIGRATIONS list (Phase 5 extension):
-
-# prediction_snapshots — race context columns for activity feed queries
-
-(“prediction_snapshots”,      “race_date”,   “DATE”,    “”),
-(“prediction_snapshots”,      “track”,       “TEXT”,    “DEFAULT ‘’”),
-(“prediction_snapshots”,      “race_num”,    “INTEGER”, “”),
-(“prediction_snapshots”,      “code”,        “TEXT”,    “DEFAULT ‘’”),
-(“prediction_snapshots”,      “top_runner”,  “TEXT”,    “”),
-(“test_prediction_snapshots”, “race_date”,   “DATE”,    “”),
-(“test_prediction_snapshots”, “track”,       “TEXT”,    “DEFAULT ‘’”),
-(“test_prediction_snapshots”, “race_num”,    “INTEGER”, “”),
-(“test_prediction_snapshots”, “code”,        “TEXT”,    “DEFAULT ‘’”),
-(“test_prediction_snapshots”, “top_runner”,  “TEXT”,    “”),
-
-FILE: ai/learning_store.py — save_prediction_snapshot()
-
-FIX — Add the new columns to snap_row:
-
-# In the snap_row dict, add:
-
-“race_date”:  prediction.get(“race_date”) or (race_uid.split(”_”)[0] if race_uid else None),
-“track”:      prediction.get(“track”) or “”,
-“race_num”:   prediction.get(“race_num”),
-“code”:       prediction.get(“code”) or “”,
-“top_runner”: prediction.get(“top_runner_name”) or “”,
-
-FILE: ai/predictor.py — predict_from_snapshot()
-
-FIX — Add race context to result dict before calling save_prediction_snapshot:
-
-# After race_uid = race.get(“race_uid”) or “”, add:
-
-result[“race_date”] = race.get(“date”) or “”
-result[“track”]     = race.get(“track”) or “”
-result[“race_num”]  = race.get(“race_num”)
-result[“code”]      = race.get(“code”) or “”
-
-# After scored = _baseline_score(features), add top_runner_name:
-
-top_runner_name = scored[0].get(“runner_name”) if scored else “”
-result[“top_runner_name”] = top_runner_name
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 3 — BACKTEST BLOCKED BY @require_role(“admin”)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PROBLEM: backtesting.js calls POST /api/admin/backtest using the api()
-helper. The api() helper reads dp_token from localStorage. However, the
-login sets dp_token as an httponly cookie — meaning JavaScript CANNOT
-read it from document.cookie and it is NEVER in localStorage unless the
-user explicitly went through the static/index.html login and the response
-also included token in JSON body.
-
-The login endpoint DOES return {“token”: token} in JSON AND sets the
-httponly cookie. So: if the user logged in via static/index.html, they
-have it in localStorage. If they navigated directly to /backtesting they
-do NOT have it.
-
-TWO-PART FIX:
-
-PART A — Add a dedicated backtest route to prediction_routes.py (no auth required,
-since predictions are not admin operations):
-
-FILE: api/prediction_routes.py — add new route:
-
-@prediction_bp.route(”/backtest-run”, methods=[“POST”])
-def run_backtest_ui():
-“””
-UI-accessible backtest runner — no admin role required.
-Delegates to backtest_engine with UI-friendly response shape.
-“””
+if not sched_status.get(“thread_alive”):
 try:
-from datetime import date as date_type
-from ai.backtest_engine import backtest_date_range
-data = request.get_json(silent=True) or {}
-today = date_type.today().isoformat()
+_sched_module.start_scheduler()
+log.warning(”/api/system/status: restarted dead scheduler thread”)
+except Exception as _se:
+log.error(f”/api/system/status: scheduler restart failed: {_se}”)
 
-```
-      date_from = data.get("date_from") or data.get("date")
-      date_to   = data.get("date_to")   or data.get("date")
+Also add a dedicated scheduler watchdog endpoint that Render can
+ping (use Render’s health check or a cron):
 
-      if not date_from or not date_to:
-          return jsonify({"ok": False, "error": "date_from and date_to required"}), 400
-      if date_from > today or date_to > today:
-          return jsonify({"ok": False,
-              "error": "Cannot backtest future dates — no result leakage"}), 400
-
-      code_filter  = data.get("code_filter")
-      batch_size   = int(data.get("batch_size") or 50)
-
-      result = backtest_date_range(
-          date_from=date_from,
-          date_to=date_to,
-          code_filter=code_filter if code_filter and code_filter != "ALL" else None,
-      )
-
-      return _shape_backtest_response(result, date_from, date_to,
-                                      code_filter or "ALL", batch_size)
-  except Exception as e:
-      log.error(f"POST /api/predictions/backtest-run failed: {e}")
-      return jsonify({"ok": False, "error": "Backtest failed"}), 500
-```
-
-PART B — Update backtesting.js to use the new endpoint:
-
-FILE: static/js/backtesting.js — in runBacktest(), change:
-const data = await api(”/api/admin/backtest”, {
-TO:
-const data = await api(”/api/predictions/backtest-run”, {
+@app.route(”/api/scheduler/watchdog”, methods=[“POST”, “GET”])
+def scheduler_watchdog():
+“”“Ensure scheduler is running. Safe to call repeatedly.”””
+try:
+import scheduler as _s
+status = _s.get_status()
+was_alive = status.get(“thread_alive”, False)
+if not was_alive:
+_s.start_scheduler()
+return jsonify({“ok”: True, “action”: “restarted”, “was_alive”: False})
+return jsonify({“ok”: True, “action”: “none”, “was_alive”: True})
+except Exception as e:
+log.error(f”/api/scheduler/watchdog failed: {e}”)
+return jsonify({“ok”: False, “error”: str(e)}), 500
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 4 — BACKTEST RESPONSE SHAPE MISMATCH
+ROOT CAUSE 2 — _parse_result() READS WRONG FIELD NAMES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PROBLEM: backtesting.js reads:
-data.summary.samples       → engine returns: data.total_races
-data.summary.hit_rate      → engine returns: data.hit_rate (as decimal 0.33, not “33%”)
-data.summary.roi           → engine returns: nothing
-data.summary.correct       → engine returns: data.winner_hit_count
-data.summary.wrong         → engine returns: total_races - winner_hit_count
-data.summary.profit        → engine returns: nothing
-data.summary.avg_confidence→ engine returns: nothing
-data.summary.verdict       → engine returns: nothing
-data.summary.summary_text  → engine returns: nothing
-data.rows                  → engine returns: nothing (items saved to DB only)
-data.errors                → engine returns: nothing
 
-FILE: api/prediction_routes.py — add _shape_backtest_response() helper:
+PROOF: The OddsPro API doc shows the /results endpoint returns:
+{
+“raceId”: 123456,
+“raceNumber”: 7,
+“startTime”: “2025-01-08T03:00:00Z”,
+“meeting”: {“track”: “Flemington”, “type”: “T”},
+“results”: [
+{“position”: 1, “runnerNumber”: 4, “runnerName”: “Winner”}
+],
+“rawResults”: [[4], [7], [2]]
+}
 
-def _shape_backtest_response(
-result: dict, date_from: str, date_to: str,
-code_filter: str, batch_size: int
-) -> “Response”:
-“”“Shape backtest_engine output into the format backtesting.js expects.”””
-from flask import jsonify
+But _parse_result() reads:
+item.get(“track”)       → None  (nested in meeting.track)
+item.get(“winner”)      → None  (nested in results[0].runnerName)
+item.get(“winnerName”)  → None  (doesn’t exist)
+item.get(“winPrice”)    → None  (doesn’t exist in response)
+item.get(“date”)        → None  (it’s in startTime as ISO string)
+item.get(“type”)        → None  (nested in meeting.type)
+
+Result: every parsed result has winner=”” and track=”” — so
+race_uid is wrong, status never updates to “final”, and the
+UI shows “Result not yet available” forever.
+
+═══════════════════════════════════════════════════════════════
+FIX 2 — Rewrite _parse_result() to read actual API field names
+═══════════════════════════════════════════════════════════════
+FILE: connectors/oddspro_connector.py
+
+FIND the _parse_result method (around line 1787):
+def _parse_result(self, item: dict) -> RaceResult | None:
+
+REPLACE THE ENTIRE METHOD with:
+
+def _parse_result(self, item: dict) -> RaceResult | None:
+“””
+Parse a result item from either:
+- GET /api/external/results  (day-level sweep)
+- GET /api/races/:id/results (single-race confirmation)
 
 ```
-  if not result.get("ok"):
-      return jsonify(result), 400
-
-  total    = result.get("total_races") or 0
-  hits     = result.get("winner_hit_count") or 0
-  wrong    = total - hits
-  hit_rate = result.get("hit_rate") or 0.0
-  avg_odds = result.get("avg_winner_odds") or 0.0
-
-  # ROI: (avg_winner_odds * hit_rate) - 1, expressed as percentage
-  roi_float = round((avg_odds * hit_rate) - 1.0, 4) if avg_odds and hit_rate else 0.0
-  roi_str   = f"{roi_float * 100:+.1f}%"
-
-  # Profit: simulating $1 flat stake per race
-  profit = round(hits * (avg_odds - 1) - wrong * 1.0, 2) if avg_odds else 0.0
-
-  # Verdict
-  if total == 0:
-      verdict = "NO_DATA"
-  elif roi_float > 0.10:
-      verdict = "APPROVE"
-  elif roi_float > 0:
-      verdict = "BETTER"
-  elif roi_float > -0.05:
-      verdict = "CAUTION"
-  else:
-      verdict = "PASS"
-
-  # Summary text
-  if total == 0:
-      summary_text = "No races found in the selected date range."
-  else:
-      summary_text = (
-          f"Tested {total} races from {date_from} to {date_to}. "
-          f"Model selected the winner {hits} times ({hit_rate*100:.1f}% hit rate). "
-          f"Simulated ROI: {roi_str} at flat $1 stake."
-      )
-
-  # Fetch rows from backtest_run_items for this run
-  rows = []
+  API response shapes (from OddsPro documentation):
+    Day-level:   item has raceId, raceNumber, startTime,
+                 meeting.track, meeting.type,
+                 results[{position, runnerNumber, runnerName}]
+    Single-race: same shape, not nested in a data array
+  """
+  # ---- Race number ----
+  race_num_raw = (item.get("raceNumber") or item.get("race_number")
+                  or item.get("number"))
   try:
-      from db import get_db, safe_query, T
-      run_id = result.get("run_id") or ""
-      if run_id:
-          raw_rows = safe_query(
-              lambda: get_db()
-              .table(T("backtest_run_items"))
-              .select("race_uid,race_date,track,code,predicted_winner,"
-                      "actual_winner,winner_hit,winner_odds,score,model_version")
-              .eq("run_id", run_id)
-              .order("race_date")
-              .limit(batch_size)
-              .execute()
-              .data,
-              []
-          ) or []
+      race_num = int(race_num_raw)
+  except (TypeError, ValueError):
+      return None
 
-          rows = [
-              {
-                  "date":       r.get("race_date") or "",
-                  "race":       f"{(r.get('track') or '').replace('-', ' ').title()} {r.get('code', '')}",
-                  "selection":  r.get("predicted_winner") or "—",
-                  "actual":     r.get("actual_winner") or "—",
-                  "decision":   "WIN" if r.get("winner_hit") else "LOSS",
-                  "confidence": f"{float(r.get('score') or 0):.2f}",
-                  "pl":         f"+${float(r.get('winner_odds') or 0) - 1:.2f}"
-                                if r.get("winner_hit") else "-$1.00",
-              }
-              for r in raw_rows
-          ]
-  except Exception as _re:
-      log.warning(f"backtest rows fetch failed: {_re}")
+  # ---- Race ID ----
+  race_id = str(item.get("raceId") or item.get("id") or "")
 
-  # Error pattern analysis
-  errors = []
-  if rows:
-      loss_rows = [r for r in rows if r["decision"] == "LOSS"]
-      if len(loss_rows) > 3:
-          errors.append({
-              "tag": "LOSS_STREAK",
-              "count": len(loss_rows),
-          })
+  # ---- Date: from startTime ISO string or date field ----
+  race_date = ""
+  start_time = item.get("startTime") or item.get("start_time") or ""
+  if start_time:
+      # "2025-01-08T03:00:00Z" → "2025-01-08"
+      race_date = str(start_time)[:10]
+  if not race_date:
+      race_date = str(item.get("date") or "")
 
-  summary = {
-      "samples":        total,
-      "correct":        hits,
-      "wrong":          wrong,
-      "hit_rate":       f"{hit_rate*100:.1f}%",
-      "roi":            roi_str,
-      "profit":         f"${profit:+.2f}",
-      "avg_confidence": "—",
-      "verdict":        verdict,
-      "summary_text":   summary_text,
-      "model_version":  result.get("model_version") or "baseline_v1",
-      "run_id":         result.get("run_id") or "",
-      "date_from":      date_from,
-      "date_to":        date_to,
-      "code_filter":    code_filter,
-  }
+  # ---- Track: from meeting.track or top-level ----
+  meeting = item.get("meeting") or {}
+  track_raw = (meeting.get("track") or meeting.get("venue")
+               or item.get("track") or item.get("venue") or "")
+  track = self._clean_track(track_raw)
 
-  return jsonify({
-      "ok":     True,
-      "summary": summary,
-      "rows":    rows,
-      "errors":  errors,
-      "model_comparison": result.get("model_comparison"),
-  })
+  # ---- Code: from meeting.type or top-level ----
+  code_raw = (meeting.get("type") or meeting.get("code")
+              or item.get("type") or item.get("code") or "HORSE")
+  code = self._normalise_code(code_raw)
+
+  # ---- Build race_uid ----
+  if not race_date or not track or not race_num:
+      return None
+  race_uid = self._make_race_uid(race_date, code, track, race_num)
+
+  # ---- Winner: from results array position 1 ----
+  results_list = item.get("results") or []
+  raw_results  = item.get("rawResults") or []
+
+  winner_name   = ""
+  winner_number = None
+  place_2       = ""
+  place_3       = ""
+
+  if results_list:
+      # Structured results array: [{position, runnerNumber, runnerName}]
+      sorted_results = sorted(
+          results_list,
+          key=lambda r: r.get("position") or 99
+      )
+      if len(sorted_results) >= 1:
+          r1 = sorted_results[0]
+          winner_name   = str(r1.get("runnerName") or r1.get("runner_name") or "")
+          winner_number = r1.get("runnerNumber") or r1.get("runner_number")
+      if len(sorted_results) >= 2:
+          r2 = sorted_results[1]
+          place_2 = str(r2.get("runnerName") or r2.get("runner_name") or "")
+      if len(sorted_results) >= 3:
+          r3 = sorted_results[2]
+          place_3 = str(r3.get("runnerName") or r3.get("runner_name") or "")
+
+  elif raw_results:
+      # Fallback: rawResults = [[winnerNumber], [2nd], [3rd]]
+      if len(raw_results) >= 1 and raw_results[0]:
+          winner_number = raw_results[0][0]
+      if len(raw_results) >= 2 and raw_results[1]:
+          place_2 = str(raw_results[1][0])
+      if len(raw_results) >= 3 and raw_results[2]:
+          place_3 = str(raw_results[2][0])
+
+  # Fallback: legacy flat fields (keep for any old API paths)
+  if not winner_name:
+      winner_name = str(item.get("winner") or item.get("winnerName") or "")
+  if not winner_number:
+      winner_number = item.get("winnerNumber")
+  if not place_2:
+      place_2 = str(item.get("place2") or item.get("second") or "")
+  if not place_3:
+      place_3 = str(item.get("place3") or item.get("third") or "")
+
+  # ---- Win price: not in OddsPro results, keep None ----
+  win_price_raw = item.get("winPrice") or item.get("win_price")
+  try:
+      win_price = float(win_price_raw) if win_price_raw is not None else None
+  except (TypeError, ValueError):
+      win_price = None
+
+  # ---- Margin / winning time ----
+  margin_raw = item.get("margin")
+  try:
+      margin = float(margin_raw) if margin_raw is not None else None
+  except (TypeError, ValueError):
+      margin = None
+
+  time_raw = item.get("winningTime") or item.get("winning_time")
+  try:
+      winning_time = float(time_raw) if time_raw is not None else None
+  except (TypeError, ValueError):
+      winning_time = None
+
+  return RaceResult(
+      race_uid=race_uid,
+      oddspro_race_id=race_id,
+      date=race_date,
+      track=track,
+      race_num=race_num,
+      code=code,
+      winner=winner_name,
+      winner_number=winner_number,
+      win_price=win_price,
+      place_2=place_2,
+      place_3=place_3,
+      margin=margin,
+      winning_time=winning_time,
+      source=self.source_name,
+  )
 ```
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 5 — GET /api/predictions/today MISSING
+FIX 3 — Board caching for completed races
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: api/prediction_routes.py
+FILE: board_builder.py
 
-PROBLEM: learning.js calls GET /api/predictions/today for the activity
-feed. Only POST exists (triggers new predictions). Without this endpoint
-the feed always shows “No predictions yet today.”
+PROBLEM: Every call to get_board_for_today() hits Supabase for all
+races. For resulted races that won’t change, this is wasted queries.
+Add a short TTL cache using the existing cache.py infrastructure.
 
-FIX — Add GET route after the existing POST /today route:
+FIND get_board_for_today() function. ADD caching at the top:
 
-@prediction_bp.route(”/today”, methods=[“GET”])
-def get_today_predictions():
-“”“Return stored predictions for today with result outcomes.”””
-try:
+def get_board_for_today(…):
+from cache import cache_get, cache_set
 from datetime import date
-from db import get_db, safe_query, T
-today = date.today().isoformat()
 
 ```
-      # Prediction snapshots for today
-      snaps = safe_query(
-          lambda: get_db()
-          .table(T("prediction_snapshots"))
-          .select(
-              "race_uid,race_date,track,race_num,code,"
-              "signal,decision,confidence,ev,model_version,"
-              "top_runner,created_at"
-          )
-          .eq("race_date", today)
-          .order("created_at", desc=True)
-          .limit(60)
-          .execute()
-          .data,
-          []
-      ) or []
+  CACHE_KEY = f"board:{date.today().isoformat()}"
+  CACHE_TTL  = 20  # seconds — short enough for live feel
 
-      # Today's results for WIN/LOSS outcome
-      results = safe_query(
-          lambda: get_db()
-          .table(T("results_log"))
-          .select("race_uid,winner,win_price")
-          .eq("date", today)
-          .execute()
-          .data,
-          []
-      ) or []
-      result_map = {r["race_uid"]: r for r in results if r.get("race_uid")}
+  cached = cache_get(CACHE_KEY)
+  if cached is not None:
+      return cached
 
-      predictions = []
-      for snap in snaps:
-          race_uid = snap.get("race_uid") or ""
-          res_row  = result_map.get(race_uid)
-          signal   = snap.get("signal") or "—"
-          decision = snap.get("decision") or "—"
+  # ... existing function body ...
 
-          if res_row:
-              top = snap.get("top_runner") or ""
-              winner = res_row.get("winner") or ""
-              outcome = "WIN" if (top and winner and
-                  top.strip().upper() == winner.strip().upper()) else "LOSS"
-          else:
-              outcome = "PENDING"
-
-          track_display = (snap.get("track") or "").replace("-", " ").title()
-          predictions.append({
-              "race_uid":   race_uid,
-              "track":      track_display,
-              "race_num":   snap.get("race_num"),
-              "signal":     signal,
-              "decision":   decision,
-              "confidence": snap.get("confidence"),
-              "ev":         snap.get("ev"),
-              "selection":  snap.get("top_runner") or "—",
-              "result":     outcome,
-              "winner":     res_row.get("winner") if res_row else None,
-          })
-
-      return jsonify({
-          "ok":          True,
-          "predictions": predictions,
-          "count":       len(predictions),
-          "date":        today,
-      })
-  except Exception as e:
-      log.error(f"GET /api/predictions/today failed: {e}")
-      return jsonify({"ok": False, "predictions": [], "error": str(e)}), 500
+  # At the end, before returning result, cache it:
+  cache_set(CACHE_KEY, result, ttl=CACHE_TTL)
+  return result
 ```
 
+FILE: app.py — invalidate cache after result writes
+
+After _write_result() succeeds, invalidate the board cache so the
+next board fetch immediately reflects the new status:
+
+In _write_result(), after update_race_status:
+try:
+from cache import cache_clear
+from datetime import date
+cache_clear(f”board:{date.today().isoformat()}”)
+except Exception:
+pass
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 6 — BACKTEST ROI/PROFIT IN ENGINE OUTPUT
+FIX 4 — Live race view: show runners for jumped races
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: ai/backtest_engine.py — backtest_date_range()
+FILE: static/js/live.js
 
-The engine saves run_items to DB but never includes them in the return
-dict. Fix C1 from Part 1 (breakdown fields) also applies here.
-Add ROI, profit, and breakdowns directly to the summary return:
+PROBLEM (Image 2): Clicking a jumped/awaiting race shows “No race
+loaded” because loadAndRenderResult() throws (data.ok is false —
+race jumped but no result yet), the catch block fires, but
+liveRunners is empty too because the race view didn’t get runner
+data back from the API.
 
-# After the existing summary dict is built, add:
+The real issue: when a race has status “awaiting_result” or
+“jumped_estimated”, the API DOES return runners — but the form
+guide should still show them so the user can see who ran.
 
-roi_float = round(
-(avg_winner_odds * hit_rate) - 1.0, 4
-) if avg_winner_odds and hit_rate else 0.0
-
-profit = round(
-winner_hits * (avg_winner_odds - 1) - (races_tested - winner_hits),
-2
-) if avg_winner_odds else 0.0
-
-summary[“roi”]             = roi_float
-summary[“roi_pct”]         = f”{roi_float * 100:+.1f}%”
-summary[“profit”]          = profit
-summary[“profit_str”]      = f”${profit:+.2f}”
-summary[“races_tested”]    = races_tested
-
-# Breakdowns by code
-
-from collections import defaultdict
-code_groups = defaultdict(lambda: {“hits”: 0, “total”: 0, “odds_sum”: 0, “odds_count”: 0})
-signal_groups = defaultdict(lambda: {“hits”: 0, “total”: 0})
-
-for item in run_items:
-code = (item.get(“code”) or “UNKNOWN”).upper()
-code_groups[code][“total”] += 1
-if item.get(“winner_hit”):
-code_groups[code][“hits”] += 1
-odds = item.get(“winner_odds”) or 0
-if odds:
-code_groups[code][“odds_sum”] += float(odds)
-code_groups[code][“odds_count”] += 1
-
-breakdown_by_code = {}
-for code, g in code_groups.items():
-t = g[“total”]
-h = g[“hits”]
-avg_o = g[“odds_sum”] / g[“odds_count”] if g[“odds_count”] else 0
-roi_c = round((avg_o * h / t) - 1.0, 4) if t and avg_o else 0.0
-breakdown_by_code[code] = {
-“samples”:  t,
-“correct”:  h,
-“win_rate”: f”{h/t*100:.1f}%” if t else “0%”,
-“roi”:      f”{roi_c*100:+.1f}%”,
+FIND this block in loadLiveRace():
+} else if ([“jumped_estimated”,“awaiting_result”].includes(status) ||
+(getSecondsNow(liveRace) !== null && getSecondsNow(liveRace) < JUMPED_THRESHOLD_SECONDS)) {
+// Race has jumped — try to load result, fall back to form guide if unavailable
+try {
+await loadAndRenderResult(raceUid);
+} catch (_) {
+if (liveRunners.length) buildRunnerCards(liveRunners, liveAnalysis);
 }
 
-summary[“breakdown_by_code”] = breakdown_by_code
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 7 — LEARNING STATUS: total_predictions ALWAYS ZERO
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: app.py — api_ai_learning_status()
-
-PROBLEM: The endpoint queries prediction_snapshots with
-.eq(“race_date”, today) but race_date column does not exist yet
-(Fix 2 adds it). Until the migration runs and predictions are
-re-stored, this query returns 0 rows.
-
-INTERIM FIX — also query by created_at as fallback:
-
-# Replace the snap_rows query with:
-
-try:
-snap_rows = safe_query(
-lambda: get_db()
-.table(T(“prediction_snapshots”))
-.select(“model_version,race_uid”)
-.gte(“created_at”, today + “T00:00:00Z”)
-.lte(“created_at”, today + “T23:59:59Z”)
-.execute()
-.data,
-[]
-) or []
-except Exception:
-snap_rows = []
-
-total_predictions = len(snap_rows)
-if snap_rows:
-# Get model version from most recent
-try:
-latest = safe_query(
-lambda: get_db()
-.table(T(“prediction_snapshots”))
-.select(“model_version”)
-.gte(“created_at”, today + “T00:00:00Z”)
-.order(“created_at”, desc=True)
-.limit(1)
-.execute()
-.data,
-[]
-) or []
-model_version = (latest[0].get(“model_version”) or “baseline_v1”) if latest else “baseline_v1”
-except Exception:
-model_version = “baseline_v1”
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 8 — LEARNING PERFORMANCE: bankroll_history ALWAYS EMPTY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: ai/learning_store.py — get_performance_summary()
-
-PROBLEM: The performance chart in learning.js reads data.bankroll_history
-but get_performance_summary() never returns it. Even after Fix 1 starts
-populating learning_evaluations, the chart will show nothing.
-
-FIX — Add bankroll history to return dict:
-
-# After computing winner_hits / total etc, add:
-
-# Build bankroll history (simulated $100 bank, $1 flat stake)
-
-bankroll = 100.0
-bankroll_history = []
-for row in reversed(rows):   # oldest → newest
-if row.get(“winner_hit”):
-odds = float(row.get(“winner_odds”) or 2.0)
-bankroll = round(bankroll + (odds - 1.0), 2)
-else:
-bankroll = round(bankroll - 1.0, 2)
-bankroll_history.append(bankroll)
-
-roi_pct = round((bankroll - 100.0), 2)   # profit on $100
-
-# Add to return dict:
-
-return {
-“ok”:               True,
-“model_version”:    model_version or “all”,
-“total_evaluated”:  total,
-“winner_hit_count”: winner_hits,
-“top2_hit_count”:   top2_hits,
-“top3_hit_count”:   top3_hits,
-“winner_hit_rate”:  round(winner_hits / total, 4) if total else 0.0,
-“top2_hit_rate”:    round(top2_hits  / total, 4) if total else 0.0,
-“top3_hit_rate”:    round(top3_hits  / total, 4) if total else 0.0,
-“avg_winner_odds”:  avg_winner_odds,
-“bankroll_history”: bankroll_history,
-“starting_bank”:    100.0,
-“current_bank”:     round(bankroll, 2),
-“total_profit”:     roi_pct,
-“roi_pct”:          roi_pct,
-“roi”:              roi_pct,
-“win_rate”:         round(winner_hits / total * 100, 1) if total else 0,
+REPLACE WITH:
+} else if ([“jumped_estimated”,“awaiting_result”].includes(status) ||
+(getSecondsNow(liveRace) !== null && getSecondsNow(liveRace) < JUMPED_THRESHOLD_SECONDS)) {
+// Race has jumped — show result if available, otherwise show runners + awaiting message
+try {
+await loadAndRenderResult(raceUid);
+} catch (*) {}
+// Always also show runners below the result/awaiting panel
+if (liveRunners.length) {
+try { buildRunnerCards(liveRunners, liveAnalysis); } catch (*) {}
+} else {
+// No runners and no result yet — show awaiting message
+const container = q(“formGuideRows”);
+if (container && container.innerHTML.trim() === “”) {
+container.innerHTML = ` <div style="padding:32px;text-align:center;"> <div style="color:var(--amber);font-size:0.85rem; letter-spacing:.06em;margin-bottom:8px;"> AWAITING OFFICIAL RESULT </div> <div style="color:var(--text-dim);font-size:0.75rem;"> Results post within 2–3 minutes of jump time. </div> </div>`;
+}
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 9 — SCHEDULER: add daily evaluate_all sweep
+FIX 5 — Add result logging so issues are visible in future
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: scheduler.py
+FILE: data_engine.py — check_results()
 
-PROBLEM: Even with Fix 1, only newly written results trigger evaluation.
-All historical results from previous days that have no evaluation record
-(because evaluate_prediction was never called before) will never get
-evaluated — the learning system starts from zero.
+Add logging so you can see exactly what OddsPro returns:
 
-FIX — Add a once-daily backfill job that evaluates any prediction that
-has a result but no learning_evaluation row:
+FIND inside check_results():
+results = conn.fetch_results(today, location=“domestic”)
 
-# Add constant:
+ADD AFTER:
+log.info(
+f”check_results: OddsPro returned {len(results)} raw results “
+f”for {today}. “
+f”First result sample: {vars(results[0]) if results else ‘NONE’}”
+)
 
-EVAL_BACKFILL_INTERVAL = 3600  # once per hour, backfills missed evaluations
+Also log the confirmation step:
+FIND:
+confirmed = conn.fetch_race_result(result.oddspro_race_id)
+if confirmed:
+_write_result(confirmed)
+written += 1
 
-# Add function:
+REPLACE WITH:
+confirmed = conn.fetch_race_result(result.oddspro_race_id)
+if confirmed:
+log.info(
+f”check_results: confirmed {confirmed.race_uid} “
+f”winner=’{confirmed.winner}’ “
+f”track=’{confirmed.track}’ “
+f”date=’{confirmed.date}’”
+)
+_write_result(confirmed)
+written += 1
 
-def _run_evaluation_backfill():
-“”“Evaluate any predictions that have results but no evaluation record.”””
-try:
-from db import get_db, safe_query, T
-from ai.learning_store import evaluate_prediction
-from database import get_result
+FILE: connectors/oddspro_connector.py — _parse_result()
 
-```
-      # Find prediction_snapshots with a result but no evaluation
-      snaps = safe_query(
-          lambda: get_db()
-          .table(T("prediction_snapshots"))
-          .select("race_uid")
-          .execute()
-          .data,
-          []
-      ) or []
+Add a warning when result parses as empty:
 
-      evaluated = safe_query(
-          lambda: get_db()
-          .table(T("learning_evaluations"))
-          .select("race_uid")
-          .execute()
-          .data,
-          []
-      ) or []
-
-      evaluated_uids = {r["race_uid"] for r in evaluated if r.get("race_uid")}
-      snap_uids = {r["race_uid"] for r in snaps if r.get("race_uid")}
-      pending = snap_uids - evaluated_uids
-
-      backfilled = 0
-      for race_uid in list(pending)[:50]:   # cap at 50 per run
-          stored = get_result(race_uid)
-          if stored and stored.get("winner"):
-              try:
-                  evaluate_prediction(race_uid, stored)
-                  backfilled += 1
-              except Exception:
-                  pass
-
-      if backfilled:
-          log.info(f"scheduler: backfilled {backfilled} evaluations")
-
-  except Exception as e:
-      log.warning(f"evaluation_backfill failed: {e}")
-```
-
-# In the main scheduler loop, add:
-
-last_eval_backfill = 0
-
-# … inside the while True loop:
-
-if now - last_eval_backfill >= EVAL_BACKFILL_INTERVAL:
-_run_evaluation_backfill()
-last_eval_backfill = now
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 10 — BACKTESTING.JS: btBatchSize NOT PASSED CORRECTLY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: static/js/backtesting.js — runBacktest()
-
-PROBLEM: The request body sends batch_size but the field is named
-batchSize in the existing code. Also the model comparison toggle
-is missing from the UI entirely.
-
-FIX — Update the request body in runBacktest():
-
-body: JSON.stringify({
-date_from:    from,
-date_to:      to,
-code_filter:  code !== “ALL” ? code : null,
-batch_size:   batchSize,
-compare_models: false,    // add toggle later
-})
-
-FIX — Update btHitRate display (engine now returns “33.1%” string):
-// The summary.hit_rate is now a formatted string like “33.1%”
-// Remove any extra “%” formatting:
-setText(“btHitRate”, summary.hit_rate || “0%”);
-setText(“btROI”,     summary.roi      || “0%”);
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FIX 11 — SQL SCHEMA: ADD MISSING COLUMNS TO prediction_snapshots
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FILE: sql/001_canonical_schema.sql
-
-Add the ALTER statements alongside the existing Phase 5 columns:
-
-– prediction_snapshots Phase 5 extension — race context
-ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS race_date  DATE;
-ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS track      TEXT DEFAULT ‘’;
-ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS race_num   INTEGER;
-ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS code       TEXT DEFAULT ‘’;
-ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS top_runner TEXT;
-
-ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS race_date  DATE;
-ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS track      TEXT DEFAULT ‘’;
-ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS race_num   INTEGER;
-ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS code       TEXT DEFAULT ‘’;
-ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS top_runner TEXT;
+At the end of the new _parse_result(), before return:
+if not winner_name:
+log.warning(
+f”OddsPro _parse_result: no winner found for race_uid={race_uid} “
+f”item_keys={list(item.keys())} “
+f”results_count={len(results_list)}”
+)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FILES MODIFIED SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-data_engine.py                  — Fix 1 (evaluate_prediction in _write_result,
-_update_race_status_fallback)
-migrations.py                   — Fix 2 (add race_date/track/race_num/code/
-top_runner to prediction_snapshots)
-ai/learning_store.py            — Fix 2 (snap_row new fields), Fix 8 (bankroll_history)
-ai/predictor.py                 — Fix 2 (race context in result dict)
-ai/backtest_engine.py           — Fix 6 (ROI/profit/breakdowns in return dict)
-api/prediction_routes.py        — Fix 3 (new /backtest-run endpoint),
-Fix 4 (_shape_backtest_response helper),
-Fix 5 (GET /today endpoint)
-app.py                          — Fix 7 (learning status uses created_at fallback)
-scheduler.py                    — Fix 9 (evaluation backfill job)
-sql/001_canonical_schema.sql    — Fix 11 (ALTER TABLE statements)
-static/js/backtesting.js        — Fix 3 (new endpoint URL),
-Fix 10 (batch_size field, hit_rate display)
+Procfile                          — Fix 1A (add –preload)
+render.yaml                       — Fix 1A (add –preload to startCommand)
+gunicorn.conf.py   [NEW FILE]     — Fix 1B (post_fork scheduler restart)
+app.py                            — Fix 1C (watchdog endpoint + self-heal),
+Fix 3 (cache invalidation in _write_result)
+connectors/oddspro_connector.py   — Fix 2 (rewrite _parse_result)
+board_builder.py                  — Fix 3 (board cache TTL 20s)
+static/js/live.js                 — Fix 4 (jumped race shows runners)
+data_engine.py                    — Fix 5 (result logging)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-VERIFICATION CHECKLIST
+DEPLOY VERIFICATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-After ALL fixes (Parts 1, 2, and this file):
+After deploying to Render, check the logs within 5 minutes.
+You should now see these lines that were MISSING before:
 
-1. python smoke_test.py — zero errors
-1. Evaluation pipeline:
-   → After a race result is written, Supabase learning_evaluations table
-   gains a new row for that race_uid
-   → GET /api/predictions/performance returns total_evaluated > 0
-   after at least one result has been written
-1. Learning tab Activity Feed:
-   → GET /api/predictions/today returns predictions array
-   → Feed shows race names, signal types, PENDING/WIN/LOSS outcomes
-   → Paper Bets Today count matches number of snap rows for today
-1. Learning tab Performance:
-   → Win Rate shows a percentage (not “—”)
-   → ROI shows a value (positive or negative)
-   → Performance chart renders if total_evaluated > 0
-1. Backtest:
-   → Run Backtest button works WITHOUT needing to log in first
-   → POST /api/predictions/backtest-run returns 200 (not 401)
-   → Summary shows Samples, Hit Rate, ROI, Profit, Verdict
-   → Results table populates with rows from backtest_run_items
-   → Code breakdown shows GREYHOUND/HORSE/HARNESS split
-   → Export CSV button downloads a file
-1. Schema:
-   → prediction_snapshots has race_date, track, race_num, code, top_runner
-   → After next prediction run, these fields are populated
-   → GET /api/predictions/today can filter by race_date
-1. Scheduler:
-   → Evaluation backfill fires hourly
-   → Supabase learning_evaluations gains rows for any
-   race that has a result but no evaluation record
+Scheduler started (threaded, Phase 2 Live Engine)
+Broad refresh result: …
+check_results: OddsPro returned N raw results for YYYY-MM-DD
+check_results: confirmed 2026-XX-XX_GREYHOUND_track_N winner=’…’
+data_engine: evaluated N predictions for …
+
+If you see scheduler logs → Fix 1 worked.
+If you see check_results with confirmed winner → Fix 2 worked.
+If you still see “OddsPro returned 0 raw results” → the /results
+endpoint is returning nothing for this date. Check the date
+filter and OddsPro API key in Render env vars.
+
+CALL THIS ENDPOINT to force an immediate result sweep:
+POST https://demonpulse.onrender.com/api/admin/results
+(requires admin token in Authorization header)
+
+OR use the watchdog to confirm scheduler is alive:
+GET https://demonpulse.onrender.com/api/scheduler/watchdog
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRIORITY ORDER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Apply in this order — most critical first:
+
+1. Procfile + render.yaml  (–preload flag)        ← fixes EVERYTHING
+1. gunicorn.conf.py        (safety net)
+1. _parse_result() rewrite (fixes result parsing)
+1. Fix 1C watchdog endpoint
+1. Fix 3 board cache
+1. Fix 4 live.js jumped race view
+1. Fix 5 logging
+
+Fix 1 alone will make result checks, FormFav syncs, race state
+updates, and all scheduler jobs start working immediately.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 END OF PROMPT
