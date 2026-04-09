@@ -90,6 +90,10 @@ _TESTABLE_TABLES = {
     "results_log",
     # meetings — race meeting header rows; testable so TEST never touches live meetings
     "meetings",
+    # Phase 6 — connection stats, track bias, market snapshots
+    "runner_connection_stats",
+    "track_profiles",
+    "market_snapshots",
 }
 
 

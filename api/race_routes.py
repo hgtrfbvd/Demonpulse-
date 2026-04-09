@@ -155,8 +155,24 @@ def refresh_race(race_uid: str):
         return jsonify({"ok": False, "error": "Race refresh failed"}), 500
 
 
-@race_bp.route("/<race_uid>/blocked", methods=["GET"])
-def get_blocked_status(race_uid: str):
+@race_bp.route("/<race_uid>/note", methods=["POST"])
+def save_race_note(race_uid: str):
+    """Save a user note for a race."""
+    try:
+        from database import save_race_note as db_save_note, get_race
+        race = get_race(race_uid)
+        if not race:
+            return jsonify({"ok": False, "error": "Race not found"}), 404
+        body = request.get_json(silent=True) or {}
+        note = str(body.get("note", ""))
+        db_save_note(race_uid, note)
+        return jsonify({"ok": True, "race_uid": race_uid})
+    except Exception as e:
+        log.error(f"/api/races/{race_uid}/note failed: {e}")
+        return jsonify({"ok": False, "error": "Could not save note"}), 500
+
+
+@race_bp.route("/<race_uid>/blocked", methods=["GET"])def get_blocked_status(race_uid: str):
     """Check if a race is explicitly blocked."""
     try:
         from database import get_race
