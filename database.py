@@ -237,9 +237,9 @@ def mark_race_blocked(race_uid: str, block_code: str) -> None:
     log.info(f"database: race {race_uid} blocked [{block_code}]")
 
 
-def update_race_status(race_uid: str, status: str) -> None:
-    """Update the status of a race record."""
-    safe_query(
+def update_race_status(race_uid: str, status: str) -> int:
+    """Update the status of a race record. Returns number of rows updated."""
+    result = safe_query(
         lambda: get_db()
         .table(T("today_races"))
         .update({
@@ -248,7 +248,47 @@ def update_race_status(race_uid: str, status: str) -> None:
         })
         .eq("race_uid", race_uid)
         .execute()
+        .data
     )
+    return len(result) if result else 0
+
+
+def sync_result_statuses() -> int:
+    """
+    For any race in results_log today, ensure today_races.status = 'final'.
+    Repairs cases where _write_result wrote the result but the status
+    update failed silently due to race_uid mismatch.
+    Returns count of rows fixed.
+    """
+    today = date.today().isoformat()
+    results = safe_query(
+        lambda: get_db()
+        .table(T("results_log"))
+        .select("date, track, race_num, code, race_uid")
+        .eq("date", today)
+        .execute()
+        .data,
+        []
+    ) or []
+
+    fixed = 0
+    for res in results:
+        race_uid = res.get("race_uid") or ""
+        if race_uid:
+            rows = update_race_status(race_uid, "final")
+            if rows:
+                fixed += 1
+                continue
+        # Fallback by fields when race_uid lookup fails
+        from data_engine import _update_race_status_fallback
+        _update_race_status_fallback(
+            date=res.get("date"),
+            track=res.get("track"),
+            race_num=res.get("race_num"),
+            code=res.get("code"),
+        )
+        fixed += 1
+    return fixed
 
 
 # ---------------------------------------------------------------------------

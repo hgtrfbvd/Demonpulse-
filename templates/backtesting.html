@@ -79,6 +79,7 @@
             <div class="inline-actions">
                 <button class="dp-btn dp-btn-primary" id="runBacktestBtn">Run Backtest</button>
                 <button class="dp-btn" id="clearBacktestBtn">Clear</button>
+                <a href="/learning" class="dp-btn" style="text-decoration:none;">← AI Learning</a>
             </div>
         </div>
 
@@ -197,6 +198,32 @@
 
                 <div class="sim-guide-box" id="btRecommendationBox">
                     No recommendation yet.
+                </div>
+            </div>
+
+            <div class="card" id="btBreakdownSection" style="display:none;margin-bottom:12px;">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">BREAKDOWN</div>
+                        <h2 class="section-title">Performance by Category</h2>
+                    </div>
+                    <button class="dp-btn" id="exportBacktestBtn" style="font-size:0.8rem;">Export CSV</button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px;">
+                    <div>
+                        <div style="font-size:0.7rem;letter-spacing:.08em;color:var(--text-dim);
+                                    margin-bottom:8px;">BY RACE CODE</div>
+                        <div id="btCodeBreakdown">
+                            <div class="activity-empty">Run a backtest to see breakdown.</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;letter-spacing:.08em;color:var(--text-dim);
+                                    margin-bottom:8px;">BY SIGNAL TYPE</div>
+                        <div id="btSignalBreakdown">
+                            <div class="activity-empty">Run a backtest to see breakdown.</div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

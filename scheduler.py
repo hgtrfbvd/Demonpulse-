@@ -299,6 +299,12 @@ def _run_fast_result_check():
         if races:
             check_results()
             _set_status(last_fast_result_check_at=_utc_now())
+            # Repair any status mismatches from race_uid format differences
+            try:
+                from database import sync_result_statuses
+                sync_result_statuses()
+            except Exception as _se:
+                log.warning(f"sync_result_statuses failed: {_se}")
     except Exception as e:
         log.warning(f"fast_result_check failed: {e}")
 

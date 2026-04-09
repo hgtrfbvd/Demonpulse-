@@ -20,6 +20,8 @@
                 const target = document.getElementById(`learn-${tab.dataset.learnTab}`);
                 if (target) target.style.display = "block";
                 if (tab.dataset.learnTab === "performance") loadPerformanceChart();
+                if (tab.dataset.learnTab === "insights") loadInsights();
+                if (tab.dataset.learnTab === "patterns") loadPatterns();
             });
         });
     }
@@ -171,13 +173,136 @@
     // Boot
     // -------------------------------------------------------
 
+    async function loadInsights() {
+        try {
+            const data = await api("/api/predictions/performance");
+            const insightsList = q("learnInsightsList");
+            if (!insightsList) return;
+
+            const total   = data.total_evaluated || 0;
+            const winRate = data.win_rate || 0;
+            const roi     = data.roi_pct || data.roi || 0;
+            const avgOdds = data.avg_winner_odds;
+
+            if (total === 0) {
+                insightsList.innerHTML = `<div class="activity-empty">No evaluated races yet.<br>Predictions need results to generate insights.</div>`;
+                return;
+            }
+
+            const insights = [
+                { label: "Win Rate",        value: winRate.toFixed(1) + "%",                         ok: winRate > 25 },
+                { label: "ROI",             value: (roi >= 0 ? "+" : "") + roi.toFixed(1) + "%",     ok: roi >= 0 },
+                { label: "Avg Winner Odds", value: avgOdds ? "$" + avgOdds.toFixed(2) : "—",         ok: avgOdds > 2 },
+                { label: "Top-3 Hit Rate",  value: data.top3_hit_rate ? (data.top3_hit_rate * 100).toFixed(1) + "%" : "—", ok: true },
+                { label: "Evaluated Races", value: String(total),                                     ok: true },
+                { label: "Current Bank",    value: data.current_bank ? "$" + data.current_bank.toFixed(2) : "—", ok: (data.current_bank || 100) >= 100 },
+            ];
+
+            insightsList.innerHTML = insights.map(i => `
+                <div style="display:flex;justify-content:space-between;align-items:center;
+                            padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
+                    <span style="color:var(--text-dim);font-size:0.8rem;letter-spacing:.05em;">${i.label}</span>
+                    <span style="font-weight:700;color:${i.ok ? "var(--text)" : "var(--red-1)"};">${i.value}</span>
+                </div>
+            `).join("");
+
+            const sigEl = q("learnSignalBreakdown");
+            if (sigEl) {
+                if (data.signal_breakdown && Object.keys(data.signal_breakdown).length) {
+                    sigEl.innerHTML = Object.entries(data.signal_breakdown).map(([sig, stats]) => `
+                        <div style="display:flex;justify-content:space-between;padding:8px 0;
+                                    border-bottom:1px solid rgba(255,255,255,0.05);">
+                            <span class="analysis-signal signal-${sig.toLowerCase()}" style="font-size:0.75rem;">${sig}</span>
+                            <span style="font-size:0.8rem;color:var(--text-dim);">
+                                ${stats.win_rate || "—"} win • ${stats.count || 0} races
+                            </span>
+                        </div>
+                    `).join("");
+                } else {
+                    sigEl.innerHTML = `<div class="activity-empty">Signal breakdown available after 20+ evaluations per signal.</div>`;
+                }
+            }
+
+            setText("learnCurrentVersion", data.model_version || "baseline_v1");
+            setText("learnEvalCount", String(total));
+        } catch (_) {}
+    }
+
+    async function loadPatterns() {
+        const patEl = q("learnPatternsList");
+        if (!patEl) return;
+        try {
+            const data = await api("/api/predictions/performance");
+            const total = data.total_evaluated || 0;
+            if (total < 20) {
+                patEl.innerHTML = `<div class="activity-empty">Pattern analysis builds after 50+ evaluated races.<br>Currently at ${total} — keep the system running.</div>`;
+            } else {
+                const winRate = data.win_rate || 0;
+                const roi = data.roi || 0;
+                const patterns = [];
+                if (winRate < 20) patterns.push({ tag: "LOW_WIN_RATE", note: "Model is selecting winners less than 20% of the time" });
+                if (roi < -10)   patterns.push({ tag: "NEGATIVE_ROI",  note: "Consistent negative return — review confidence thresholds" });
+                if (winRate > 35 && roi < 0) patterns.push({ tag: "ODDS_TOO_SHORT", note: "High win rate but negative ROI — model favouring short-priced runners" });
+
+                if (patterns.length) {
+                    patEl.innerHTML = patterns.map(p => `
+                        <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
+                            <div style="font-size:0.75rem;font-weight:700;color:var(--amber);
+                                        letter-spacing:.08em;margin-bottom:4px;">${p.tag}</div>
+                            <div style="font-size:0.8rem;color:var(--text-dim);">${p.note}</div>
+                        </div>
+                    `).join("");
+                } else {
+                    patEl.innerHTML = `<div class="activity-empty" style="color:var(--green);">No repeated failure patterns detected. System performing within normal range.</div>`;
+                }
+            }
+        } catch (_) {
+            patEl.innerHTML = `<div class="activity-empty">Could not load pattern data.</div>`;
+        }
+    }
+
+    function bindNewControls() {
+        const predictBtn = q("triggerPredictTodayBtn");
+        if (predictBtn) {
+            predictBtn.addEventListener("click", async () => {
+                predictBtn.disabled = true;
+                predictBtn.textContent = "Running…";
+                try {
+                    const data = await api("/api/predictions/today", { method: "POST" });
+                    setText("learnPatternsMeta",
+                        data.ok ? "✓ Triggered predictions for all upcoming races today"
+                                : `Error: ${data.error || "Unknown"}`);
+                } catch (_) {
+                    setText("learnPatternsMeta", "Failed to trigger predictions");
+                }
+                predictBtn.disabled = false;
+                predictBtn.textContent = "Predict All Today";
+            });
+        }
+
+        const refreshBtn = q("refreshInsightsBtn");
+        if (refreshBtn) {
+            refreshBtn.addEventListener("click", () => {
+                loadInsights();
+                loadPatterns();
+                setText("learnPatternsMeta", "Refreshed " + new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }));
+            });
+        }
+    }
+
+    // -------------------------------------------------------
+    // Boot (continued)
+    // -------------------------------------------------------
+
     setInterval(() => { pollLearningStatus(); loadActivityFeed(); }, 30000);
 
     document.addEventListener("DOMContentLoaded", () => {
         bindTabs();
         bindConfig();
+        bindNewControls();
         pollLearningStatus();
         loadActivityFeed();
+        loadInsights();
     });
 })();
 
