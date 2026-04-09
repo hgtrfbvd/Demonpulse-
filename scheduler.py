@@ -44,6 +44,7 @@ RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
 FORMFAV_SYNC_INTERVAL = 180     # 3 min — FormFav persistent enrichment sync
 MARKET_SNAPSHOT_INTERVAL = 300  # 5 min — OddsPro movers/drifters/top-favs
+EVAL_BACKFILL_INTERVAL = 3600   # once per hour, backfills missed evaluations
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -405,6 +406,53 @@ def _run_market_snapshot():
         log.error(f"Market snapshot failed: {e}")
 
 
+def _run_evaluation_backfill():
+    """Evaluate any predictions that have results but no evaluation record."""
+    try:
+        from db import get_db, safe_query, T
+        from ai.learning_store import evaluate_prediction
+        from database import get_result
+
+        # Find prediction_snapshots with a result but no evaluation
+        snaps = safe_query(
+            lambda: get_db()
+            .table(T("prediction_snapshots"))
+            .select("race_uid")
+            .execute()
+            .data,
+            []
+        ) or []
+
+        evaluated = safe_query(
+            lambda: get_db()
+            .table(T("learning_evaluations"))
+            .select("race_uid")
+            .execute()
+            .data,
+            []
+        ) or []
+
+        evaluated_uids = {r["race_uid"] for r in evaluated if r.get("race_uid")}
+        snap_uids = {r["race_uid"] for r in snaps if r.get("race_uid")}
+        pending = snap_uids - evaluated_uids
+
+        backfilled = 0
+        for race_uid in list(pending)[:50]:   # cap at 50 per run
+            stored = get_result(race_uid)
+            if stored and stored.get("winner"):
+                try:
+                    evaluate_prediction(race_uid, stored)
+                    backfilled += 1
+                except Exception:
+                    pass
+
+        if backfilled:
+            log.info(f"scheduler: backfilled {backfilled} evaluations")
+
+    except Exception as e:
+        log.warning(f"evaluation_backfill failed: {e}")
+
+
 # --------------------------------------------------------
 # BOARD REBUILD HELPERS
 # --------------------------------------------------------
@@ -456,6 +504,7 @@ def run_scheduler():
     last_health_snapshot = now
     last_formfav_sync = now  # full_sweep triggers formfav_sync directly when races are stored
     last_market_snapshot = now - MARKET_SNAPSHOT_INTERVAL  # run on first loop
+    last_eval_backfill = 0
 
     if FULL_SWEEP_ON_START:
         try:
@@ -517,6 +566,10 @@ def run_scheduler():
             if now - last_market_snapshot >= MARKET_SNAPSHOT_INTERVAL:
                 _run_market_snapshot()
                 last_market_snapshot = now
+
+            if now - last_eval_backfill >= EVAL_BACKFILL_INTERVAL:
+                _run_evaluation_backfill()
+                last_eval_backfill = now
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")

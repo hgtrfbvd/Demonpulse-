@@ -432,6 +432,18 @@ _SCHEMA_ALIGN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("test_prediction_snapshots", "ev",                   "NUMERIC",       ""),
     ("test_prediction_snapshots", "confidence",           "NUMERIC",       ""),
 
+    # prediction_snapshots — race context columns for activity feed queries
+    ("prediction_snapshots",      "race_date",   "DATE",    ""),
+    ("prediction_snapshots",      "track",       "TEXT",    "DEFAULT ''"),
+    ("prediction_snapshots",      "race_num",    "INTEGER", ""),
+    ("prediction_snapshots",      "code",        "TEXT",    "DEFAULT ''"),
+    ("prediction_snapshots",      "top_runner",  "TEXT",    ""),
+    ("test_prediction_snapshots", "race_date",   "DATE",    ""),
+    ("test_prediction_snapshots", "track",       "TEXT",    "DEFAULT ''"),
+    ("test_prediction_snapshots", "race_num",    "INTEGER", ""),
+    ("test_prediction_snapshots", "code",        "TEXT",    "DEFAULT ''"),
+    ("test_prediction_snapshots", "top_runner",  "TEXT",    ""),
+
     # ── learning_evaluations ─────────────────────────────────────────────────
     # Phase 4.6 adds enrichment tracking and disagreement metrics.
     ("learning_evaluations",      "oddspro_race_id",      "TEXT",         "DEFAULT ''"),

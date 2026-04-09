@@ -1774,12 +1774,70 @@ def _write_result(result: Any) -> None:
         from database import upsert_result, update_race_status
         result_dict = result.__dict__ if hasattr(result, "__dict__") else result
         upsert_result(result_dict)
-        # Mark the race as final in today_races
+
         race_uid = result_dict.get("race_uid") or ""
         if race_uid:
-            update_race_status(race_uid, "final")
+            rows_updated = update_race_status(race_uid, "final")
+            if not rows_updated:
+                # Fallback: update by date/track/race_num/code
+                _update_race_status_fallback(
+                    date=result_dict.get("date"),
+                    track=result_dict.get("track"),
+                    race_num=result_dict.get("race_num"),
+                    code=result_dict.get("code"),
+                )
+
+        # CRITICAL: trigger prediction evaluation for learning
+        if race_uid:
+            try:
+                from ai.learning_store import evaluate_prediction
+                from database import get_result
+                stored = get_result(race_uid)
+                if stored:
+                    eval_result = evaluate_prediction(race_uid, stored)
+                    eval_count = eval_result.get("evaluated", 0)
+                    if eval_count > 0:
+                        log.info(
+                            f"data_engine: evaluated {eval_count} predictions "
+                            f"for {race_uid}"
+                        )
+            except Exception as _eval_err:
+                log.warning(
+                    f"data_engine: _write_result evaluation failed "
+                    f"for {race_uid}: {_eval_err}"
+                )
+
     except Exception as e:
         log.error(f"data_engine: _write_result failed: {e}")
+
+
+def _update_race_status_fallback(
+    date: str, track: str, race_num: int, code: str
+) -> None:
+    """Fallback status update when race_uid lookup hits 0 rows."""
+    if not all([date, track, race_num, code]):
+        return
+    from datetime import datetime, timezone
+    from db import get_db, safe_query, T
+    for tv in [track, track.lower(), track.lower().replace(" ", "-"),
+               track.lower().replace(" ", "_")]:
+        result = safe_query(
+            lambda: get_db()
+            .table(T("today_races"))
+            .update({
+                "status": "final",
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            })
+            .eq("date", date)
+            .eq("race_num", race_num)
+            .eq("code", code)
+            .ilike("track", tv)
+            .execute()
+            .data,
+            []
+        )
+        if result:
+            break
 
 
 def _store_runners_for_race(race_uid: str, runners: list[Any]) -> int:

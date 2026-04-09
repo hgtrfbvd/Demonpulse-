@@ -234,6 +234,50 @@ def backtest_date_range(
     _save_backtest_run(summary)
     _save_backtest_items(run_items)
 
+    # Add ROI, profit, and breakdowns to summary
+    roi_float = round(
+        (avg_winner_odds * hit_rate) - 1.0, 4
+    ) if avg_winner_odds and hit_rate else 0.0
+
+    profit = round(
+        winner_hits * (avg_winner_odds - 1) - (races_tested - winner_hits),
+        2
+    ) if avg_winner_odds else 0.0
+
+    summary["roi"]          = roi_float
+    summary["roi_pct"]      = f"{roi_float * 100:+.1f}%"
+    summary["profit"]       = profit
+    summary["profit_str"]   = f"${profit:+.2f}"
+    summary["races_tested"] = races_tested
+
+    from collections import defaultdict
+    code_groups: dict = defaultdict(lambda: {"hits": 0, "total": 0, "odds_sum": 0.0, "odds_count": 0})
+
+    for item in run_items:
+        code = (item.get("code") or "UNKNOWN").upper()
+        code_groups[code]["total"] += 1
+        if item.get("winner_hit"):
+            code_groups[code]["hits"] += 1
+        odds = item.get("winner_odds") or 0
+        if odds:
+            code_groups[code]["odds_sum"] += float(odds)
+            code_groups[code]["odds_count"] += 1
+
+    breakdown_by_code: dict = {}
+    for code, g in code_groups.items():
+        t = g["total"]
+        h = g["hits"]
+        avg_o = g["odds_sum"] / g["odds_count"] if g["odds_count"] else 0
+        roi_c = round((avg_o * h / t) - 1.0, 4) if t and avg_o else 0.0
+        breakdown_by_code[code] = {
+            "samples":  t,
+            "correct":  h,
+            "win_rate": f"{h/t*100:.1f}%" if t else "0%",
+            "roi":      f"{roi_c*100:+.1f}%",
+        }
+
+    summary["breakdown_by_code"] = breakdown_by_code
+
     log.info(
         f"backtest: run {run_id} complete — {races_tested} races "
         f"hit_rate={hit_rate:.1%} top2={top2_rate:.1%} top3={top3_rate:.1%} "

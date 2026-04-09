@@ -1018,6 +1018,7 @@ def api_ai_learning_status():
         from database import get_active_races, get_formfav_enrichments_for_date
         from race_status import compute_ntj
         from datetime import date
+        from db import get_db, safe_query, T
 
         today = date.today().isoformat()
         races = get_active_races(today)
@@ -1043,6 +1044,40 @@ def api_ai_learning_status():
             1 for r in next_hour if r.get("race_uid") in enriched_uids
         )
 
+        # Count today's prediction snapshots by created_at (race_date may not exist yet)
+        try:
+            snap_rows = safe_query(
+                lambda: get_db()
+                .table(T("prediction_snapshots"))
+                .select("model_version,race_uid")
+                .gte("created_at", today + "T00:00:00Z")
+                .lte("created_at", today + "T23:59:59Z")
+                .execute()
+                .data,
+                []
+            ) or []
+        except Exception:
+            snap_rows = []
+
+        total_predictions = len(snap_rows)
+        model_version = "baseline_v1"
+        if snap_rows:
+            try:
+                latest = safe_query(
+                    lambda: get_db()
+                    .table(T("prediction_snapshots"))
+                    .select("model_version")
+                    .gte("created_at", today + "T00:00:00Z")
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                    .data,
+                    []
+                ) or []
+                model_version = (latest[0].get("model_version") or "baseline_v1") if latest else "baseline_v1"
+            except Exception:
+                pass
+
         return jsonify({
             "ok": True,
             "next_hour_races": len(next_hour),
@@ -1052,6 +1087,8 @@ def api_ai_learning_status():
             "formfav_coverage_pct": round(
                 (next_hour_enriched / len(next_hour) * 100) if next_hour else 0, 1
             ),
+            "total_predictions": total_predictions,
+            "model_version": model_version,
         })
     except Exception as e:
         import traceback
