@@ -819,6 +819,299 @@ def test_backtesting() -> _Result:
     return r
 
 
+def test_result_triggers_evaluation() -> _Result:
+    """
+    Fix 1 verification: _write_result() must call evaluate_prediction().
+    Writes a prediction snapshot, then writes a result via _write_result(),
+    then confirms a row appears in test_learning_evaluations.
+    """
+    r = _Result("result_triggers_evaluation")
+    r.code_path = "data_engine._write_result() → test_learning_evaluations"
+
+    from db import get_db, safe_query, T
+    from ai.learning_store import save_prediction_snapshot
+    from data_engine import _write_result
+    from database import upsert_race, get_race
+
+    uid      = _uid()
+    track    = f"smoke-eval-{uid}"
+    race_uid = f"{_today()}_GREYHOUND_{track}_3"
+    snap_id  = f"snap-eval-{uid}"
+
+    _cleanup("learning_evaluations",      "race_uid",               race_uid)
+    _cleanup("prediction_runner_outputs", "prediction_snapshot_id", snap_id)
+    _cleanup("prediction_snapshots",      "prediction_snapshot_id", snap_id)
+    _cleanup("results_log",               "race_uid",               race_uid)
+    _cleanup("today_races",               "race_uid",               race_uid)
+
+    upsert_race({
+        "race_uid":  race_uid,
+        "track":     track,
+        "race_num":  3,
+        "code":      "GREYHOUND",
+        "date":      _today(),
+        "jump_time": "12:00",
+        "status":    "jumped_estimated",
+    })
+
+    save_prediction_snapshot({
+        "prediction_snapshot_id": snap_id,
+        "race_uid":               race_uid,
+        "oddspro_race_id":        f"OP-EVAL-{uid}",
+        "model_version":          "baseline_v1",
+        "created_at":             _now(),
+        "runner_predictions": [
+            {"runner_name": "TEST RUNNER A", "box_num": 1,
+             "predicted_rank": 1, "score": 88.0},
+        ],
+        "has_enrichment": 0,
+        "source_type":    "pre_race",
+    }, [])
+
+    class FakeResult:
+        race_uid        = race_uid
+        oddspro_race_id = f"OP-EVAL-{uid}"
+        date            = _today()
+        track           = track
+        race_num        = 3
+        code            = "GREYHOUND"
+        winner          = "TEST RUNNER A"
+        winner_number   = 1
+        win_price       = 3.50
+        place_2         = ""
+        place_3         = ""
+        margin          = None
+        winning_time    = None
+        source          = "oddspro"
+
+    _write_result(FakeResult())
+
+    rows = safe_query(
+        lambda: get_db()
+        .table(T("learning_evaluations"))
+        .select("winner_hit,actual_winner,evaluation_source")
+        .eq("race_uid", race_uid)
+        .execute()
+        .data,
+        []
+    ) or []
+
+    r.check(len(rows) > 0,
+        "FAIL: _write_result did not trigger evaluate_prediction — "
+        "test_learning_evaluations has no row. Fix 1 not applied correctly.")
+
+    if rows:
+        row = rows[0]
+        r.check(row.get("winner_hit") is True,
+            f"winner_hit should be True, got: {row.get('winner_hit')}")
+        r.check(row.get("actual_winner") == "TEST RUNNER A",
+            f"actual_winner mismatch: {row.get('actual_winner')!r}")
+
+    race = get_race(race_uid)
+    r.check(
+        race and (race.get("status") or "").lower() == "final",
+        f"Race status should be 'final', got: {race.get('status') if race else 'NOT FOUND'}"
+    )
+
+    r.detail = (
+        f"race_uid={race_uid} "
+        f"eval_rows={len(rows)} "
+        f"winner_hit={rows[0].get('winner_hit') if rows else 'N/A'}"
+    )
+
+    _cleanup("learning_evaluations",      "race_uid",               race_uid)
+    _cleanup("prediction_runner_outputs", "prediction_snapshot_id", snap_id)
+    _cleanup("prediction_snapshots",      "prediction_snapshot_id", snap_id)
+    _cleanup("results_log",               "race_uid",               race_uid)
+    _cleanup("today_races",               "race_uid",               race_uid)
+    return r
+
+
+def test_prediction_snapshot_columns() -> _Result:
+    """
+    Fix 2 verification: prediction_snapshots must have
+    race_date, track, race_num, code, top_runner columns.
+    Also verifies signal/decision/confidence/ev columns from Phase 5.
+    """
+    r = _Result("prediction_snapshot_columns")
+    r.code_path = "prediction_snapshots schema — Phase 5 columns"
+
+    from db import get_db, safe_query, T
+    from ai.predictor import predict_from_snapshot
+
+    uid      = _uid()
+    track    = f"smoke-col-{uid}"
+    race_uid = f"{_today()}_GREYHOUND_{track}_1"
+
+    _cleanup("prediction_snapshots",      "race_uid", race_uid)
+    _cleanup("prediction_runner_outputs", "race_uid", race_uid)
+
+    race = {
+        "race_uid":        race_uid,
+        "oddspro_race_id": f"OP-COL-{uid}",
+        "track":           track,
+        "race_num":        1,
+        "code":            "GREYHOUND",
+        "date":            _today(),
+        "jump_time":       "13:00",
+        "status":          "open",
+        "distance":        "375",
+        "grade":           "5",
+    }
+    runners = [
+        {"name": "RUNNER A", "box_num": 1, "number": 1,
+         "price": 2.5, "scratched": False, "source_confidence": "api"},
+        {"name": "RUNNER B", "box_num": 2, "number": 2,
+         "price": 4.0, "scratched": False, "source_confidence": "api"},
+    ]
+
+    result = predict_from_snapshot(race, runners)
+    r.check(result.get("ok"),
+        f"predict_from_snapshot failed: {result.get('error')}")
+
+    if result.get("ok"):
+        snap_id = result.get("prediction_snapshot_id") or ""
+        rows = safe_query(
+            lambda: get_db()
+            .table(T("prediction_snapshots"))
+            .select("race_uid,race_date,track,race_num,code,"
+                    "top_runner,signal,decision,confidence,ev")
+            .eq("prediction_snapshot_id", snap_id)
+            .execute()
+            .data,
+            []
+        ) or []
+
+        r.check(len(rows) > 0, "No snapshot row found after predict_from_snapshot")
+
+        if rows:
+            row = rows[0]
+            required_cols = [
+                "race_date", "track", "race_num", "code",
+                "top_runner", "signal", "decision", "confidence", "ev"
+            ]
+            for col in required_cols:
+                r.check(col in row,
+                    f"Column '{col}' missing from prediction_snapshots — "
+                    f"migration not applied. Run: python -c \"from migrations "
+                    f"import run_migrations; from db import get_db; "
+                    f"run_migrations(get_db())\"")
+
+            if "track" in row:
+                r.check(row.get("track") == track,
+                    f"track value wrong: got {row.get('track')!r}, "
+                    f"expected {track!r}")
+            if "race_num" in row:
+                r.check(row.get("race_num") == 1,
+                    f"race_num value wrong: got {row.get('race_num')}")
+            if "code" in row:
+                r.check(row.get("code") == "GREYHOUND",
+                    f"code value wrong: got {row.get('code')!r}")
+
+        r.detail = f"snap_id={snap_id} columns_present={list((rows[0] if rows else {}).keys())}"
+
+        _cleanup("prediction_snapshots",      "race_uid", race_uid)
+        _cleanup("prediction_runner_outputs", "race_uid", race_uid)
+
+    return r
+
+
+def test_performance_summary_bankroll() -> _Result:
+    """
+    Fix 8 verification: get_performance_summary() must return
+    bankroll_history, win_rate, roi, current_bank.
+    """
+    r = _Result("performance_summary_bankroll")
+    r.code_path = "ai.learning_store.get_performance_summary() → bankroll_history"
+
+    from ai.learning_store import get_performance_summary
+
+    result = get_performance_summary(limit=50)
+    r.check(result.get("ok") is not False,
+        f"get_performance_summary failed: {result.get('error')}")
+
+    required_keys = [
+        "bankroll_history", "win_rate", "roi", "current_bank",
+        "total_profit", "total_evaluated", "model_version"
+    ]
+    for key in required_keys:
+        r.check(key in result,
+            f"Key '{key}' missing from performance summary — "
+            f"Fix 8 (bankroll_history) not applied to learning_store.py")
+
+    if "bankroll_history" in result:
+        r.check(isinstance(result["bankroll_history"], list),
+            f"bankroll_history should be a list, got "
+            f"{type(result['bankroll_history']).__name__}")
+
+    if "win_rate" in result:
+        r.check(isinstance(result["win_rate"], (int, float)),
+            f"win_rate should be numeric, got {result.get('win_rate')!r}")
+
+    r.detail = (
+        f"total_evaluated={result.get('total_evaluated')} "
+        f"win_rate={result.get('win_rate')} "
+        f"roi={result.get('roi')} "
+        f"bankroll_history_len={len(result.get('bankroll_history') or [])}"
+    )
+    return r
+
+
+def test_predictions_today_get_route() -> _Result:
+    """
+    Fix 5 verification: GET /api/predictions/today must exist and
+    return {"ok": true, "predictions": […], "count": N}.
+    Requires the Flask app to be running locally.
+    Set APP_BASE_URL env var if not using localhost:5000.
+    """
+    r = _Result("predictions_today_get_route")
+    r.code_path = "GET /api/predictions/today"
+
+    import os
+    import urllib.request
+    import json
+
+    base_url = os.environ.get("APP_BASE_URL", "http://localhost:5000")
+    url = f"{base_url}/api/predictions/today"
+
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            status = resp.status
+            body   = json.loads(resp.read().decode())
+
+        r.check(status == 200,
+            f"GET /api/predictions/today returned HTTP {status} "
+            f"(expected 200) — endpoint may be missing")
+        r.check(body.get("ok") is True,
+            f"Response ok=False: {body.get('error')}")
+        r.check("predictions" in body,
+            "Response missing 'predictions' key — Fix 5 not applied")
+        r.check(isinstance(body.get("predictions"), list),
+            "predictions is not a list")
+        r.check("count" in body,
+            "Response missing 'count' key")
+
+        r.detail = (
+            f"status={status} "
+            f"count={body.get('count')} "
+            f"predictions_sample={body.get('predictions', [])[:1]}"
+        )
+
+    except OSError as e:
+        if "Connection refused" in str(e) or "timed out" in str(e):
+            r.fail(
+                f"App not running at {base_url}. "
+                f"Start it first: DP_ENV=TEST python app.py "
+                f"then re-run this test. "
+                f"Or set APP_BASE_URL env var if running elsewhere."
+            )
+        else:
+            r.fail(f"Request failed: {e}")
+
+    return r
+
+
 def test_source_logging() -> _Result:
     """
     8. SOURCE LOG — write + read back
@@ -984,6 +1277,11 @@ def main() -> int:
         test_learning,
         test_backtesting,
         test_source_logging,
+        # NEW — verify v72 Part 1 + Part 2 fixes:
+        test_result_triggers_evaluation,
+        test_prediction_snapshot_columns,
+        test_performance_summary_bankroll,
+        test_predictions_today_get_route,   # needs app running
     ]
 
     results = []
@@ -1024,6 +1322,11 @@ def run_all_tests() -> dict:
         test_learning,
         test_backtesting,
         test_source_logging,
+        # NEW — verify v72 Part 1 + Part 2 fixes:
+        test_result_triggers_evaluation,
+        test_prediction_snapshot_columns,
+        test_performance_summary_bankroll,
+        test_predictions_today_get_route,   # needs app running
     ]
 
     results = []
