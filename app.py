@@ -399,8 +399,23 @@ def api_live_race(race_uid: str):
                     merged["ff_career_stats"]  = ff.get("stats_overall")
 
                 # Camelcase aliases expected by frontend
-                merged["earlySpeed"] = merged.get("early_speed") or ""
-                merged["bestTime"]   = merged.get("best_time")   or ""
+                merged["earlySpeed"]  = merged.get("early_speed") or ""
+                merged["bestTime"]    = merged.get("best_time")   or ""
+                _ff_wp = merged.get("ff_win_prob")
+                merged["winProb"]     = _ff_wp if _ff_wp is not None else merged.get("win_prob")
+                _ff_pp = merged.get("ff_place_prob")
+                merged["placeProb"]   = _ff_pp if _ff_pp is not None else merged.get("place_prob")
+                merged["formString"]  = merged.get("form_string") or merged.get("form") or ""
+                _ff_mr = merged.get("ff_model_rank")
+                merged["modelRank"]   = _ff_mr if _ff_mr is not None else merged.get("model_rank")
+                merged["paceStyle"]   = merged.get("pace_style") or (
+                    merged.get("speed_map", {}).get("style")
+                    if isinstance(merged.get("speed_map"), dict) else None
+                ) or ""
+                _wpc = merged.get("win_pct")
+                merged["winPct"]      = _wpc if _wpc is not None else ""
+                _ppc = merged.get("place_pct")
+                merged["placePct"]    = _ppc if _ppc is not None else ""
 
                 # recent_starts: extract from stats_full JSON blob if not present
                 if not merged.get("recent_starts"):
@@ -465,24 +480,45 @@ def api_live_race(race_uid: str):
         # Fetch stored prediction snapshot for signal/decision/selection/ev
         stored_pred = {}
         try:
-            from ai.learning_store import get_stored_prediction
-            pred_result = get_stored_prediction(race_uid)
-            if pred_result.get("ok"):
-                snap = pred_result.get("snapshot") or {}
-                runner_outputs = pred_result.get("runner_outputs") or []
-                top = next((r for r in runner_outputs if r.get("predicted_rank") == 1), None)
+            # Fast-path: check signals table first
+            from signals import get_signal
+            quick_sig = get_signal(race_uid)
+            if quick_sig:
                 stored_pred = {
-                    "signal":    snap.get("signal") or "—",
-                    "decision":  snap.get("decision") or "—",
-                    "confidence": snap.get("confidence"),
-                    "ev":        snap.get("ev"),
-                    "selection": top.get("runner_name") if top else None,
-                    "runner_prob_map": {
-                        r.get("runner_name"): r.get("win_prob") for r in runner_outputs
-                    },
+                    "signal":     quick_sig.get("signal"),
+                    "decision":   quick_sig.get("signal"),
+                    "confidence": quick_sig.get("confidence"),
+                    "ev":         quick_sig.get("ev"),
+                    "selection":  quick_sig.get("top_runner"),
+                    "runner_prob_map": {},
                 }
         except Exception:
             pass
+
+        if not stored_pred:
+            try:
+                from ai.learning_store import get_stored_prediction
+                pred_result = get_stored_prediction(race_uid)
+                if pred_result.get("ok"):
+                    snap = (pred_result.get("snapshot") or
+                            pred_result.get("prediction") or
+                            pred_result.get("data") or {})
+                    runner_outputs = (pred_result.get("runner_outputs") or
+                                      snap.get("runner_outputs") or
+                                      pred_result.get("runners") or [])
+                    top = next((r for r in runner_outputs if r.get("predicted_rank") == 1), None)
+                    stored_pred = {
+                        "signal":    snap.get("signal") or "—",
+                        "decision":  snap.get("decision") or "—",
+                        "confidence": snap.get("confidence"),
+                        "ev":        snap.get("ev"),
+                        "selection": top.get("runner_name") if top else None,
+                        "runner_prob_map": {
+                            r.get("runner_name"): r.get("win_prob") for r in runner_outputs
+                        },
+                    }
+            except Exception:
+                pass
 
         # Build analysis dict from stored prediction and available FormFav data
         formfav = race_out.get("formfav") or {}
@@ -494,8 +530,9 @@ def api_live_race(race_uid: str):
             "confidence": stored_pred.get("confidence") or race_out.get("confidence"),
             "selection":  stored_pred.get("selection"),
             "ev":         stored_pred.get("ev"),
-            "pace_type":  formfav.get("paceScenario"),
-            "race_shape": formfav.get("weather"),
+            "pace_type":  formfav.get("pace_scenario") or formfav.get("paceScenario") or stored_pred.get("pace_type"),
+            "race_shape": formfav.get("race_shape") or formfav.get("beneficiary") or formfav.get("weather") or stored_pred.get("race_shape"),
+            "weather":    race_out.get("weather") or formfav.get("weather"),
             "pass_reason": None,
             "all_runners": [
                 {
@@ -523,7 +560,7 @@ def api_live_race(race_uid: str):
                 "signal":     stored_pred.get("signal"),
                 "confidence": stored_pred.get("confidence"),
                 "ev":         stored_pred.get("ev"),
-            } if stored_pred else None,
+            } if stored_pred.get("signal") not in (None, "—") else None,
         })
     except Exception as e:
         import traceback
@@ -536,26 +573,63 @@ def api_live_race(race_uid: str):
 
 @app.route("/api/live/watch-sim/<race_uid>", methods=["POST"])
 def api_live_watch_sim(race_uid: str):
-    """Trigger a simulation for the given race (proxies to simulation engine).
-    TODO: wire to the Monte Carlo simulation engine once live trigger is supported.
-    """
+    """Trigger a simulation for the given race (proxies to simulation engine)."""
     try:
-        from database import get_race
+        from database import get_race, get_runners_for_race
+        from simulation.core_simulation_engine import SimulationEngine
+        from simulation.models import RaceMeta, RunnerProfile, normalize_race_code
 
         race = get_race(race_uid)
         if not race:
             return jsonify({"ok": False, "error": "Race not found"}), 404
 
-        # Simulation engine live trigger is not yet wired — return 501 with context.
-        return jsonify({
-            "ok": False,
-            "race_uid": race_uid,
-            "simulation": None,
-            "error": "Live simulation trigger not yet implemented",
-        }), 501
+        runners_raw = get_runners_for_race(race_uid)
+        if not runners_raw:
+            return jsonify({"ok": False, "error": "No runners found"}), 404
+
+        try:
+            race_code = normalize_race_code(race.get("code") or "GREYHOUND")
+        except ValueError:
+            race_code = normalize_race_code("GREYHOUND")
+
+        race_meta = RaceMeta(
+            race_uid=race_uid,
+            track=race.get("track") or "",
+            race_code=race_code,
+            distance_m=int(race.get("distance") or 400),
+            grade=race.get("grade") or "",
+            condition=race.get("condition") or "GOOD",
+            field_size=len(runners_raw),
+        )
+
+        runner_profiles = []
+        for r in runners_raw:
+            if r.get("scratched"):
+                continue
+            box = r.get("box_num") or r.get("barrier") or r.get("number") or 1
+            odds = float(r.get("price") or r.get("win_odds") or 5.0)
+            runner_profiles.append(RunnerProfile(
+                runner_id=str(box),
+                name=r.get("name") or r.get("runner_name") or f"Runner {box}",
+                barrier_or_box=int(box),
+                market_odds=odds,
+                scratched=bool(r.get("scratched", False)),
+            ))
+
+        engine = SimulationEngine()
+        guide = engine.run(race_meta, runner_profiles)
+
+        result = {
+            "decision": guide.decision.value if hasattr(guide.decision, "value") else str(guide.decision),
+            "confidence": guide.confidence_rating.value if hasattr(guide.confidence_rating, "value") else str(guide.confidence_rating),
+            "chaos": guide.chaos_rating.value if hasattr(guide.chaos_rating, "value") else str(guide.chaos_rating),
+            "top_runner": guide.top_runner,
+            "summary": guide.summary if hasattr(guide, "summary") else "",
+        }
+        return jsonify({"ok": True, "simulation": result})
     except Exception as e:
         log.error(f"/api/live/watch-sim/{race_uid} failed: {e}")
-        return jsonify({"ok": False, "error": "Simulation unavailable"}), 500
+        return jsonify({"ok": False, "error": "Simulation failed"}), 500
 
 
 @app.route("/api/live/mark-watched", methods=["POST"])

@@ -2312,8 +2312,13 @@
    ============================================================ */
 
 /* Section 1 — Status badges */
-.badge-pending  { background: rgba(255,179,71,0.18); color: var(--amber); border: 1px solid rgba(255,179,71,0.3); }
-.badge-resulted { background: rgba(61,214,140,0.14); color: var(--green); }
+.badge-pending   { background: rgba(255,179,71,0.18); color: var(--amber); border: 1px solid rgba(255,179,71,0.3); }
+.badge-resulted  { background: rgba(61,214,140,0.14); color: var(--green); }
+.badge-abandoned { background: rgba(130,130,130,0.14); color: var(--text-dim); }
+
+/* Home board status badges */
+.status-resulted  { background: rgba(61,214,140,0.14); color: var(--green); border-radius: 4px; padding: 2px 6px; }
+.status-abandoned { background: rgba(130,130,130,0.14); color: var(--text-dim); border-radius: 4px; padding: 2px 6px; }
 
 /* Section 2 — Runner decorator badges */
 .decorator-badges { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
