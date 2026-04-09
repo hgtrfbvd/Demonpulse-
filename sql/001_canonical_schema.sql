@@ -135,6 +135,7 @@ ALTER TABLE today_races ADD COLUMN IF NOT EXISTS ai_reviewed_at     TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS bet_logged_at      TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS result_captured_at TIMESTAMPTZ;
 ALTER TABLE today_races ADD COLUMN IF NOT EXISTS learned_at         TIMESTAMPTZ;
+ALTER TABLE today_races ADD COLUMN IF NOT EXISTS user_note          TEXT;
 
 -- Partial unique index on race_uid: legacy rows may carry race_uid = ''.
 -- A full UNIQUE constraint would reject multiple empty-string rows, so we

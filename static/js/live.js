@@ -1004,7 +1004,16 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             } else {
                 container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim);">Result not yet available.</div>`;
             }
-        } catch (_) {}
+        } catch (err) {
+            // A 404 means the result doesn't exist yet — show the awaiting message.
+            const container = q("formGuideRows");
+            if (container) {
+                container.innerHTML = `<div style="padding:24px;text-align:center;">
+                    <div style="color:var(--amber);font-size:0.85rem;letter-spacing:.06em;">AWAITING OFFICIAL RESULT</div>
+                    <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">Results post within 2–3 minutes of jump</div>
+                </div>`;
+            }
+        }
     }
 
     async function loadLiveRace() {

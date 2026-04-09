@@ -253,6 +253,22 @@ def update_race_status(race_uid: str, status: str) -> int:
     return len(result) if result else 0
 
 
+def save_race_note(race_uid: str, note: str) -> bool:
+    """Persist a user note against a race. Returns True if a row was updated."""
+    result = safe_query(
+        lambda: get_db()
+        .table(T("today_races"))
+        .update({
+            "user_note": note,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .eq("race_uid", race_uid)
+        .execute()
+        .data
+    )
+    return bool(result)
+
+
 def sync_result_statuses() -> int:
     """
     For any race in results_log today, ensure today_races.status = 'final'.
