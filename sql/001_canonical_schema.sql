@@ -749,6 +749,19 @@ ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS has_collision   INTEGE
 ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS has_enrichment  INTEGER DEFAULT 0;
 ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS source_type     TEXT    DEFAULT 'pre_race';
 
+-- prediction_snapshots Phase 5 extension — race context columns for activity feed
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS race_date  DATE;
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS track      TEXT DEFAULT '';
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS race_num   INTEGER;
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS code       TEXT DEFAULT '';
+ALTER TABLE prediction_snapshots ADD COLUMN IF NOT EXISTS top_runner TEXT;
+
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS race_date  DATE;
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS track      TEXT DEFAULT '';
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS race_num   INTEGER;
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS code       TEXT DEFAULT '';
+ALTER TABLE test_prediction_snapshots ADD COLUMN IF NOT EXISTS top_runner TEXT;
+
 -- ----------------------------------------------------------------
 -- prediction_runner_outputs
 -- Per-runner scores and predicted ranks within a prediction run.

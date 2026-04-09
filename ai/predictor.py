@@ -133,6 +133,8 @@ def predict_from_snapshot(
     prediction_snapshot_id = _make_snapshot_id(race_uid)
     now = datetime.now(timezone.utc).isoformat()
 
+    top_runner_name = scored[0].get("runner_name") if scored else ""
+
     result: dict[str, Any] = {
         "ok": True,
         "race_uid": race_uid,
@@ -143,6 +145,11 @@ def predict_from_snapshot(
         "runner_predictions": scored,
         "created_at": now,
         "lineage_saved": False,
+        "race_date": race.get("date") or "",
+        "track": race.get("track") or "",
+        "race_num": race.get("race_num"),
+        "code": race.get("code") or "",
+        "top_runner_name": top_runner_name,
     }
 
     try:

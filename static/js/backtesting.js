@@ -146,14 +146,15 @@ Be direct. If ROI is negative, say so clearly.`;
         setText("btControlMeta", "Running backtest...");
 
         try {
-            const data = await api("/api/admin/backtest", {
+            const data = await api("/api/predictions/backtest-run", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    date_from: from,
-                    date_to: to,
-                    code_filter: code !== "ALL" ? code : null,
-                    batch_size: batchSize,
+                    date_from:    from,
+                    date_to:      to,
+                    code_filter:  code !== "ALL" ? code : null,
+                    batch_size:   batchSize,
+                    compare_models: false,
                 })
             });
 

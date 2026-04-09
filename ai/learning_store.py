@@ -84,6 +84,11 @@ def save_prediction_snapshot(
             "has_enrichment": has_enrichment,
             "source_type": source_type,
             "created_at": created_at,
+            "race_date": prediction.get("race_date") or (race_uid.split("_")[0] if race_uid else None),
+            "track": prediction.get("track") or "",
+            "race_num": prediction.get("race_num"),
+            "code": prediction.get("code") or "",
+            "top_runner": prediction.get("top_runner_name") or "",
         }
         safe_query(
             lambda: get_db()
@@ -441,6 +446,19 @@ def get_performance_summary(
             if winning_odds else None
         )
 
+        # Build bankroll history (simulated $100 bank, $1 flat stake)
+        bankroll = 100.0
+        bankroll_history = []
+        for row in reversed(rows):   # oldest → newest
+            if row.get("winner_hit"):
+                odds = float(row.get("winner_odds") or 2.0)
+                bankroll = round(bankroll + (odds - 1.0), 2)
+            else:
+                bankroll = round(bankroll - 1.0, 2)
+            bankroll_history.append(bankroll)
+
+        roi_pct = round(bankroll - 100.0, 2)   # profit on $100
+
         return {
             "ok": True,
             "model_version": model_version or "all",
@@ -452,6 +470,13 @@ def get_performance_summary(
             "top2_hit_rate": round(top2_hits / total, 4) if total else 0.0,
             "top3_hit_rate": round(top3_hits / total, 4) if total else 0.0,
             "avg_winner_odds": avg_winner_odds,
+            "bankroll_history": bankroll_history,
+            "starting_bank": 100.0,
+            "current_bank": round(bankroll, 2),
+            "total_profit": roi_pct,
+            "roi_pct": roi_pct,
+            "roi": roi_pct,
+            "win_rate": round(winner_hits / total * 100, 1) if total else 0,
         }
 
     except Exception as e:
