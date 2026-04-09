@@ -1041,11 +1041,26 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 loadAndRenderResult(raceUid);
             } else if (["jumped_estimated","awaiting_result"].includes(status) ||
                        (getSecondsNow(liveRace) !== null && getSecondsNow(liveRace) < JUMPED_THRESHOLD_SECONDS)) {
-                // Race has jumped — try to load result, fall back to form guide if unavailable
+                // Race has jumped — show result if available, otherwise show runners + awaiting message
                 try {
                     await loadAndRenderResult(raceUid);
-                } catch (_) {
-                    if (liveRunners.length) buildRunnerCards(liveRunners, liveAnalysis);
+                } catch (_) {}
+                // Always also show runners below the result/awaiting panel
+                if (liveRunners.length) {
+                    try { buildRunnerCards(liveRunners, liveAnalysis); } catch (_) {}
+                } else {
+                    // No runners and no result yet — show awaiting message
+                    const container = q("formGuideRows");
+                    if (container && container.innerHTML.trim() === "") {
+                        container.innerHTML = `<div style="padding:32px;text-align:center;">
+                            <div style="color:var(--amber);font-size:0.85rem;letter-spacing:.06em;margin-bottom:8px;">
+                                AWAITING OFFICIAL RESULT
+                            </div>
+                            <div style="color:var(--text-dim);font-size:0.75rem;">
+                                Results post within 2–3 minutes of jump time.
+                            </div>
+                        </div>`;
+                    }
                 }
             } else if (liveRunners.length) {
                 try {
