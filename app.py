@@ -401,16 +401,21 @@ def api_live_race(race_uid: str):
                 # Camelcase aliases expected by frontend
                 merged["earlySpeed"]  = merged.get("early_speed") or ""
                 merged["bestTime"]    = merged.get("best_time")   or ""
-                merged["winProb"]     = merged.get("ff_win_prob") or merged.get("win_prob")
-                merged["placeProb"]   = merged.get("ff_place_prob") or merged.get("place_prob")
+                _ff_wp = merged.get("ff_win_prob")
+                merged["winProb"]     = _ff_wp if _ff_wp is not None else merged.get("win_prob")
+                _ff_pp = merged.get("ff_place_prob")
+                merged["placeProb"]   = _ff_pp if _ff_pp is not None else merged.get("place_prob")
                 merged["formString"]  = merged.get("form_string") or merged.get("form") or ""
-                merged["modelRank"]   = merged.get("ff_model_rank") or merged.get("model_rank")
+                _ff_mr = merged.get("ff_model_rank")
+                merged["modelRank"]   = _ff_mr if _ff_mr is not None else merged.get("model_rank")
                 merged["paceStyle"]   = merged.get("pace_style") or (
                     merged.get("speed_map", {}).get("style")
                     if isinstance(merged.get("speed_map"), dict) else None
                 ) or ""
-                merged["winPct"]      = merged.get("win_pct") or ""
-                merged["placePct"]    = merged.get("place_pct") or ""
+                _wpc = merged.get("win_pct")
+                merged["winPct"]      = _wpc if _wpc is not None else ""
+                _ppc = merged.get("place_pct")
+                merged["placePct"]    = _ppc if _ppc is not None else ""
 
                 # recent_starts: extract from stats_full JSON blob if not present
                 if not merged.get("recent_starts"):

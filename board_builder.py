@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 
 _AEST = ZoneInfo("Australia/Sydney")
 _NTJ_SORT_ORDER = {"IMMINENT": 0, "NEAR": 1, "UPCOMING": 2, "PAST": 3, "UNKNOWN": 4}
+_RESULT_RETENTION_SECS = 7200  # keep resulted races visible for 2 hours post-jump
 
 
 def build_board(
@@ -79,7 +80,7 @@ def build_board(
             status = (race.get("status") or "").lower()
             is_recent_result = (
                 status in {"final", "paying", "result_posted"} and
-                secs is not None and secs > -7200  # within 2 hours of jump
+                secs is not None and secs > -_RESULT_RETENTION_SECS
             )
             if not is_recent_result:
                 settled_count += 1

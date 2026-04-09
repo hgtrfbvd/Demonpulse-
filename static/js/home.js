@@ -1,5 +1,7 @@
 (function () {
     const _AEST = "Australia/Sydney";
+    const NTJ_STRIP_PAST_SECS      = -30;   // minimum seconds-to-jump to include in NTJ strip
+    const COUNTDOWN_TICK_INTERVAL_MS = 1000; // 1 second refresh for local countdown tick
 
     let allBoardItems = [];
     let activeCodeFilter = "ALL";
@@ -144,7 +146,7 @@
             .filter(item => {
                 const st = (item.status || "").toLowerCase();
                 if (["final","paying","result_posted"].includes(st)) return true;
-                return (getSecondsToJump(item) ?? -1) >= -30;
+                return (getSecondsToJump(item) ?? -1) >= NTJ_STRIP_PAST_SECS;
             })
             .sort((a, b) => (getSecondsToJump(a) ?? 99999) - (getSecondsToJump(b) ?? 99999))
             .slice(0, 8);
@@ -353,7 +355,7 @@
                 el.textContent = formatCountdown(secs);
                 el.className = "race-countdown " + countdownClass(secs);
             });
-        }, 1000);
+        }, COUNTDOWN_TICK_INTERVAL_MS);
     }
 
     document.addEventListener("DOMContentLoaded", () => {

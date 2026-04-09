@@ -289,11 +289,12 @@ def _run_result_check():
 
 
 def _run_fast_result_check():
-    """Quick check for races that jumped in the last 15 minutes."""
+    """Quick check for races that jumped in the last FAST_RESULT_LOOKBACK_MINS minutes."""
+    FAST_RESULT_LOOKBACK_MINS = 15
     try:
         from database import get_recently_jumped_races
         from data_engine import check_results
-        races = get_recently_jumped_races(minutes_ago=15)
+        races = get_recently_jumped_races(minutes_ago=FAST_RESULT_LOOKBACK_MINS)
         if races:
             check_results()
             _set_status(last_fast_result_check_at=_utc_now())

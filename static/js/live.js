@@ -1,6 +1,11 @@
 (function () {
     const _AEST = "Australia/Sydney";
 
+    const MAX_PREDICTION_ATTEMPTS    = 2;
+    const PREDICTION_RETRY_BACKOFF_MS = 4000;
+    const PREDICTION_RELOAD_DELAY_MS  = 2500;
+    const JUMPED_THRESHOLD_SECONDS   = -120;
+
     let liveRace = null;
     let liveRunners = [];
     let liveAnalysis = null;
@@ -704,13 +709,13 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             (liveAnalysis?.signal && liveAnalysis.signal !== "—");
         if (!_hasSignal && !["final","paying","result_posted","abandoned"].includes(_status)) {
             const _uid = getRaceUid();
-            if (_uid && (_predAttempts[_uid] || 0) < 2) {
+            if (_uid && (_predAttempts[_uid] || 0) < MAX_PREDICTION_ATTEMPTS) {
                 _predAttempts[_uid] = (_predAttempts[_uid] || 0) + 1;
-                const backoff = _predAttempts[_uid] * 4000;
+                const backoff = _predAttempts[_uid] * PREDICTION_RETRY_BACKOFF_MS;
                 setTimeout(() => {
                     fetch(`/api/predictions/race/${encodeURIComponent(_uid)}`, { method: "POST" })
                         .then(r => r.json())
-                        .then(d => { if (d.ok) setTimeout(loadLiveRace, 2500); })
+                        .then(d => { if (d.ok) setTimeout(loadLiveRace, PREDICTION_RELOAD_DELAY_MS); })
                         .catch(() => {});
                 }, backoff);
             }
@@ -1020,7 +1025,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             if (["final", "paying", "result_posted", "abandoned"].includes(status)) {
                 loadAndRenderResult(raceUid);
             } else if (["jumped_estimated","awaiting_result"].includes(status) ||
-                       (getSecondsNow(liveRace) !== null && getSecondsNow(liveRace) < -120)) {
+                       (getSecondsNow(liveRace) !== null && getSecondsNow(liveRace) < JUMPED_THRESHOLD_SECONDS)) {
                 // Race has jumped — try to load result, fall back to form guide if unavailable
                 try {
                     await loadAndRenderResult(raceUid);
