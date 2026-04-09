@@ -182,7 +182,7 @@ def get_races_for_date(target_date: str) -> list[dict[str, Any]]:
 
 def get_active_races(target_date: str) -> list[dict[str, Any]]:
     """
-    Fetch all live (non-final) races for today.
+    Fetch all live (non-final) races for today, plus recent settled races.
 
     Matches race_status.LIVE_STATUSES: upcoming, open, interim, near_jump,
     jumped_estimated, awaiting_result.  Races that have transitioned beyond
@@ -190,6 +190,10 @@ def get_active_races(target_date: str) -> list[dict[str, Any]]:
     live and must be included so rolling_refresh, near_jump_refresh and
     formfav_sync all operate on the full live race pool rather than a stale
     subset.
+
+    Also includes settled statuses (final, paying, result_posted) so that
+    board_builder can apply its own time-gated filter to keep recent results
+    visible for 2 hours post-jump.
     """
     return safe_query(
         lambda: get_db()
@@ -205,6 +209,9 @@ def get_active_races(target_date: str) -> list[dict[str, Any]]:
                 "near_jump",
                 "jumped_estimated",
                 "awaiting_result",
+                "final",
+                "paying",
+                "result_posted",
             ],
         )
         .order("jump_time")
@@ -364,6 +371,7 @@ def upsert_result(result: dict[str, Any]) -> dict[str, Any] | None:
         "track": result.get("track") or "",
         "race_num": result.get("race_num"),
         "code": result.get("code") or "GREYHOUND",
+        "race_uid": result.get("race_uid") or "",
         "winner": result.get("winner") or "",
         "winner_box": result.get("winner_number"),
         "win_price": result.get("win_price"),
@@ -389,7 +397,21 @@ def upsert_result(result: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def get_result(race_uid: str) -> dict[str, Any] | None:
-    """Fetch a stored result by race_uid (parsed from date/track/race_num/code)."""
+    """Fetch a stored result by race_uid — tries direct lookup first, then parsed fallback."""
+    # Fast path: direct race_uid lookup
+    direct = safe_query(
+        lambda: get_db()
+        .table(T("results_log"))
+        .select("*")
+        .eq("race_uid", race_uid)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if direct:
+        return direct[0]
+
+    # Fallback: parse race_uid into components (handles legacy rows without race_uid)
     parts = (race_uid or "").split("_")
     if len(parts) < 4:
         return None
@@ -434,6 +456,19 @@ def get_blocked_races(target_date: str) -> list[dict[str, Any]]:
         .select("race_uid,block_code,track,race_num,code")
         .eq("date", target_date)
         .eq("status", "blocked")
+        .execute()
+        .data,
+        [],
+    ) or []
+
+
+def get_recently_jumped_races(minutes_ago: int = 15) -> list[dict]:
+    """Return races that jumped within the last N minutes and have no confirmed result yet."""
+    return safe_query(
+        lambda: get_db()
+        .table(T("today_races"))
+        .select("race_uid, track, race_num, jump_time, status")
+        .in_("status", ["jumped_estimated", "awaiting_result", "pending", "open"])
         .execute()
         .data,
         [],
@@ -568,6 +603,8 @@ def upsert_formfav_runner_enrichment(data: dict[str, Any]) -> dict[str, Any] | N
         "model_rank":         int(data["model_rank"]) if data.get("model_rank") is not None else None,
         "confidence":         data.get("confidence") or "",
         "model_version":      data.get("model_version") or "",
+        "early_speed":        data.get("early_speed"),
+        "pace_style":         data.get("speed_map", {}).get("style") if isinstance(data.get("speed_map"), dict) else None,
         "last20_starts":      data.get("last20_starts") or "",
         "racing_colours":     data.get("racing_colours") or "",
         "gear_change":        data.get("gear_change") or "",

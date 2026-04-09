@@ -39,6 +39,7 @@ FULL_SWEEP_ON_START = True
 REFRESH_INTERVAL = 150          # 2.5 min — broad OddsPro refresh
 NEAR_JUMP_INTERVAL = 60         # 1 min — near-jump OddsPro + FormFav
 RESULT_CHECK_INTERVAL = 300     # 5 min — OddsPro result sweep
+FAST_RESULT_INTERVAL = 90       # 90 s — quick check for recently-jumped races
 RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
 FORMFAV_SYNC_INTERVAL = 180     # 3 min — FormFav persistent enrichment sync
@@ -79,10 +80,12 @@ _scheduler_status = {
     "last_formfav_sync_result": None,
     "last_market_snapshot_at": None,
     "last_market_snapshot_result": None,
+    "last_fast_result_check_at": None,
     "last_error": None,
     "refresh_interval": REFRESH_INTERVAL,
     "near_jump_interval": NEAR_JUMP_INTERVAL,
     "result_check_interval": RESULT_CHECK_INTERVAL,
+    "fast_result_interval": FAST_RESULT_INTERVAL,
     "race_state_interval": RACE_STATE_INTERVAL,
     "health_snapshot_interval": HEALTH_SNAPSHOT_INTERVAL,
     "formfav_sync_interval": FORMFAV_SYNC_INTERVAL,
@@ -221,6 +224,16 @@ def _run_near_jump():
         except Exception:
             pass
 
+        # Trigger FormFav sync when near-jump races are detected so runner cards
+        # have win probabilities before the race goes off
+        if result.get("near_jump_races", 0) > 0:
+            try:
+                from data_engine import formfav_sync
+                formfav_sync()
+                log.info("near_jump: triggered formfav_sync for near-jump races")
+            except Exception as _e:
+                log.warning(f"near_jump formfav_sync failed: {_e}")
+
         # Rebuild board if near-jump races were refreshed
         if ok and result.get("races_refreshed", 0) > 0:
             _trigger_board_rebuild()
@@ -273,6 +286,19 @@ def _run_result_check():
         return result
     finally:
         _result_check_lock.release()
+
+
+def _run_fast_result_check():
+    """Quick check for races that jumped in the last 15 minutes."""
+    try:
+        from database import get_recently_jumped_races
+        from data_engine import check_results
+        races = get_recently_jumped_races(minutes_ago=15)
+        if races:
+            check_results()
+            _set_status(last_fast_result_check_at=_utc_now())
+    except Exception as e:
+        log.warning(f"fast_result_check failed: {e}")
 
 
 def _run_race_state_update():
@@ -424,6 +450,7 @@ def run_scheduler():
     last_refresh = now
     last_near_jump = now
     last_result_check = now
+    last_fast_result_check = now
     last_race_state = now
     last_health_snapshot = now
     last_formfav_sync = now  # full_sweep triggers formfav_sync directly when races are stored
@@ -437,6 +464,7 @@ def run_scheduler():
             last_refresh = now
             last_near_jump = now
             last_result_check = now
+            last_fast_result_check = now
             last_race_state = now
             last_health_snapshot = now
         except Exception as e:
@@ -468,6 +496,10 @@ def run_scheduler():
             if now - last_result_check >= RESULT_CHECK_INTERVAL:
                 _run_result_check()
                 last_result_check = now
+
+            if now - last_fast_result_check >= FAST_RESULT_INTERVAL:
+                _run_fast_result_check()
+                last_fast_result_check = now
 
             if now - last_race_state >= RACE_STATE_INTERVAL:
                 _run_race_state_update()

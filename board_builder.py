@@ -71,10 +71,20 @@ def build_board(
         if race_uid and is_duplicate(race_uid, seen_uids):
             continue
 
-        # Skip settled races
+        # Skip settled races — but keep recent results visible for 2 hours
         if not is_race_live(race):
-            settled_count += 1
-            continue
+            jump_time_raw = race.get("jump_time")
+            ntj_check = compute_ntj(jump_time_raw, race.get("date"))
+            secs = ntj_check.get("seconds_to_jump")
+            status = (race.get("status") or "").lower()
+            is_recent_result = (
+                status in {"final", "paying", "result_posted"} and
+                secs is not None and secs > -7200  # within 2 hours of jump
+            )
+            if not is_recent_result:
+                settled_count += 1
+                continue
+            # Fall through — recent resulted race stays on board
 
         # Compute NTJ from stored jump_time (needed for filter, sort, and expiry)
         ntj = compute_ntj(race.get("jump_time"), race.get("date"))

@@ -121,6 +121,30 @@ class RunnerRecord:
             self.stats_json = {}
 
 
+def _extract_early_speed(speed_map: dict) -> str | None:
+    """Extract early speed position from a FormFav speedMap dict."""
+    if not speed_map or not isinstance(speed_map, dict):
+        return None
+    pos = (speed_map.get("earlyPosition") or
+           speed_map.get("early") or
+           speed_map.get("position") or
+           speed_map.get("earlySpeed"))
+    return str(pos) if pos is not None else None
+
+
+def _format_career(overall: dict | None) -> str | None:
+    """Format a FormFav stats overall dict into a parseable career string."""
+    if not overall or not isinstance(overall, dict):
+        return None
+    starts = overall.get("starts") or overall.get("totalStarts") or 0
+    wins   = overall.get("wins")   or overall.get("totalWins")   or 0
+    places = overall.get("places") or overall.get("totalPlaces") or 0
+    shows  = overall.get("shows")  or overall.get("thirds")      or 0
+    if not starts:
+        return None
+    return f"{starts}: {wins}-{places}-{shows}"
+
+
 class FormFavConnector:
     source_name = "formfav"
     supported_codes = ("HORSE", "HARNESS", "GREYHOUND")
@@ -340,7 +364,7 @@ class FormFavConnector:
                     jockey=runner.get("jockey") or "",
                     driver=runner.get("driver") or "",
                     weight=runner.get("weight"),
-                    career=str(overall) if overall else None,
+                    career=_format_career(overall),
                     stats_json=stats,
                     source_confidence="api",
                     # Extended runner fields
@@ -350,6 +374,7 @@ class FormFavConnector:
                     form_string=runner.get("form") or "",
                     decorators=runner.get("decorators") or [],
                     speed_map=runner.get("speedMap") or None,
+                    early_speed=_extract_early_speed(runner.get("speedMap") or {}),
                     class_profile=runner.get("classProfile") or None,
                     race_class_fit=runner.get("raceClassFit") or None,
                     stats_track=stats.get("track") or None,

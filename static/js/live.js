@@ -8,6 +8,7 @@
     let allMeetingRaces = [];
     let countdownTimer = null;
     const aiCommentaryCache = {};  // keyed by race_uid + "_" + box
+    const _predAttempts = {};      // per-race-uid prediction auto-trigger counter
 
     const q = (id) => document.getElementById(id);
 
@@ -61,6 +62,7 @@
     function getStatusBadgeClass(secs, status) {
         const st = (status || "").toLowerCase();
         if (["final", "paying", "result_posted"].includes(st)) return "badge-resulted";
+        if (st === "abandoned") return "badge-abandoned";
         if (["jumped_estimated", "awaiting_result"].includes(st) || (secs != null && secs < 0)) return "badge-pending";
         if (secs != null && secs < 120) return "badge-imminent";
         if (secs != null && secs < 600) return "badge-near";
@@ -70,6 +72,7 @@
     function getStatusLabel(secs, status) {
         const st = (status || "").toLowerCase();
         if (["final", "paying", "result_posted"].includes(st)) return "RESULTED";
+        if (st === "abandoned") return "ABANDONED";
         if (["jumped_estimated", "awaiting_result"].includes(st) || (secs != null && secs < 0)) return "PENDING";
         if (secs != null && secs < 120) return "IMMINENT";
         return "";
@@ -480,8 +483,9 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 jockey: r.jockey || r.driver || "",
                 bestTime: r.best_time || r.bestTime || "",
                 weight: r.weight || "",
-                career: r.career || "",
-                earlySpeed: r.early_speed || "",
+                career: r.career || r.stats_career || "",
+                earlySpeed: r.early_speed || r.earlySpeed || "",
+                paceStyle: r.paceStyle || r.pace_style || "",
                 odds,
                 winProb,
                 rank,
@@ -693,6 +697,24 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
         setText("analysisWeather", liveAnalysis?.weather || "—");
         setText("analysisConfidence", liveAnalysis?.confidence || liveSignal?.confidence || "—");
         setText("analysisEV", liveSignal?.ev ?? liveAnalysis?.ev ?? "—");
+
+        // Auto-trigger prediction if no signal data exists and race is not finished
+        const _status = (liveRace?.status || "").toLowerCase();
+        const _hasSignal = (liveSignal?.signal && liveSignal.signal !== "—") ||
+            (liveAnalysis?.signal && liveAnalysis.signal !== "—");
+        if (!_hasSignal && !["final","paying","result_posted","abandoned"].includes(_status)) {
+            const _uid = getRaceUid();
+            if (_uid && (_predAttempts[_uid] || 0) < 2) {
+                _predAttempts[_uid] = (_predAttempts[_uid] || 0) + 1;
+                const backoff = _predAttempts[_uid] * 4000;
+                setTimeout(() => {
+                    fetch(`/api/predictions/race/${encodeURIComponent(_uid)}`, { method: "POST" })
+                        .then(r => r.json())
+                        .then(d => { if (d.ok) setTimeout(loadLiveRace, 2500); })
+                        .catch(() => {});
+                }, backoff);
+            }
+        }
     }
 
     // -------------------------------------------------------
@@ -954,6 +976,11 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                             ${data.margin ? `<div class="result-row"><span style="color:var(--text-dim);font-size:0.8rem;">MARGIN</span><span>${esc(String(data.margin))}</span></div>` : ""}
                         </div>
                     </div>`;
+            } else if (data.ok) {
+                container.innerHTML = `<div style="padding:24px;text-align:center;">
+                    <div style="color:var(--amber);font-size:0.85rem;letter-spacing:.06em;">AWAITING OFFICIAL RESULT</div>
+                    <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">Results post within 2–3 minutes of jump</div>
+                </div>`;
             } else {
                 container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim);">Result not yet available.</div>`;
             }
@@ -992,6 +1019,14 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             const status = (liveRace?.status || "").toLowerCase();
             if (["final", "paying", "result_posted", "abandoned"].includes(status)) {
                 loadAndRenderResult(raceUid);
+            } else if (["jumped_estimated","awaiting_result"].includes(status) ||
+                       (getSecondsNow(liveRace) !== null && getSecondsNow(liveRace) < -120)) {
+                // Race has jumped — try to load result, fall back to form guide if unavailable
+                try {
+                    await loadAndRenderResult(raceUid);
+                } catch (_) {
+                    if (liveRunners.length) buildRunnerCards(liveRunners, liveAnalysis);
+                }
             } else if (liveRunners.length) {
                 try {
                     buildRunnerCards(liveRunners, liveAnalysis);

@@ -171,6 +171,13 @@ def predict_from_snapshot(
         result["decision"] = sig.get("decision") or top_runner.get("decision", "—")
         result["ev"]       = sig.get("ev")
 
+        # Persist signal to signals table for fast lookup
+        try:
+            from signals import save_signal
+            save_signal(race_uid, sig)
+        except Exception as _se:
+            log.warning(f"predictor: save_signal failed: {_se}")
+
         # Persist signal columns back to the snapshot row
         try:
             from db import get_db, T

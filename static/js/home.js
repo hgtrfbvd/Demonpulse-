@@ -68,7 +68,10 @@
         return "ntj-upcoming";
     }
 
-    function statusClass(secs) {
+    function statusClass(secs, status) {
+        const st = (status || "").toLowerCase();
+        if (["final","paying","result_posted"].includes(st)) return "status-resulted";
+        if (st === "abandoned") return "status-abandoned";
         if (secs == null)  return "status-upcoming";
         if (secs < -1800)  return "status-awaiting";
         if (secs < 0)      return "status-pending";
@@ -77,7 +80,10 @@
         return "status-upcoming";
     }
 
-    function statusLabel(secs) {
+    function statusLabel(secs, status) {
+        const st = (status || "").toLowerCase();
+        if (["final","paying","result_posted"].includes(st)) return "RESULTED";
+        if (st === "abandoned") return "ABANDONED";
         if (secs == null)  return "UPCOMING";
         if (secs < -1800)  return "AWAITING";
         if (secs < 0)      return "PENDING";
@@ -135,7 +141,11 @@
 
         // Sort by soonest and take first 8
         const sorted = [...items]
-            .filter(item => (getSecondsToJump(item) ?? -1) >= -30)
+            .filter(item => {
+                const st = (item.status || "").toLowerCase();
+                if (["final","paying","result_posted"].includes(st)) return true;
+                return (getSecondsToJump(item) ?? -1) >= -30;
+            })
             .sort((a, b) => (getSecondsToJump(a) ?? 99999) - (getSecondsToJump(b) ?? 99999))
             .slice(0, 8);
 
@@ -179,8 +189,8 @@
             const racesHtml = meeting.races.map(race => {
                 const secs = getSecondsToJump(race);
                 const cdCls = countdownClass(secs);
-                const sCls = statusClass(secs);
-                const sLabel = statusLabel(secs);
+                const sCls = statusClass(secs, race.status);
+                const sLabel = statusLabel(secs, race.status);
                 const uid = race.race_uid || "";
                 const gradeDist = [race.grade, race.distance ? race.distance + "m" : null]
                     .filter(Boolean).join(" • ") || "—";
@@ -193,7 +203,7 @@
                             </div>
                         </div>
                         <div class="race-row-right">
-                            <span class="race-countdown ${cdCls}">${formatCountdown(secs)}</span>
+                            <span class="race-countdown ${cdCls}" data-jump-iso="${race.jump_dt_iso || ''}">${formatCountdown(secs)}</span>
                             <span class="race-status-badge ${sCls}">${sLabel}</span>
                             <span class="race-arrow">›</span>
                         </div>
@@ -290,8 +300,8 @@
                 cdEl.className = `race-countdown ${countdownClass(secs)}`;
             }
             if (sbEl) {
-                sbEl.textContent = statusLabel(secs);
-                sbEl.className = `race-status-badge ${statusClass(secs)}`;
+                sbEl.textContent = statusLabel(secs, item.status);
+                sbEl.className = `race-status-badge ${statusClass(secs, item.status)}`;
             }
         });
 
@@ -333,6 +343,19 @@
     // Boot
     // -------------------------------------------------------
 
+    function startLocalCountdownTick() {
+        if (window._localTick) clearInterval(window._localTick);
+        window._localTick = setInterval(() => {
+            document.querySelectorAll(".race-countdown[data-jump-iso]").forEach(el => {
+                const iso = el.dataset.jumpIso;
+                if (!iso) return;
+                const secs = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
+                el.textContent = formatCountdown(secs);
+                el.className = "race-countdown " + countdownClass(secs);
+            });
+        }, 1000);
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
         // Filter tab clicks
         document.querySelectorAll(".filter-tab").forEach(btn => {
@@ -353,6 +376,6 @@
         // Auto-refresh board every 30 seconds
         refreshTimer = setInterval(loadHomeBoard, 30000);
 
-        loadHomeBoard();
+        loadHomeBoard().then(() => startLocalCountdownTick());
     });
 })();
