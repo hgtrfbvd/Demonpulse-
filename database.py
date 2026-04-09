@@ -260,6 +260,7 @@ def sync_result_statuses() -> int:
     update failed silently due to race_uid mismatch.
     Returns count of rows fixed.
     """
+    from data_engine import _update_race_status_fallback
     today = date.today().isoformat()
     results = safe_query(
         lambda: get_db()
@@ -280,7 +281,6 @@ def sync_result_statuses() -> int:
                 fixed += 1
                 continue
         # Fallback by fields when race_uid lookup fails
-        from data_engine import _update_race_status_fallback
         _update_race_status_fallback(
             date=res.get("date"),
             track=res.get("track"),

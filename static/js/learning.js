@@ -234,7 +234,7 @@
         try {
             const data = await api("/api/predictions/performance");
             const total = data.total_evaluated || 0;
-            if (total < 20) {
+            if (total < 50) {
                 patEl.innerHTML = `<div class="activity-empty">Pattern analysis builds after 50+ evaluated races.<br>Currently at ${total} — keep the system running.</div>`;
             } else {
                 const winRate = data.win_rate || 0;
