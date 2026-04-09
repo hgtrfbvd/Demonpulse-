@@ -43,8 +43,6 @@ FAST_RESULT_INTERVAL = 90       # 90 s — quick check for recently-jumped races
 RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
 FORMFAV_SYNC_INTERVAL = 180     # 3 min — FormFav persistent enrichment sync
-MARKET_SNAPSHOT_INTERVAL = 300  # 5 min — OddsPro movers/drifters/top-favs
-EVAL_BACKFILL_INTERVAL = 3600   # once per hour, backfills missed evaluations
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -79,8 +77,6 @@ _scheduler_status = {
     "last_health_snapshot_at": None,
     "last_formfav_sync_at": None,
     "last_formfav_sync_result": None,
-    "last_market_snapshot_at": None,
-    "last_market_snapshot_result": None,
     "last_fast_result_check_at": None,
     "last_error": None,
     "refresh_interval": REFRESH_INTERVAL,
@@ -90,7 +86,6 @@ _scheduler_status = {
     "race_state_interval": RACE_STATE_INTERVAL,
     "health_snapshot_interval": HEALTH_SNAPSHOT_INTERVAL,
     "formfav_sync_interval": FORMFAV_SYNC_INTERVAL,
-    "market_snapshot_interval": MARKET_SNAPSHOT_INTERVAL,
 }
 
 
@@ -394,70 +389,6 @@ def _run_formfav_sync():
         log.error(f"FormFav sync failed: {e}")
 
 
-def _run_market_snapshot():
-    """Fetch OddsPro movers/drifters/top-favs and store in market_snapshots."""
-    try:
-        from data_engine import market_snapshot_sweep
-        result = market_snapshot_sweep()
-        _set_status(
-            last_market_snapshot_at=_utc_now(),
-            last_market_snapshot_result=result,
-        )
-        stored = result.get("stored", 0)
-        if stored > 0:
-            log.info(f"scheduler: market_snapshot: stored={stored}")
-        else:
-            log.debug(f"scheduler: market_snapshot: {result.get('reason', 'nothing stored')}")
-    except Exception as e:
-        log.error(f"Market snapshot failed: {e}")
-
-
-def _run_evaluation_backfill():
-    """Evaluate any predictions that have results but no evaluation record."""
-    try:
-        from db import get_db, safe_query, T
-        from ai.learning_store import evaluate_prediction
-        from database import get_result
-
-        # Find prediction_snapshots with a result but no evaluation
-        snaps = safe_query(
-            lambda: get_db()
-            .table(T("prediction_snapshots"))
-            .select("race_uid")
-            .execute()
-            .data,
-            []
-        ) or []
-
-        evaluated = safe_query(
-            lambda: get_db()
-            .table(T("learning_evaluations"))
-            .select("race_uid")
-            .execute()
-            .data,
-            []
-        ) or []
-
-        evaluated_uids = {r["race_uid"] for r in evaluated if r.get("race_uid")}
-        snap_uids = {r["race_uid"] for r in snaps if r.get("race_uid")}
-        pending_evaluations = snap_uids - evaluated_uids
-
-        backfilled = 0
-        for race_uid in list(pending_evaluations)[:50]:   # cap at 50 per run
-            stored = get_result(race_uid)
-            if stored and stored.get("winner"):
-                try:
-                    evaluate_prediction(race_uid, stored)
-                    backfilled += 1
-                except Exception:
-                    pass
-
-        if backfilled:
-            log.info(f"scheduler: backfilled {backfilled} evaluations")
-
-    except Exception as e:
-        log.warning(f"evaluation_backfill failed: {e}")
-
 
 # --------------------------------------------------------
 # BOARD REBUILD HELPERS
@@ -509,8 +440,6 @@ def run_scheduler():
     last_race_state = now
     last_health_snapshot = now
     last_formfav_sync = now  # full_sweep triggers formfav_sync directly when races are stored
-    last_market_snapshot = now - MARKET_SNAPSHOT_INTERVAL  # run on first loop
-    last_eval_backfill = 0
 
     if FULL_SWEEP_ON_START:
         try:
@@ -568,14 +497,6 @@ def run_scheduler():
             if now - last_formfav_sync >= FORMFAV_SYNC_INTERVAL:
                 _run_formfav_sync()
                 last_formfav_sync = now
-
-            if now - last_market_snapshot >= MARKET_SNAPSHOT_INTERVAL:
-                _run_market_snapshot()
-                last_market_snapshot = now
-
-            if now - last_eval_backfill >= EVAL_BACKFILL_INTERVAL:
-                _run_evaluation_backfill()
-                last_eval_backfill = now
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")
