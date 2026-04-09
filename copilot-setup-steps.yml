@@ -31,5 +31,7 @@ jobs:
       - name: Show network targets
         run: |
           echo "Expecting outbound access to:"
-          echo " - oddspro.com.au"
-          echo " - api.formfav.com"
+          echo " - www.thedogs.com.au"
+          echo " - thedogs.com.au"
+          echo " - api.anthropic.com"
+          echo " - nqfxxacxysegwhbjavhm.supabase.co"
