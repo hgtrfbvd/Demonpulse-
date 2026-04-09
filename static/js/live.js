@@ -302,8 +302,9 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
     function buildExpandGrid(r) {
         // ---- Parse career string "starts: W-P-S" ----
         let careerStarts = 0, careerWins = 0, careerPlaces = 0, careerShows = 0;
-        if (r.career) {
-            const m = r.career.match(/^(\d+):\s*(\d+)-(\d+)-(\d+)/);
+        const careerStr = r.career || r.stats_career || "";
+        if (careerStr) {
+            const m = careerStr.match(/^(\d+):\s*(\d+)-(\d+)-(\d+)/);
             if (m) {
                 careerStarts = parseInt(m[1], 10);
                 careerWins   = parseInt(m[2], 10);
@@ -328,6 +329,15 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
                 paceStyle = obj.paceStyle ?? obj.pace ?? "—";
             }
         }
+        // Fallback: derive paceStyle from ff_speed_map if class_profile empty
+        if (paceStyle === "—" && r.ff_speed_map) {
+            const sm = typeof r.ff_speed_map === "string"
+                ? (() => { try { return JSON.parse(r.ff_speed_map); } catch(_) { return null; } })()
+                : r.ff_speed_map;
+            if (sm) paceStyle = sm.style ?? sm.paceStyle ?? sm.position ?? "—";
+        }
+        // Fallback: use paceStyle field directly from runner
+        if (paceStyle === "—" && r.paceStyle) paceStyle = r.paceStyle;
 
         // ---- Parse class fit ----
         let classFitStr = "—";
@@ -346,7 +356,12 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
         const aiWinProb = r.ff_win_prob != null ? r.ff_win_prob.toFixed(1) + "%"
                         : r.winProb     != null ? r.winProb.toFixed(1) + "%" : "—";
 
-        const hasData = r.career || r.form || r.bestTime || r.ff_win_prob != null;
+        const hasData = (r.career && r.career.trim())
+            || (r.form   && r.form.trim())
+            || r.bestTime
+            || r.ff_win_prob != null
+            || r.winProb != null
+            || r.odds != null;
 
         if (!hasData) {
             return `

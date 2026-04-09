@@ -134,6 +134,57 @@ Be direct. If ROI is negative, say so clearly.`;
         }
     }
 
+    function renderBreakdowns(data) {
+        const section = q("btBreakdownSection");
+        if (section) section.style.display = "block";
+
+        function breakdownHtml(map) {
+            if (!map || !Object.keys(map).length) {
+                return `<div class="activity-empty">No data.</div>`;
+            }
+            return Object.entries(map).map(([key, stats]) => `
+                <div style="display:flex;justify-content:space-between;align-items:center;
+                            padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <span style="font-size:0.8rem;font-weight:600;">${key}</span>
+                    <span style="font-size:0.75rem;color:var(--text-dim);">
+                        ${stats.samples || 0} races &nbsp;·&nbsp;
+                        ${stats.win_rate || "0%"} hit &nbsp;·&nbsp;
+                        <span style="color:${String(stats.roi || "").startsWith("-") ? "var(--red-1)" : "var(--green)"};">
+                            ${stats.roi || "0%"}
+                        </span>
+                    </span>
+                </div>
+            `).join("");
+        }
+
+        const codeEl = q("btCodeBreakdown");
+        const sigEl  = q("btSignalBreakdown");
+        if (codeEl) codeEl.innerHTML = breakdownHtml(data.breakdown_by_code);
+        if (sigEl)  sigEl.innerHTML  = breakdownHtml(data.breakdown_by_signal);
+    }
+
+    function bindExport(rows, label) {
+        const btn = q("exportBacktestBtn");
+        if (!btn || !rows?.length) return;
+        btn.onclick = () => {
+            const headers = ["Date", "Race", "Selection", "Actual", "Decision", "Confidence", "P/L"];
+            const csv = [
+                headers.join(","),
+                ...rows.map(r => [
+                    r.date || "", r.race || "", r.selection || "",
+                    r.actual || "", r.decision || "", r.confidence || "", r.pl || ""
+                ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))
+            ].join("\n");
+            const blob = new Blob([csv], { type: "text/csv" });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement("a");
+            a.href     = url;
+            a.download = `backtest_${label || "run"}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+    }
+
     async function runBacktest() {
         const from = q("btDateFrom")?.value;
         const to   = q("btDateTo")?.value;
@@ -185,6 +236,8 @@ Be direct. If ROI is negative, say so clearly.`;
 
                 renderDecisionPill(summary.verdict || "—");
                 renderRows(rows);
+                renderBreakdowns(data);
+                bindExport(rows, `${from}_to_${to}`);
                 renderErrors(errors);
                 setText("btControlMeta", "Backtest complete");
 

@@ -41,6 +41,8 @@
             <button class="report-tab active" data-learn-tab="activity">Live Activity</button>
             <button class="report-tab" data-learn-tab="config">Configuration</button>
             <button class="report-tab" data-learn-tab="performance">Performance</button>
+            <button class="report-tab" data-learn-tab="insights">Insights</button>
+            <button class="report-tab" data-learn-tab="patterns">Patterns</button>
         </div>
     </section>
 
@@ -168,6 +170,73 @@
                     <div class="learn-chip-val" id="perfEvaluated">—</div>
                 </div>
             </div>
+        </div>
+    </section>
+
+    <!-- INSIGHTS SECTION -->
+    <section class="learning-section" id="learn-insights" style="display:none;">
+        <div class="learn-main-grid">
+            <div class="card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">MODEL INSIGHTS</div>
+                        <h2 class="section-title">What the Model Has Learned</h2>
+                    </div>
+                    <button class="dp-btn" id="refreshInsightsBtn" style="font-size:0.8rem;">Refresh</button>
+                </div>
+                <div id="learnInsightsList">
+                    <div class="activity-empty">Loading insights...</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">SIGNAL BREAKDOWN</div>
+                        <h2 class="section-title">Win Rate by Signal Type</h2>
+                    </div>
+                </div>
+                <div id="learnSignalBreakdown">
+                    <div class="activity-empty">Loading signal data...</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- PATTERNS SECTION -->
+    <section class="learning-section" id="learn-patterns" style="display:none;">
+        <div class="card">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">MISTAKE PATTERNS</div>
+                    <h2 class="section-title">Repeated Failure Conditions</h2>
+                </div>
+            </div>
+            <div id="learnPatternsList">
+                <div class="activity-empty">No pattern data yet — needs 50+ evaluated races.</div>
+            </div>
+        </div>
+        <div class="card" style="margin-top:12px;">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">MODEL CONTROLS</div>
+                    <h2 class="section-title">Retrain / Version</h2>
+                </div>
+            </div>
+            <div class="settings-grid">
+                <div class="settings-field">
+                    <label class="settings-label">Current Version</label>
+                    <div class="settings-value" id="learnCurrentVersion">—</div>
+                </div>
+                <div class="settings-field">
+                    <label class="settings-label">Evaluations Available</label>
+                    <div class="settings-value" id="learnEvalCount">—</div>
+                </div>
+            </div>
+            <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+                <button class="dp-btn dp-btn-primary" id="triggerPredictTodayBtn">Predict All Today</button>
+                <a href="/backtesting" class="dp-btn" style="text-decoration:none;">Backtesting Terminal →</a>
+            </div>
+            <div class="section-meta" id="learnPatternsMeta" style="margin-top:8px;"></div>
         </div>
     </section>
 

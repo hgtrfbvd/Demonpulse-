@@ -38,6 +38,14 @@ except Exception as _bp_err:
 
 
 # ------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------
+def _nonempty(val):
+    """Return val if it is a non-empty non-whitespace string, else None."""
+    return val if val and str(val).strip() else None
+
+
+# ------------------------------------------------------------
 # STARTUP
 # ------------------------------------------------------------
 _started = False
@@ -530,9 +538,21 @@ def api_live_race(race_uid: str):
             "confidence": stored_pred.get("confidence") or race_out.get("confidence"),
             "selection":  stored_pred.get("selection"),
             "ev":         stored_pred.get("ev"),
-            "pace_type":  formfav.get("pace_scenario") or formfav.get("paceScenario") or stored_pred.get("pace_type"),
-            "race_shape": formfav.get("race_shape") or formfav.get("beneficiary") or formfav.get("weather") or stored_pred.get("race_shape"),
-            "weather":    race_out.get("weather") or formfav.get("weather"),
+            "pace_type":  (_nonempty(formfav.get("pace_scenario"))
+                          or _nonempty(formfav.get("paceScenario"))
+                          or _nonempty(stored_pred.get("pace_type"))
+                          or "—"),
+            "race_shape": (_nonempty(formfav.get("race_shape"))
+                          or _nonempty(formfav.get("beneficiary"))
+                          or _nonempty(formfav.get("weather"))
+                          or _nonempty(stored_pred.get("race_shape"))
+                          or "—"),
+            "weather":    (_nonempty(race_out.get("weather"))
+                          or _nonempty(formfav.get("weather"))
+                          or "—"),
+            "condition":  (_nonempty(race_out.get("track_condition"))
+                          or _nonempty(race_out.get("condition"))
+                          or "—"),
             "pass_reason": None,
             "all_runners": [
                 {
