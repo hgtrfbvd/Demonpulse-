@@ -1,0 +1,5 @@
+allowed_network_hostnames:
+  - www.thedogs.com.au
+  - thedogs.com.au
+  - api.anthropic.com
+  - nqfxxacxysegwhbjavhm.supabase.co
