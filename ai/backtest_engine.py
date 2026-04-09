@@ -251,20 +251,20 @@ def backtest_date_range(
     summary["races_tested"] = races_tested
 
     from collections import defaultdict
-    code_groups: dict = defaultdict(lambda: {"hits": 0, "total": 0, "odds_sum": 0.0, "odds_count": 0})
+    race_code_stats: dict = defaultdict(lambda: {"hits": 0, "total": 0, "odds_sum": 0.0, "odds_count": 0})
 
     for item in run_items:
         code = (item.get("code") or "UNKNOWN").upper()
-        code_groups[code]["total"] += 1
+        race_code_stats[code]["total"] += 1
         if item.get("winner_hit"):
-            code_groups[code]["hits"] += 1
+            race_code_stats[code]["hits"] += 1
         odds = item.get("winner_odds") or 0
         if odds:
-            code_groups[code]["odds_sum"] += float(odds)
-            code_groups[code]["odds_count"] += 1
+            race_code_stats[code]["odds_sum"] += float(odds)
+            race_code_stats[code]["odds_count"] += 1
 
     breakdown_by_code: dict = {}
-    for code, g in code_groups.items():
+    for code, g in race_code_stats.items():
         t = g["total"]
         h = g["hits"]
         avg_o = g["odds_sum"] / g["odds_count"] if g["odds_count"] else 0

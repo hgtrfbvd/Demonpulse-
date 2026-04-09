@@ -130,7 +130,7 @@ def get_today_predictions():
         })
     except Exception as e:
         log.error(f"GET /api/predictions/today failed: {e}")
-        return jsonify({"ok": False, "predictions": [], "error": str(e)}), 500
+        return jsonify({"ok": False, "predictions": [], "error": "Could not retrieve today's predictions"}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +265,7 @@ def _shape_backtest_response(
     avg_odds = result.get("avg_winner_odds") or 0.0
 
     # ROI: (avg_winner_odds * hit_rate) - 1, expressed as percentage
-    roi_float = round((avg_odds * hit_rate) - 1.0, 4) if avg_odds and hit_rate else 0.0
+    roi_float = round((avg_odds * hit_rate) - 1.0, 4) if avg_odds is not None and hit_rate is not None else 0.0
     roi_str   = f"{roi_float * 100:+.1f}%"
 
     # Profit: simulating $1 flat stake per race

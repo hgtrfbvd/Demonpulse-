@@ -1819,7 +1819,7 @@ def _update_race_status_fallback(
         return
     from datetime import datetime, timezone
     from db import get_db, safe_query, T
-    for tv in [track, track.lower(), track.lower().replace(" ", "-"),
+    for track_variant in [track, track.lower(), track.lower().replace(" ", "-"),
                track.lower().replace(" ", "_")]:
         result = safe_query(
             lambda: get_db()
@@ -1831,7 +1831,7 @@ def _update_race_status_fallback(
             .eq("date", date)
             .eq("race_num", race_num)
             .eq("code", code)
-            .ilike("track", tv)
+            .ilike("track", track_variant)
             .execute()
             .data,
             []

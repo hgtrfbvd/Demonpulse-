@@ -434,10 +434,10 @@ def _run_evaluation_backfill():
 
         evaluated_uids = {r["race_uid"] for r in evaluated if r.get("race_uid")}
         snap_uids = {r["race_uid"] for r in snaps if r.get("race_uid")}
-        pending = snap_uids - evaluated_uids
+        pending_evaluations = snap_uids - evaluated_uids
 
         backfilled = 0
-        for race_uid in list(pending)[:50]:   # cap at 50 per run
+        for race_uid in list(pending_evaluations)[:50]:   # cap at 50 per run
             stored = get_result(race_uid)
             if stored and stored.get("winner"):
                 try:
