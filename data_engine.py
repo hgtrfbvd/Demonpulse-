@@ -1011,6 +1011,11 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
 
     try:
         results = conn.fetch_results(today, location="domestic")
+        log.info(
+            f"check_results: OddsPro returned {len(results)} raw results "
+            f"for {today}. "
+            f"First result sample: {vars(results[0]) if results else 'NONE'}"
+        )
     except Exception as e:
         log.error(f"check_results: fetch_results failed: {e}")
         return {"ok": False, "error": "Data engine error", "date": today}
@@ -1022,6 +1027,12 @@ def check_results(target_date: str | None = None) -> dict[str, Any]:
             # Single-race confirmation before writing — never write without confirmation
             confirmed = conn.fetch_race_result(result.oddspro_race_id)
             if confirmed:
+                log.info(
+                    f"check_results: confirmed {confirmed.race_uid} "
+                    f"winner='{confirmed.winner}' "
+                    f"track='{confirmed.track}' "
+                    f"date='{confirmed.date}'"
+                )
                 _write_result(confirmed)
                 written += 1
             else:
@@ -1786,6 +1797,14 @@ def _write_result(result: Any) -> None:
                     race_num=result_dict.get("race_num"),
                     code=result_dict.get("code"),
                 )
+
+        # Invalidate board cache so next fetch reflects new result status
+        try:
+            from cache import cache_clear
+            from datetime import date as _date
+            cache_clear(f"board:{_date.today().isoformat()}")
+        except Exception:
+            pass
 
         # CRITICAL: trigger prediction evaluation for learning
         if race_uid:

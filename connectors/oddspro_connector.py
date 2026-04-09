@@ -1785,24 +1785,106 @@ class OddsProConnector:
         return runners
 
     def _parse_result(self, item: dict) -> RaceResult | None:
-        race_id = str(item.get("raceId") or item.get("id") or "")
-        race_num_raw = item.get("raceNumber") or item.get("race_number") or item.get("number")
+        """
+        Parse a result item from either:
+        - GET /api/external/results  (day-level sweep)
+        - GET /api/races/:id/results (single-race confirmation)
+
+        API response shapes (from OddsPro documentation):
+          Day-level:   item has raceId, raceNumber, startTime,
+                       meeting.track, meeting.type,
+                       results[{position, runnerNumber, runnerName}]
+          Single-race: same shape, not nested in a data array
+        """
+        # ---- Race number ----
+        race_num_raw = (item.get("raceNumber") or item.get("race_number")
+                        or item.get("number"))
         try:
             race_num = int(race_num_raw)
         except (TypeError, ValueError):
             return None
 
-        race_date = str(item.get("date") or "")
-        track = self._clean_track(item.get("track") or item.get("venue") or "")
-        code = self._normalise_code(item.get("type") or item.get("code") or "HORSE")
+        # ---- Race ID ----
+        race_id = str(item.get("raceId") or item.get("id") or "")
+
+        # ---- Date: from startTime ISO string or date field ----
+        race_date = ""
+        start_time = item.get("startTime") or item.get("start_time") or ""
+        if start_time:
+            # "2025-01-08T03:00:00Z" -> "2025-01-08"
+            race_date = str(start_time)[:10]
+        if not race_date:
+            race_date = str(item.get("date") or "")
+
+        # ---- Track: from meeting.track or top-level ----
+        meeting = item.get("meeting") or {}
+        track_raw = (meeting.get("track") or meeting.get("venue")
+                     or item.get("track") or item.get("venue") or "")
+        track = self._clean_track(track_raw)
+
+        # ---- Code: from meeting.type or top-level ----
+        code_raw = (meeting.get("type") or meeting.get("code")
+                    or item.get("type") or item.get("code") or "HORSE")
+        code = self._normalise_code(code_raw)
+
+        # ---- Build race_uid ----
+        if not race_date or not track or not race_num:
+            return None
         race_uid = self._make_race_uid(race_date, code, track, race_num)
 
+        # ---- Winner: from results array position 1 ----
+        results_list = item.get("results") or []
+        raw_results = item.get("rawResults") or []
+
+        winner_name = ""
+        winner_number = None
+        place_2 = ""
+        place_3 = ""
+
+        if results_list:
+            # Structured results array: [{position, runnerNumber, runnerName}]
+            sorted_results = sorted(
+                results_list,
+                key=lambda r: r.get("position") or 99
+            )
+            if len(sorted_results) >= 1:
+                r1 = sorted_results[0]
+                winner_name = str(r1.get("runnerName") or r1.get("runner_name") or "")
+                winner_number = r1.get("runnerNumber") or r1.get("runner_number")
+            if len(sorted_results) >= 2:
+                r2 = sorted_results[1]
+                place_2 = str(r2.get("runnerName") or r2.get("runner_name") or "")
+            if len(sorted_results) >= 3:
+                r3 = sorted_results[2]
+                place_3 = str(r3.get("runnerName") or r3.get("runner_name") or "")
+
+        elif raw_results:
+            # Fallback: rawResults = [[winnerNumber], [2nd], [3rd]]
+            if len(raw_results) >= 1 and raw_results[0]:
+                winner_number = raw_results[0][0]
+            if len(raw_results) >= 2 and raw_results[1]:
+                place_2 = str(raw_results[1][0])
+            if len(raw_results) >= 3 and raw_results[2]:
+                place_3 = str(raw_results[2][0])
+
+        # Fallback: legacy flat fields (keep for any old API paths)
+        if not winner_name:
+            winner_name = str(item.get("winner") or item.get("winnerName") or "")
+        if not winner_number:
+            winner_number = item.get("winnerNumber")
+        if not place_2:
+            place_2 = str(item.get("place2") or item.get("second") or "")
+        if not place_3:
+            place_3 = str(item.get("place3") or item.get("third") or "")
+
+        # ---- Win price: not in OddsPro results, keep None ----
         win_price_raw = item.get("winPrice") or item.get("win_price")
         try:
             win_price = float(win_price_raw) if win_price_raw is not None else None
         except (TypeError, ValueError):
             win_price = None
 
+        # ---- Margin / winning time ----
         margin_raw = item.get("margin")
         try:
             margin = float(margin_raw) if margin_raw is not None else None
@@ -1815,6 +1897,13 @@ class OddsProConnector:
         except (TypeError, ValueError):
             winning_time = None
 
+        if not winner_name:
+            log.warning(
+                f"OddsPro _parse_result: no winner found for race_uid={race_uid} "
+                f"item_keys={list(item.keys())} "
+                f"results_count={len(results_list)}"
+            )
+
         return RaceResult(
             race_uid=race_uid,
             oddspro_race_id=race_id,
@@ -1822,11 +1911,11 @@ class OddsProConnector:
             track=track,
             race_num=race_num,
             code=code,
-            winner=str(item.get("winner") or item.get("winnerName") or ""),
-            winner_number=item.get("winnerNumber"),
+            winner=winner_name,
+            winner_number=winner_number,
             win_price=win_price,
-            place_2=str(item.get("place2") or item.get("second") or ""),
-            place_3=str(item.get("place3") or item.get("third") or ""),
+            place_2=place_2,
+            place_3=place_3,
             margin=margin,
             winning_time=winning_time,
             source=self.source_name,
