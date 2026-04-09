@@ -161,11 +161,39 @@ def api_system_status():
     # shadow_active is always False until a real shadow-learning module is wired in.
     shadow_active = False
 
+    import scheduler as _sched_module
+    sched_status = _sched_module.get_status()
+
+    # Self-heal: restart scheduler if thread died
+    if not sched_status.get("thread_alive"):
+        try:
+            _sched_module.start_scheduler()
+            log.warning("/api/system/status: restarted dead scheduler thread")
+        except Exception as _se:
+            log.error(f"/api/system/status: scheduler restart failed: {_se}")
+
     return jsonify({
         "ok": True,
         "env": env.mode,
         "shadow_active": shadow_active,
+        "scheduler": sched_status,
     })
+
+
+@app.route("/api/scheduler/watchdog", methods=["POST", "GET"])
+def scheduler_watchdog():
+    """Ensure scheduler is running. Safe to call repeatedly."""
+    try:
+        import scheduler as _s
+        status = _s.get_status()
+        was_alive = status.get("thread_alive", False)
+        if not was_alive:
+            _s.start_scheduler()
+            return jsonify({"ok": True, "action": "restarted", "was_alive": False})
+        return jsonify({"ok": True, "action": "none", "was_alive": True})
+    except Exception as e:
+        log.error(f"/api/scheduler/watchdog failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/env")

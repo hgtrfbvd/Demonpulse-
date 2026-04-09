@@ -253,9 +253,17 @@ def get_board_for_today(
     Per-runner FormFav enrichment is NOT included in the board payload —
     it is served on demand from /api/live/race/<race_uid> only.
     """
+    from cache import cache_get, cache_set
+    today = date.today().isoformat()
+    CACHE_KEY = f"board:{today}"
+    CACHE_TTL = 20  # seconds — short enough for live feel
+
+    cached = cache_get(CACHE_KEY)
+    if cached is not None:
+        return cached
+
     try:
         from database import get_active_races, get_races_for_date, get_blocked_races
-        today = date.today().isoformat()
         races = get_active_races(today)
         all_today = get_races_for_date(today)
         blocked_today = get_blocked_races(today)
@@ -319,13 +327,15 @@ def get_board_for_today(
             else:
                 diagnostics["empty_reason"] = "all_active_races_failed_board_gate"
 
-        return {
+        result = {
             "ok": True,
             "items": board,
             "count": len(board),
             "date": today,
             "diagnostics": diagnostics,
         }
+        cache_set(CACHE_KEY, result, ttl=CACHE_TTL)
+        return result
     except Exception as e:
         log.error(f"board_builder: get_board_for_today failed: {e}")
         return {"ok": False, "items": [], "count": 0, "error": "Board unavailable"}
