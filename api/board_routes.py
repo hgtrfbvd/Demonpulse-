@@ -2,7 +2,7 @@
 api/board_routes.py - DemonPulse Board API Routes
 ===================================================
 Provides the live racing board API.
-Board is built from Claude-scraped data stored in Supabase.
+Board is built from stored race data (GREYHOUND: browser pipeline, HORSE: Claude pipeline).
 """
 from __future__ import annotations
 
