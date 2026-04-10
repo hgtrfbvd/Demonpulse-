@@ -109,7 +109,7 @@ def _run_full_sweep():
         sweep_status = result.get("status", "")
         # Rebuild the board for both full successes and partial-cached sweeps so
         # that a 429 rate-limit never leaves the dashboard blank.
-        should_rebuild = ok or sweep_status in ("partial_cached", "success")
+        should_rebuild = ok or sweep_status == "partial_cached"
         if ok:
             log.info(f"scheduler: full_sweep complete: {result}")
         else:

@@ -481,14 +481,12 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         sweep_status_val = "failed_rate_limited"
     elif stored == 0 and errors > 0:
         sweep_status_val = "failed_parse"
-    elif any_cached and stored > 0:
-        sweep_status_val = "partial_cached"
-    elif stored > 0 and errors == 0:
-        sweep_status_val = "success"
-    elif stored > 0:
+    elif stored == 0:
+        sweep_status_val = "failed_rate_limited"
+    elif any_cached:
         sweep_status_val = "partial_cached"
     else:
-        sweep_status_val = "failed_rate_limited"
+        sweep_status_val = "success"
 
     if stored == 0 and errors == 0:
         log.warning(
@@ -520,8 +518,8 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "last_data_source": data_source,
     })
 
-    # ok=True for success or partial_cached so the scheduler rebuilds the board
-    ok = stored > 0 or sweep_status_val == "partial_cached"
+    # ok=True whenever races were stored (covers both success and partial_cached)
+    ok = stored > 0
     return {
         "ok": ok,
         "date": today,

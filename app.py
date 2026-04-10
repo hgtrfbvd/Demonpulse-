@@ -665,8 +665,9 @@ def api_debug_board_status():
       last_venues_count      — venues returned by last venue-discovery call
       prompt_source/function/hash — active prompt identity
     """
-    from datetime import date as _date
-    today = _date.today().isoformat()
+    from datetime import datetime as _datetime
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    today = _datetime.now(_ZoneInfo("Australia/Sydney")).date().isoformat()
     out: dict = {"ok": True, "date": today}
 
     # Sweep lifecycle
