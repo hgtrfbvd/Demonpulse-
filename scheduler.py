@@ -1,16 +1,16 @@
 """
-scheduler.py - DemonPulse Scheduler
-=====================================
+scheduler.py - DemonPulse V9 Scheduler
+=======================================
 Continuous scheduler for the data pipeline.
 
-Cycles:
-  full_sweep          - fetch all venues for today (every 10 min)
-                        GREYHOUND: browser-based via thedogs.com.au
-                        HORSE: Claude API
-  board_rebuild       - rebuild board from stored data (every 90 s)
-  result_check        - detect jumped races, update statuses (every 3 min)
-  race_state_update   - drive race state machine from stored data (every 90 s)
-  health_snapshot     - aggregate health metrics (every 2 min)
+Cycles (v9 — separate per code type, no overlap):
+  full_sweep       - horse pipeline: Claude API (every 10 min)
+  dogs_visual      - greyhound pipeline: Playwright browser (every 10 min)
+  board_rebuild    - rebuild board from stored data (every 90 s)
+  result_check     - detect jumped races, update statuses (every 3 min)
+  race_state_update- drive race state machine from stored data (every 90 s)
+  health_snapshot  - aggregate health metrics (every 2 min)
+  eval_backfill    - backfill learning evaluations (every 1 hr)
 
 Safety rules:
   - per-cycle threading.Lock prevents overlapping destructive cycles
@@ -31,13 +31,13 @@ log = logging.getLogger(__name__)
 # CONFIG
 # --------------------------------------------------------
 FULL_SWEEP_ON_START = True
-FULL_SWEEP_INTERVAL = 600       # 10 min — fetch all venues
+FULL_SWEEP_INTERVAL = 600       # 10 min — horse pipeline via Claude API
 BOARD_REBUILD_INTERVAL = 90     # 90 s — rebuild board from stored data
 RESULT_CHECK_INTERVAL = 180     # 3 min — check for jumped races
 RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
 EVAL_BACKFILL_INTERVAL = 3600   # once per hour
-DOGS_VISUAL_INTERVAL = 600      # 10 min — visual dogs pipeline (Playwright + OCR)
+DOGS_VISUAL_INTERVAL = 600      # 10 min — greyhound pipeline via Playwright
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -294,11 +294,10 @@ def _run_evaluation_backfill():
         log.warning(f"scheduler: evaluation_backfill failed: {e}")
 
 
-def _run_dogs_visual_pipeline():
+def _run_dogs_visual():
     """
-    Run the Playwright visual pipeline for TheDogs.com.au.
-    Captures board + race screenshots, runs local OCR, saves structured JSON
-    to disk and upserts to Supabase dogs_races table.
+    Greyhound pipeline: Playwright browser collection via thedogs.com.au → store.
+    Calls pipeline.greyhound_sweep() which delegates to services/dogs_board_service.
     Skipped if already running.
     """
     acquired = _dogs_visual_lock.acquire(blocking=False)
@@ -307,23 +306,24 @@ def _run_dogs_visual_pipeline():
         return {"ok": False, "reason": "cycle_already_running"}
 
     try:
-        log.info("scheduler: running dogs_visual_pipeline...")
-        from collectors.dogs_visual_collector import DogsVisualCollector
-        collector = DogsVisualCollector()
-        result = collector.run_full_pipeline()
+        log.info("scheduler: running dogs_visual (greyhound pipeline)...")
+        from pipeline import greyhound_sweep
+        result = greyhound_sweep()
         ok = result.get("ok", False)
         if ok:
-            log.info(f"scheduler: dogs_visual_pipeline complete: {result}")
+            log.info(f"scheduler: dogs_visual complete: {result}")
         else:
-            log.warning(f"scheduler: dogs_visual_pipeline not-ok: {result}")
+            log.warning(f"scheduler: dogs_visual not-ok: {result}")
         _set_status(
             last_dogs_visual_at=_utc_now(),
             last_dogs_visual_result=result,
             last_error=None if ok else (result.get("error") or "dogs_visual_not_ok"),
         )
+        if ok:
+            _trigger_board_rebuild()
         return result
     except Exception as e:
-        log.error(f"scheduler: dogs_visual_pipeline failed: {e}")
+        log.error(f"scheduler: dogs_visual failed: {e}")
         _set_status(
             last_dogs_visual_at=_utc_now(),
             last_error=f"dogs_visual: {e}",
@@ -429,7 +429,7 @@ def run_scheduler():
                 last_eval_backfill = now
 
             if now - last_dogs_visual >= DOGS_VISUAL_INTERVAL:
-                _run_dogs_visual_pipeline()
+                _run_dogs_visual()
                 last_dogs_visual = now
 
         except Exception as e:

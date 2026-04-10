@@ -1,5 +1,5 @@
 """
-auth.py - V8 Authentication & Role Enforcement
+auth.py - V9 Authentication & Role Enforcement
 JWT-based auth, PBKDF2 passwords, role-based access control
 
 ENV NOTES:

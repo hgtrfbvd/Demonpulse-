@@ -1,5 +1,5 @@
 """
-signals.py - V8 Signal Generation Engine
+signals.py - V9 Signal Generation Engine
 Converts scorer output to SNIPER / VALUE / GEM / WATCH / RISK / NO_BET
 
 LIVE MODE:  demo_signal() is blocked — raises EnvViolation

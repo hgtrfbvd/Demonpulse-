@@ -1,5 +1,5 @@
 """
-db.py - V8 Supabase connection — env-aware
+db.py - V9 Supabase connection — env-aware
 All table access goes through env.table() so TEST and LIVE
 never touch the same rows.
 """

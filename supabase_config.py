@@ -1,5 +1,5 @@
 """
-supabase_config.py — DemonPulse V8 Supabase Configuration
+supabase_config.py — DemonPulse V9 Supabase Configuration
 ==========================================================
 Canonical source of truth for all Supabase-related constants,
 environment variable declarations, and validation helpers.

@@ -1,5 +1,5 @@
 """
-services/schema_bootstrap.py — DemonPulse V8 Schema Bootstrap
+services/schema_bootstrap.py — DemonPulse V9 Schema Bootstrap
 ==============================================================
 Responsible for verifying that the database has the required schema,
 and (optionally) running a fresh SQL schema setup on first deploy.

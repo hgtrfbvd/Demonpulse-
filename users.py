@@ -1,5 +1,5 @@
 """
-users.py - DemonPulse V8 Full User Management
+users.py - DemonPulse V9 Full User Management
 Handles: CRUD, per-user accounts, permissions, sessions, activity
 """
 import logging
