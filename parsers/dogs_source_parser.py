@@ -300,9 +300,12 @@ def _extract_runners(soup, errors: list[str]) -> list[dict]:
 
     if not runner_els:
         # Fallback: any table rows with a box number in first cell
+        def _first_cell_text(tr) -> str:
+            td = tr.select_one("td")
+            return td.get_text() if td is not None else ""
         runner_els = [
             tr for tr in soup.select("table tr")
-            if re.match(r"^\s*\d+\s*$", tr.select_one("td").get_text() if tr.select_one("td") else "")
+            if re.match(r"^\s*\d+\s*$", _first_cell_text(tr))
         ]
 
     for el in runner_els:

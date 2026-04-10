@@ -84,8 +84,9 @@ def capture_race(
         }
     """
     target_url = _build_expert_form_url(race_link)
-    slug = re.sub(r"[^a-z0-9]", "_", track_name.lower())
-    prefix = f"race_{slug}_r{race_number}_{date_slug}"
+    # Sanitize track_name for use in filenames — only allow alnum/underscore
+    slug = re.sub(r"[^a-z0-9_]", "", re.sub(r"[^a-z0-9]", "_", track_name.lower()))[:40]
+    prefix = f"race_{slug}_r{int(race_number) if str(race_number).isdigit() else 0}_{re.sub(r'[^0-9-]', '', date_slug)}"
 
     log.info(
         f"[DOGS_CAPTURER] capturing race "
