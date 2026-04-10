@@ -23,11 +23,10 @@ import hashlib
 import logging
 from datetime import datetime
 from typing import Any
-from anthropic import Anthropic
-
 try:
-    from anthropic import RateLimitError as _AnthropicRateLimitError
+    from anthropic import Anthropic, RateLimitError as _AnthropicRateLimitError
 except ImportError:
+    Anthropic = None  # type: ignore[assignment,misc]
     _AnthropicRateLimitError = None  # type: ignore[assignment,misc]
 
 log = logging.getLogger(__name__)
@@ -259,6 +258,11 @@ def _extract_json_from_text(text: str) -> list | dict | None:
 
 class ClaudeScraper:
     def __init__(self):
+        if Anthropic is None:
+            raise ImportError(
+                "The 'anthropic' package is required for the horse pipeline. "
+                "Install it with: pip install anthropic"
+            )
         # max_retries=0: fail fast on 429 so the pipeline can fall back to
         # cached venues immediately rather than blocking for ~51 s.
         self.client = Anthropic(
