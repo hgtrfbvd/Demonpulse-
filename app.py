@@ -362,127 +362,18 @@ def api_live_race(race_uid: str):
         if not runners:
             log.warning(f"/api/live/race: race {race_uid!r} found in today_races but get_runners_for_race returned 0 rows")
 
-        # Merge FormFav runner enrichment data — two-pass join (number then name)
-        try:
-            from database import get_formfav_runner_enrichments
-            ff_runner_rows = get_formfav_runner_enrichments(race_uid)
-            ff_by_number: dict = {}
-            ff_by_name: dict = {}
-            for ff_r in ff_runner_rows:
-                num = ff_r.get("number")
-                if num is not None:
-                    ff_by_number[int(num)] = ff_r
-                name = (ff_r.get("runner_name") or "").strip().lower()
-                if name:
-                    ff_by_name[name] = ff_r
-
-            enriched_runners = []
-            for r in runners:
-                # Pass 1: match by number (most reliable)
-                box = r.get("box_num") or r.get("number") or r.get("barrier")
-                ff = ff_by_number.get(int(box)) if box is not None else None
-
-                # Pass 2: match by name if number lookup failed
-                if not ff:
-                    rname = (r.get("name") or r.get("runner_name") or "").strip().lower()
-                    ff = ff_by_name.get(rname)
-
-                merged = {**r}
-                if ff:
-                    for field in ["form_string", "trainer", "jockey", "driver", "weight", "career",
-                                  "best_time", "win_prob", "place_prob", "model_rank", "confidence",
-                                  "decorators", "speed_map", "class_profile", "race_class_fit",
-                                  "stats_overall", "stats_track", "stats_distance", "stats_condition",
-                                  "stats_track_distance", "stats_full", "model_version"]:
-                        if not merged.get(field) and ff.get(field):
-                            merged[field] = ff[field]
-                    merged["ff_win_prob"]      = ff.get("win_prob")
-                    merged["ff_model_rank"]    = ff.get("model_rank")
-                    merged["ff_confidence"]    = ff.get("confidence")
-                    merged["ff_decorators"]    = ff.get("decorators") or []
-                    merged["ff_speed_map"]     = ff.get("speed_map")
-                    merged["ff_class_profile"] = ff.get("class_profile")
-                    merged["ff_stats_full"]    = ff.get("stats_full") or {}
-                    merged["ff_career_stats"]  = ff.get("stats_overall")
-
-                # Camelcase aliases expected by frontend
-                merged["earlySpeed"]  = merged.get("early_speed") or ""
-                merged["bestTime"]    = merged.get("best_time")   or ""
-                _ff_wp = merged.get("ff_win_prob")
-                merged["winProb"]     = _ff_wp if _ff_wp is not None else merged.get("win_prob")
-                _ff_pp = merged.get("ff_place_prob")
-                merged["placeProb"]   = _ff_pp if _ff_pp is not None else merged.get("place_prob")
-                merged["formString"]  = merged.get("form_string") or merged.get("form") or ""
-                _ff_mr = merged.get("ff_model_rank")
-                merged["modelRank"]   = _ff_mr if _ff_mr is not None else merged.get("model_rank")
-                merged["paceStyle"]   = merged.get("pace_style") or (
-                    merged.get("speed_map", {}).get("style")
-                    if isinstance(merged.get("speed_map"), dict) else None
-                ) or ""
-                _wpc = merged.get("win_pct")
-                merged["winPct"]      = _wpc if _wpc is not None else ""
-                _ppc = merged.get("place_pct")
-                merged["placePct"]    = _ppc if _ppc is not None else ""
-
-                # recent_starts: extract from stats_full JSON blob if not present
-                if not merged.get("recent_starts"):
-                    stats_full = merged.get("ff_stats_full") or merged.get("stats_full") or {}
-                    if isinstance(stats_full, str):
-                        try:    stats_full = json.loads(stats_full)
-                        except: stats_full = {}
-                    merged["recent_starts"] = (
-                        stats_full.get("recent_starts") or
-                        stats_full.get("recentStarts") or []
-                    )
-
-                # career fallback
-                if not merged.get("career"):
-                    merged["career"] = merged.get("stats_career") or ""
-
-                enriched_runners.append(merged)
-            runners = enriched_runners
-        except Exception:
-            pass
-
-        # Attach jockey/trainer connection stats to runners
-        try:
-            from database import get_runner_connection_stats_for_race
-            conn_stats = get_runner_connection_stats_for_race(race_uid)
-            conn_by_runner: dict = {}
-            for cs in conn_stats:
-                num = cs.get("runner_number")
-                if num is not None:
-                    conn_by_runner.setdefault(int(num), []).append(cs)
-
-            for r in runners:
-                box = r.get("box_num") or r.get("number") or r.get("barrier")
-                if box is not None:
-                    stats_list = conn_by_runner.get(int(box), [])
-                    jockey_stat = next((s for s in stats_list if s.get("person_type") == "jockey"), None)
-                    trainer_stat = next((s for s in stats_list if s.get("person_type") == "trainer"), None)
-                    if jockey_stat:
-                        r["jockey_win_rate"]       = jockey_stat.get("overall_win_rate")
-                        r["jockey_track_win_rate"] = jockey_stat.get("track_win_rate")
-                        r["jockey_track_starts"]   = jockey_stat.get("track_starts")
-                    if trainer_stat:
-                        r["trainer_win_rate"]       = trainer_stat.get("overall_win_rate")
-                        r["trainer_track_win_rate"] = trainer_stat.get("track_win_rate")
-                        r["trainer_track_starts"]   = trainer_stat.get("track_starts")
-        except Exception:
-            pass
-
-        # Attach stored FormFav enrichment if available
-        ff_data: dict = {}
-        try:
-            from database import get_formfav_race_enrichment
-            ff_row = get_formfav_race_enrichment(race_uid)
-            if ff_row:
-                ff_data = ff_row
-        except Exception:
-            pass
-
-        if ff_data:
-            race_out["formfav"] = ff_data
+        # Add camelCase aliases expected by frontend
+        for r in runners:
+            r["earlySpeed"] = r.get("early_speed") or r.get("early_speed_rating") or ""
+            r["bestTime"]   = r.get("best_time") or ""
+            r["winProb"]    = r.get("win_prob")
+            r["placeProb"]  = r.get("place_prob")
+            r["formString"] = r.get("form_last5") or r.get("last4") or r.get("form") or ""
+            r["modelRank"]  = r.get("model_rank")
+            r["paceStyle"]  = r.get("run_style") or ""
+            r["winPct"]     = r.get("win_pct") or ""
+            r["placePct"]   = r.get("place_pct") or ""
+            r["recent_starts"] = []
 
         # Fetch stored prediction snapshot for signal/decision/selection/ev
         stored_pred = {}
