@@ -113,3 +113,114 @@ def save_packet_snapshot(race_uid, packet):
         log.debug(f"packet_builder: lifecycle packet_built for {race_uid}")
     except Exception as e:
         log.error(f"Save packet snapshot failed {race_uid}: {e}")
+
+
+def build_packet_for_race(race_uid: str) -> dict | None:
+    """
+    Build and run the full module pipeline for a given race_uid.
+
+    1. Loads race + runner data from the database.
+    2. Constructs a DogsRacePacket.
+    3. Runs enabled modules: dogs_capture → dogs_analysis → simulation.
+    4. Persists the result to the dogs_race_packets Supabase table.
+    5. Returns the final packet dict.
+    """
+    try:
+        from database import get_race, get_runners_for_race
+        race = get_race(race_uid)
+        if not race:
+            log.warning(f"build_packet_for_race: race_uid {race_uid} not found")
+            return None
+
+        runners = get_runners_for_race(race_uid) or []
+
+        # Build initial packet dict
+        packet: dict = {
+            "race_uid": race_uid,
+            "status": "CAPTURED",
+            "source_name": race.get("source", "thedogs.com.au"),
+            "source_url": race.get("source_url"),
+            "track_name": race.get("track"),
+            "state": race.get("state"),
+            "date": race.get("date"),
+            "race_number": race.get("race_num"),
+            "race_time": race.get("jump_time"),
+            "distance_m": race.get("distance"),
+            "grade": race.get("grade"),
+            "track_condition": race.get("condition"),
+            "screenshots": {},
+            "extracted_data": {},
+            "engine_output": {},
+            "simulation_output": {},
+            "result": {},
+            "learning": {},
+        }
+
+        # Embed runners into extracted_data so analysis modules can consume them
+        if runners:
+            packet["extracted_data"]["runners"] = runners
+            if packet["status"] == "CAPTURED":
+                packet["status"] = "EXTRACTED"
+
+        # Run module pipeline
+        from modules import get_loader
+        loader = get_loader()
+
+        _MODULE_ORDER = ["dogs_capture", "dogs_analysis", "simulation"]
+        for module_name in _MODULE_ORDER:
+            if not loader.is_enabled(module_name):
+                log.info(f"build_packet_for_race: module {module_name} disabled, skipping")
+                continue
+            try:
+                if module_name == "dogs_capture":
+                    from modules.dogs_capture import DogsCaptureModule
+                    mod = DogsCaptureModule()
+                elif module_name == "dogs_analysis":
+                    from modules.dogs_analysis import DogsAnalysisModule
+                    mod = DogsAnalysisModule()
+                elif module_name == "simulation":
+                    from modules.simulation import SimulationModule
+                    mod = SimulationModule()
+                else:
+                    continue
+
+                if not mod.can_process(packet):
+                    log.info(f"build_packet_for_race: {module_name} skipped (missing inputs)")
+                    continue
+
+                updates = mod.process(packet)
+                if updates:
+                    packet.update(updates)
+                    log.info(f"build_packet_for_race: {module_name} completed, status={packet.get('status')}")
+            except Exception as mod_err:
+                log.error(f"build_packet_for_race: module {module_name} failed: {mod_err}")
+
+        # Persist to Supabase dogs_race_packets table
+        _persist_packet(packet)
+
+        return packet
+
+    except Exception as e:
+        log.error(f"build_packet_for_race failed for {race_uid}: {e}")
+        return None
+
+
+def _persist_packet(packet: dict) -> None:
+    """Upsert the race packet to Supabase dogs_race_packets table."""
+    try:
+        from supabase_config import get_supabase_client
+        client = get_supabase_client()
+        # Exclude plain list values (e.g. raw runner lists) — only keep scalar and dict fields
+        _DICT_FIELDS = {"screenshots", "extracted_data", "engine_output", "simulation_output", "result", "learning"}
+        serialisable = {
+            k: v
+            for k, v in packet.items()
+            if not isinstance(v, list) or k in _DICT_FIELDS
+        }
+        client.table("dogs_race_packets").upsert(
+            serialisable,
+            on_conflict="race_uid",
+        ).execute()
+        log.debug(f"_persist_packet: upserted race_uid={packet.get('race_uid')}")
+    except Exception as e:
+        log.warning(f"_persist_packet failed: {e}")

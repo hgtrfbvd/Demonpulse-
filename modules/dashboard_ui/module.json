@@ -1,0 +1,9 @@
+{
+  "name": "dashboard_ui",
+  "type": "ui",
+  "version": "1.0.0",
+  "enabled": true,
+  "description": "Pro 3-panel greyhound dashboard with /api/packet/ endpoint",
+  "input_requirements": [],
+  "output_keys": []
+}

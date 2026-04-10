@@ -1,0 +1,9 @@
+{
+  "name": "dogs_capture",
+  "type": "capture",
+  "version": "1.0.0",
+  "enabled": true,
+  "description": "Playwright-based greyhound race screenshot and extraction pipeline",
+  "input_requirements": [],
+  "output_keys": ["screenshots", "extracted_data", "status"]
+}

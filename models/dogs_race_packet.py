@@ -15,7 +15,15 @@ No cross-source enrichment. Missing fields are stored as None.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class PacketStatus(str, Enum):
+    CAPTURED = "CAPTURED"
+    EXTRACTED = "EXTRACTED"
+    ANALYSED = "ANALYSED"
+    SETTLED = "SETTLED"
 
 
 @dataclass
@@ -131,6 +139,32 @@ class DogsRacePacket:
     # Runners
     runners: list[DogsRunnerPacket] = field(default_factory=list)
 
+    # Status lifecycle
+    status: str = "CAPTURED"  # CAPTURED | EXTRACTED | ANALYSED | SETTLED
+
+    # Screenshot paths keyed by name
+    screenshots: dict[str, str] = field(default_factory=dict)  # board, header, expert_form, box_history, results
+
+    # Structured extracted data from OCR/extraction service
+    extracted_data: dict[str, Any] = field(default_factory=dict)
+    # Should contain: runners[], form_lines[], times/splits, box_history_metrics, derived_features
+
+    # V7 analysis engine output
+    engine_output: dict[str, Any] = field(default_factory=dict)
+    # Should contain: tempo (FAST|MODERATE|SLOW), primary, secondary, confidence, notes
+
+    # Monte Carlo simulation output
+    simulation_output: dict[str, Any] = field(default_factory=dict)
+    # Should contain: win_probabilities, top3_probabilities, most_likely_scenario, chaos_rating, lead_at_first_bend_pct
+
+    # Race result (post-race)
+    result: dict[str, Any] = field(default_factory=dict)
+    # Should contain: finishing_order, margins, official_time
+
+    # Learning engine output
+    learning: dict[str, Any] = field(default_factory=dict)
+    # Should contain: error_tags, adjustments, notes
+
     # Raw fragments (for debug/fallback)
     raw_fragments: dict[str, Any] = field(default_factory=dict)
 
@@ -164,6 +198,13 @@ class DogsRacePacket:
             "collision_risk_score": self.collision_risk_score,
             "first_bend_distance": self.first_bend_distance,
             "runners": [r.to_dict() for r in self.runners],
+            "status": self.status,
+            "screenshots": self.screenshots,
+            "extracted_data": self.extracted_data,
+            "engine_output": self.engine_output,
+            "simulation_output": self.simulation_output,
+            "result": self.result,
+            "learning": self.learning,
             "raw_fragments": self.raw_fragments,
         }
 

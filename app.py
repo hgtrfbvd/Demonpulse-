@@ -28,6 +28,8 @@ try:
     app.register_blueprint(prediction_bp)
     app.register_blueprint(bet_bp)
     app.register_blueprint(dogs_dashboard_bp)
+    from modules.dashboard_ui import dashboard_ui_bp
+    app.register_blueprint(dashboard_ui_bp)
     log.info("API blueprints registered")
 except Exception as _bp_err:
     log.warning(f"Blueprint registration failed: {_bp_err}")
