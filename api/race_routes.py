@@ -7,9 +7,7 @@ All race data is sourced from the Claude-powered pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Any
-from datetime import date
+from datetime import datetime, timezone, date
 from flask import Blueprint, jsonify, request
 
 log = logging.getLogger(__name__)

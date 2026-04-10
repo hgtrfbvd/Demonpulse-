@@ -109,13 +109,8 @@ HORSE_SCHEMA = """{
   ]
 }"""
 
-
 GREYHOUND_BATCH_SIZE = 4   # venues per call (~42k tokens each → 168k under 200k limit)
 HORSE_BATCH_SIZE = 2       # venues per call (~72k tokens each → 144k under 200k limit)
-
-# Single-race schemas (same structure, used for targeted refresh)
-GREYHOUND_SINGLE_SCHEMA = GREYHOUND_SCHEMA
-HORSE_SINGLE_SCHEMA = HORSE_SCHEMA
 
 
 class ClaudeScraper:
@@ -210,14 +205,14 @@ class ClaudeScraper:
                 f"{venue_slug}/{date_slug}/{race_num}/expert-form"
             )
             system = GREYHOUND_SYSTEM
-            schema = GREYHOUND_SINGLE_SCHEMA
+            schema = GREYHOUND_SCHEMA
         else:
             url = (
                 f"https://publishingservices.racingaustralia.horse"
                 f"/racebooks/{venue_slug}/"
             )
             system = HORSE_SYSTEM
-            schema = f"Extract only race number {race_num}. " + HORSE_SINGLE_SCHEMA
+            schema = f"Extract only race number {race_num}. " + HORSE_SCHEMA
 
         races = self._extract(url, system, schema)
         return races[0] if races else None

@@ -1213,6 +1213,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
 
     let _racePoller = null;
     let _currentPolledRace = null;
+    const RACE_POLL_INTERVAL_MS = 60_000;
 
     function showRefreshBadge(msg) {
         let badge = document.getElementById("refresh-badge");
@@ -1271,7 +1272,7 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
             } catch (err) {
                 console.warn("racePoller fetch failed:", err);
             }
-        }, 60_000);
+        }, RACE_POLL_INTERVAL_MS);
     }
 
     function deselectRace() {
