@@ -19,18 +19,12 @@ try:
     from api.board_routes import board_bp
     from api.admin_routes import admin_bp
     from api.prediction_routes import prediction_bp
-    from api.market_routes import market_bp
-    from api.external_routes import external_bp
-    from api.formfav_routes import formfav_bp
     from api.bet_routes import bet_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(race_bp)
     app.register_blueprint(board_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(prediction_bp)
-    app.register_blueprint(market_bp)
-    app.register_blueprint(external_bp)
-    app.register_blueprint(formfav_bp)
     app.register_blueprint(bet_bp)
     log.info("API blueprints registered")
 except Exception as _bp_err:
@@ -196,6 +190,20 @@ def scheduler_watchdog():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/sweep", methods=["POST"])
+def api_sweep():
+    """Trigger a full pipeline sweep for today."""
+    try:
+        from pipeline import full_sweep
+        from datetime import date
+        target_date = (request.get_json(silent=True) or {}).get("date") or date.today().isoformat()
+        result = full_sweep(target_date)
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/sweep failed: {e}")
+        return jsonify({"ok": False, "error": "Sweep failed"}), 500
+
+
 @app.route("/api/env")
 def api_env():
     return jsonify(env.info())
@@ -308,46 +316,12 @@ def api_auth_logout():
 # ------------------------------------------------------------
 @app.route("/api/debug/thedogs-meetings")
 def api_debug_thedogs_meetings():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        from datetime import date
-
-        conn = TheDogsConnector()
-        items = conn.fetch_meetings(date.today().isoformat()) or []
-
-        return jsonify({
-            "ok": True,
-            "count": len(items),
-            "items": [item.__dict__ if hasattr(item, "__dict__") else item for item in items],
-        })
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-meetings failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
 
 
 @app.route("/api/debug/thedogs-races")
 def api_debug_thedogs_races():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        from datetime import date
-
-        conn = TheDogsConnector()
-        meetings = conn.fetch_meetings(date.today().isoformat()) or []
-        if not meetings:
-            return jsonify({"ok": True, "count": 0, "items": [], "note": "no meetings"})
-
-        first = meetings[0]
-        races = conn.fetch_meeting_races(first) or []
-
-        return jsonify({
-            "ok": True,
-            "meeting": first.__dict__ if hasattr(first, "__dict__") else first,
-            "count": len(races),
-            "items": [item.__dict__ if hasattr(item, "__dict__") else item for item in races],
-        })
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-races failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
 
 
 # ------------------------------------------------------------
@@ -355,12 +329,9 @@ def api_debug_thedogs_races():
 # ------------------------------------------------------------
 @app.route("/api/home/board", methods=["GET"])
 def api_home_board():
-    """
-    Home board endpoint — delegates to board_builder which uses OddsPro data.
-    NTJ computed from stored jump_time (no external scraping).
-    """
+    """Home board endpoint — delegates to board_service."""
     try:
-        from board_builder import get_board_for_today
+        from board_service import get_board_for_today
         result = get_board_for_today()
         return jsonify(result)
     except Exception as e:
@@ -694,275 +665,44 @@ def api_live_mark_watched():
 
 @app.route("/api/debug/thedogs-fetch")
 def api_debug_thedogs_fetch():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        conn = TheDogsConnector()
-        return jsonify({"ok": True, "result": conn.debug_racecards_fetch()})
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-fetch failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
 
 
 @app.route("/api/debug/thedogs-scratchings-fetch")
 def api_debug_thedogs_scratchings_fetch():
-    try:
-        from connectors.thedogs_connector import TheDogsConnector
-        conn = TheDogsConnector()
-        return jsonify({"ok": True, "result": conn.debug_scratchings_fetch()})
-    except Exception as e:
-        log.exception(f"/api/debug/thedogs-scratchings-fetch failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
 
 
 @app.route("/api/debug/formfav", methods=["GET"])
 def api_debug_formfav():
-    """
-    GET /api/debug/formfav
-    Expose the full OddsPro → FormFav pipeline state for debugging.
-
-    Priority order for counter values:
-      1. Persisted DB snapshot (formfav_debug_stats) — survives restarts / multi-worker
-      2. Live in-memory pipeline_state — same worker only
-      3. Direct DB table counts (today_races + formfav_race_enrichment) — always accurate
-    """
+    """FormFav is removed. Returns pipeline stats from stored data."""
     from datetime import date as _date
-
     try:
-        import pipeline_state
-        mem_state = pipeline_state.get_state()
-
-        # Prefer the DB snapshot — it is written after every pipeline run and
-        # reflects the REAL execution state regardless of which worker/thread
-        # is handling this request.
-        db_row: dict = {}
-        try:
-            from database import get_latest_formfav_debug_stats
-            db_row = get_latest_formfav_debug_stats() or {}
-        except Exception as db_err:
-            log.warning(f"/api/debug/formfav: could not read DB snapshot: {db_err}")
-
-        # Counter values: prefer DB snapshot; fall back to in-memory.
-        def _val(key: str) -> int:
-            return int(db_row.get(key) or mem_state.get(key) or 0)
-
-        # When neither DB snapshot nor memory has useful data (e.g. first startup
-        # or multi-worker deployment before first persist), compute real counters
-        # directly from the source tables so the endpoint never shows false zeros.
-        live_counts: dict = {}
-        counter_source = "db" if db_row else "memory"
-        if not db_row and all(_val(k) == 0 for k in (
-            "total_races_discovered", "total_formfav_called",
-            "total_formfav_success", "total_formfav_failed",
-        )):
-            try:
-                from database import get_races_for_date, get_formfav_enrichments_for_date
-                today = _date.today().isoformat()
-                all_races = get_races_for_date(today)
-                _au_nz_codes = {"au", "aus", "australia", "nz", "nzl", "new zealand", "new-zealand"}
-                _domestic = [r for r in all_races if (r.get("country") or "").strip().lower() in _au_nz_codes]
-                _intl = len(all_races) - len(_domestic)
-                ff_rows = get_formfav_enrichments_for_date(today)
-                _ff_success = len([r for r in ff_rows if r.get("raw_response")])
-                _ff_total = len(ff_rows)
-
-                # Apply the same eligibility checks as formfav_sync so
-                # total_formfav_eligible reflects the real eligible pool and is
-                # strictly ≤ total_domestic_races (not inflated to equal
-                # total_races_discovered as it was with the old formula).
-                _ff_valid_codes_live = {"HORSE", "HARNESS", "GREYHOUND", "GALLOPS"}
-                _eligible = [
-                    r for r in _domestic
-                    if (r.get("race_uid") or "") != ""
-                    and (r.get("code") or "").upper() in _ff_valid_codes_live
-                    and (r.get("track") or "") != ""
-                    and int(r.get("race_num") or 0) > 0
-                ]
-
-                live_counts = {
-                    "total_races_discovered":       len(all_races),
-                    "total_domestic_races":         len(_domestic),
-                    "total_international_filtered": _intl,
-                    "total_formfav_eligible":       len(_eligible),
-                    "total_formfav_called":         _ff_total,
-                    "total_formfav_success":        _ff_success,
-                    "total_formfav_failed":         _ff_total - _ff_success,
-                }
-                counter_source = "live_tables"
-            except Exception as live_err:
-                log.debug(f"/api/debug/formfav: live table fallback failed: {live_err}")
-
-        def _final(key: str) -> int:
-            return int(live_counts.get(key) or _val(key) or 0)
-
-        # Report whether the FormFav connector is enabled so operators can
-        # immediately see why total_formfav_called might be 0.
-        _formfav_enabled: bool = False
-        _formfav_disabled_reason: str | None = None
-        try:
-            from connectors.formfav_connector import FormFavConnector as _FFC
-            _ff_conn = _FFC()
-            _formfav_enabled = _ff_conn.is_enabled()
-            if not _formfav_enabled:
-                _formfav_disabled_reason = "FORMFAV_API_KEY not configured"
-        except Exception:
-            pass
-
+        from database import get_races_for_date
+        today = _date.today().isoformat()
+        all_races = get_races_for_date(today)
         return jsonify({
             "ok": True,
-            # ── Structured stage views ──────────────────────────────────────
-            "merge_stage": {
-                "called":  _final("formfav_merge_called"),
-                "matched": _final("formfav_merge_matched"),
-                "failed":  _final("formfav_merge_failed"),
-            },
-            "sync_stage": {
-                "called":  _final("total_formfav_called"),
-                "success": _final("total_formfav_success"),
-                "failed":  _final("total_formfav_failed"),
-            },
-            # ── Legacy flat counters (kept for backward compatibility) ──────
-            "total_races_discovered":       _final("total_races_discovered"),
-            "total_domestic_races":         _final("total_domestic_races"),
-            "total_international_filtered": _final("total_international_filtered"),
-            "total_formfav_eligible":       _final("total_formfav_eligible"),
-            "total_formfav_called":         _final("total_formfav_called"),
-            "total_formfav_success":        _final("total_formfav_success"),
-            "total_formfav_failed":         _final("total_formfav_failed"),
-            # recent_races comes from in-memory (not stored in DB)
-            "recent_races":                 mem_state.get("recent_races", []),
-            "last_reset":                   mem_state.get("last_reset"),
-            "snapshot_recorded_at":         db_row.get("recorded_at"),
-            "counter_source":               counter_source,
-            "formfav_enabled":              _formfav_enabled,
-            "formfav_disabled_reason":      _formfav_disabled_reason,
+            "note": "FormFav removed — Claude API is now the only data source",
+            "total_races_stored": len(all_races),
+            "date": today,
         })
     except Exception as e:
         log.exception(f"/api/debug/formfav failed: {e}")
-        return jsonify({"ok": False, "error": "Could not retrieve pipeline debug state"}), 500
-
-
-@app.route("/api/debug/pipeline-test", methods=["GET"])
-def api_debug_pipeline_test():
+        return jsonify({"ok": False, "error": "Could not retrieve pipeline state"}), 500
     """
-    GET /api/debug/pipeline-test
-    End-to-end live data pipeline diagnostic. No auth required, no writes.
-    Returns a JSON snapshot showing what OddsPro and FormFav are currently
-    returning, plus today's DB race count and scheduler state.
+    End-to-end pipeline diagnostic for the Claude-powered data pipeline.
+    No auth required, no writes.
     """
     from datetime import date as _date
-
     today = _date.today().isoformat()
-    result: dict = {}
-
-    # ── Connector initialisation (single instance each, reused throughout) ───
-    from connectors.oddspro_connector import OddsProConnector
-    from connectors.formfav_connector import FormFavConnector
-
-    oddspro_connector = None
-    formfav_connector = None
-    try:
-        oddspro_connector = OddsProConnector()
-        result["oddspro_base_url"] = oddspro_connector.base_url
-        result["oddspro_enabled"] = oddspro_connector.is_enabled()
-    except Exception as e:
-        result["oddspro_base_url"] = None
-        result["oddspro_enabled"] = False
-        result["oddspro_init_error"] = str(e)
-
-    try:
-        formfav_connector = FormFavConnector()
-        result["formfav_enabled"] = formfav_connector.is_enabled()
-    except Exception as e:
-        result["formfav_enabled"] = False
-        result["formfav_init_error"] = str(e)
-
+    result: dict = {"date": today}
     tests: dict = {}
 
-    # ── OddsPro: /api/external/tracks connectivity ───────────────────────────
-    if oddspro_connector is not None:
-        try:
-            hc = oddspro_connector.healthcheck()
-            tests["oddspro_tracks"] = {
-                "ok": hc.get("ok", False),
-                "status_code": hc.get("status_code"),
-            }
-        except Exception as e:
-            tests["oddspro_tracks"] = {"ok": False, "error": str(e)}
-    else:
-        tests["oddspro_tracks"] = {"ok": False, "error": "OddsPro connector not initialised"}
+    # Claude API connectivity
+    result["claude_api_key_present"] = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
 
-    # ── OddsPro: /api/external/meetings?date=today&location=domestic ─────────
-    # Uses the low-level _get() to capture the raw HTTP response shape
-    # (meetings_count, first_meeting, has_races_embedded, first_race) that the
-    # high-level fetch_meetings() would process away into MeetingRecord objects.
-    if oddspro_connector is not None:
-        try:
-            resp_mtg = oddspro_connector._get(  # noqa: SLF001
-                "/api/external/meetings",
-                params={"date": today, "location": "domestic"},
-            )
-            try:
-                mtg_payload = resp_mtg.json()
-            except Exception:
-                mtg_payload = {}
-            mtg_list: list = []
-            if isinstance(mtg_payload, list):
-                mtg_list = mtg_payload
-            elif isinstance(mtg_payload, dict):
-                mtg_list = (
-                    mtg_payload.get("data")
-                    or mtg_payload.get("meetings")
-                    or []
-                )
-                if isinstance(mtg_list, dict):
-                    mtg_list = [mtg_list]
-            first_mtg = mtg_list[0] if mtg_list else None
-            first_race = None
-            if first_mtg and isinstance(first_mtg, dict):
-                races_embedded = first_mtg.get("races") or []
-                first_race = races_embedded[0] if races_embedded else None
-            tests["oddspro_meetings"] = {
-                "ok": resp_mtg.status_code == 200,
-                "status_code": resp_mtg.status_code,
-                "meetings_count": len(mtg_list),
-                "first_meeting": first_mtg,
-                "has_races_embedded": bool(first_mtg and first_mtg.get("races")),
-                "first_race": first_race,
-            }
-        except Exception as e:
-            tests["oddspro_meetings"] = {"ok": False, "error": str(e)}
-    else:
-        tests["oddspro_meetings"] = {"ok": False, "error": "OddsPro connector not initialised"}
-
-    # ── OddsPro: /api/meetings discovery ─────────────────────────────────────
-    if oddspro_connector is not None:
-        try:
-            disc_list = oddspro_connector.fetch_meetings_discovery()
-            tests["oddspro_discovery"] = {
-                "ok": True,
-                "raw": disc_list,
-            }
-        except Exception as e:
-            tests["oddspro_discovery"] = {"ok": False, "error": str(e)}
-    else:
-        tests["oddspro_discovery"] = {"ok": False, "error": "OddsPro connector not initialised"}
-
-    # ── FormFav: /v1/form/meetings?date=today&race_code=gallops ──────────────
-    # Uses _request_meetings() to get the raw meeting dicts for the gallops
-    # code so we can see exactly what the API returns before any processing.
-    if formfav_connector is not None and formfav_connector.is_enabled():
-        try:
-            ff_raw = formfav_connector._request_meetings(today, "gallops")  # noqa: SLF001
-            tests["formfav_meetings"] = {
-                "ok": True,
-                "raw": ff_raw,
-            }
-        except Exception as e:
-            tests["formfav_meetings"] = {"ok": False, "error": str(e)}
-    else:
-        tests["formfav_meetings"] = {"ok": False, "error": "FormFav not enabled"}
-
-    # ── Database: today_races count ───────────────────────────────────────────
+    # Database: today_races count
     try:
         from database import get_races_for_date
         tests["database"] = {
@@ -972,7 +712,7 @@ def api_debug_pipeline_test():
     except Exception as e:
         tests["database"] = {"ok": False, "error": str(e)}
 
-    # ── Scheduler state ────────────────────────────────────────────────────────
+    # Scheduler state
     try:
         import scheduler
         sched_status = scheduler.get_status()
@@ -1009,24 +749,13 @@ def run_smoke_test():
 # ------------------------------------------------------------
 @app.route("/api/health")
 def api_health():
-    oddspro_enabled = False
-    formfav_enabled = False
-    try:
-        from connectors.oddspro_connector import OddsProConnector
-        oddspro_enabled = OddsProConnector().is_enabled()
-    except Exception as e:
-        log.debug(f"api_health: OddsPro connector check failed: {e}")
-    try:
-        from connectors.formfav_connector import FormFavConnector
-        formfav_enabled = FormFavConnector().is_enabled()
-    except Exception as e:
-        log.debug(f"api_health: FormFav connector check failed: {e}")
+    claude_enabled = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
     return jsonify({
         "ok": True,
         "app": "DemonPulse",
         "mode": env.mode,
-        "oddspro_enabled": oddspro_enabled,
-        "formfav_enabled": formfav_enabled,
+        "claude_enabled": claude_enabled,
+        "data_source": "claude",
     })
 
 

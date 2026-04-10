@@ -2,12 +2,11 @@
 race_status.py - DemonPulse Race Status & NTJ Calculator
 =========================================================
 Manages race status transitions and calculates Next-to-Jump (NTJ) from
-stored jump_time. No bookmaker or external scraping is used here.
+stored jump_time. No external API calls are made here.
 
 Architecture rules:
   - NTJ is calculated internally from the stored jump_time column
-  - No bookmaker NTJ scraping in the core path
-  - Status transitions driven by stored data and authoritative OddsPro updates
+  - Status transitions driven by stored jump_time and time elapsed
 
 NTJ Windows (seconds before jump_time):
   IMMINENT  : 0 – 120 s  (< 2 min)
@@ -15,17 +14,17 @@ NTJ Windows (seconds before jump_time):
   UPCOMING  : 600+ s (> 10 min)
   PAST      : jump_time is in the past
 
-Phase 2 Race Status Machine:
+Race Status Machine:
   upcoming           → standard pre-race state
-  near_jump          → < NTJ_NEAR_MAX seconds from jump (FormFav overlay eligible)
-  open               → OddsPro-confirmed open/active
+  near_jump          → < NTJ_NEAR_MAX seconds from jump
+  open               → active/open
   interim            → interim result
-  jumped_estimated   → jump_time passed, no OddsPro result yet (estimated)
+  jumped_estimated   → jump_time passed, no result yet (estimated)
   awaiting_result    → jump_time passed > 30 min ago, no result (waiting)
-  result_posted      → OddsPro result confirmed and written
-  final              → OddsPro terminal state
-  paying             → OddsPro paying dividends state
-  abandoned          → OddsPro abandoned
+  result_posted      → result confirmed and written
+  final              → terminal state
+  paying             → paying dividends state
+  abandoned          → abandoned
   blocked            → hard-blocked by integrity filter
   stale_unknown      → no jump_time and data is stale
 """
@@ -44,7 +43,7 @@ _AEST = ZoneInfo("Australia/Sydney")
 # NTJ threshold windows in seconds
 NTJ_IMMINENT_MAX = 120      # < 2 minutes
 NTJ_NEAR_MAX = 600          # < 10 minutes
-NTJ_OVERLAY_TRIGGER = 600   # FormFav overlay triggered when NTJ < 10 min
+NTJ_OVERLAY_TRIGGER = 600   # overlay triggered when NTJ < 10 min
 
 # Seconds past jump_time before a race is considered awaiting_result
 _AWAITING_RESULT_THRESHOLD = 1800  # 30 minutes
@@ -202,14 +201,10 @@ def compute_ntj(jump_time: str | None, race_date: str | None = None) -> dict[str
 
 def should_trigger_formfav_overlay(race: dict[str, Any]) -> bool:
     """
-    Return True when FormFav provisional overlay should be fetched for a race.
-    Triggered when race is within NTJ_OVERLAY_TRIGGER seconds of jump.
+    FormFav is removed. Always returns False.
+    Kept for API compatibility with existing callers.
     """
-    ntj = compute_ntj(race.get("jump_time"), race.get("date"))
-    secs = ntj.get("seconds_to_jump")
-    if secs is None:
-        return False
-    return 0 <= secs <= NTJ_OVERLAY_TRIGGER
+    return False
 
 
 def is_race_live(race: dict[str, Any]) -> bool:
@@ -283,7 +278,7 @@ def get_active_race_uids_from_db(db_client, table_name: str, target_date: str) -
     try:
         rows = (
             db_client.table(table_name)
-            .select("race_uid,oddspro_race_id")
+            .select("race_uid")
             .eq("date", target_date)
             .in_("status", list(LIVE_STATUSES))
             .execute()
@@ -304,9 +299,8 @@ def compute_race_status(race: dict[str, Any]) -> str:
     Compute the appropriate race status from stored data and current time.
 
     Drives automated status transitions without external scraping.
-    OddsPro-authoritative terminal states (final, paying, abandoned) are
-    always preserved. Transitions for non-terminal races are derived from
-    stored jump_time.
+    Terminal states (final, paying, abandoned) are always preserved.
+    Transitions for non-terminal races are derived from stored jump_time.
 
     Transition logic:
       blocked           → preserved (never changed here)

@@ -272,11 +272,9 @@ def save_race_note(race_uid: str, note: str) -> bool:
 def sync_result_statuses() -> int:
     """
     For any race in results_log today, ensure today_races.status = 'final'.
-    Repairs cases where _write_result wrote the result but the status
-    update failed silently due to race_uid mismatch.
+    Repairs cases where the result was written but the status update failed.
     Returns count of rows fixed.
     """
-    from data_engine import _update_race_status_fallback
     today = date.today().isoformat()
     results = safe_query(
         lambda: get_db()
@@ -297,14 +295,41 @@ def sync_result_statuses() -> int:
                 fixed += 1
                 continue
         # Fallback by fields when race_uid lookup fails
-        _update_race_status_fallback(
-            date=res.get("date"),
+        _update_race_status_by_fields(
+            race_date=res.get("date"),
             track=res.get("track"),
             race_num=res.get("race_num"),
             code=res.get("code"),
         )
         fixed += 1
     return fixed
+
+
+def _update_race_status_by_fields(
+    race_date: str | None,
+    track: str | None,
+    race_num: int | None,
+    code: str | None,
+    status: str = "final",
+) -> int:
+    """Update race status by (date, track, race_num, code) when race_uid lookup fails."""
+    if not all([race_date, track, race_num, code]):
+        return 0
+    result = safe_query(
+        lambda: get_db()
+        .table(T("today_races"))
+        .update({
+            "status": status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .eq("date", race_date)
+        .eq("track", track)
+        .eq("race_num", race_num)
+        .eq("code", code)
+        .execute()
+        .data
+    )
+    return len(result) if result else 0
 
 
 # ---------------------------------------------------------------------------

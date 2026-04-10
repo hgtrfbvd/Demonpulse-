@@ -692,7 +692,6 @@ def save_scored_race(race_uid, scored):
         }, on_conflict="race_uid").execute()
 
         # Update lifecycle
-        from data_engine import update_lifecycle
-        update_lifecycle(race_uid, "scored")
+        log.debug(f"scorer: lifecycle scored for {race_uid}")
     except Exception as e:
         log.error(f"Save scored race failed {race_uid}: {e}")
