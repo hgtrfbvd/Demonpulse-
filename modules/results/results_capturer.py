@@ -126,7 +126,7 @@ class ResultsModule(BaseModule):
 
         # Extract finishing order: look for box numbers in common formats
         finishing_order = []
-        box_pattern = re.compile(r"(?:Box\s*)?(\d+)\s*[-–]\s*([A-Z][A-Za-z\s']+)", re.MULTILINE)
+        box_pattern = re.compile(r"(?:Box\s*)?(\d+)\s*[-–]", re.MULTILINE)
         for m in box_pattern.finditer(raw_text):
             box_num = int(m.group(1))
             if 1 <= box_num <= 8 and box_num not in finishing_order:

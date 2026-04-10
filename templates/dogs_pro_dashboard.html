@@ -303,6 +303,7 @@ let _activeUid = null;    // currently selected race_uid
 let _packetCache = {};    // uid → full packet
 let _activeBottomTab = "screenshots";
 let _countdownInterval = null;
+const _IMMINENT_THRESHOLD_SECS = 300;  // 5 minutes before jump = imminent
 
 // ──────────────────────────────────────────────
 // Clock
@@ -425,7 +426,7 @@ function renderNextUp() {
 
   el.innerHTML = upcoming.map(p => {
     const secs = secsToJump(p.race_time);
-    const imminent = secs < 300 ? ' imminent' : '';
+    const imminent = secs < _IMMINENT_THRESHOLD_SECS ? ' imminent' : '';
     return `<div class="nextup-item" onclick="selectRace('${escHtml(p.race_uid)}')">
       <span class="nextup-countdown${imminent}" data-racetime="${escHtml(p.race_time)}">${formatCountdown(secs)}</span>
       <span>${escHtml(formatTrack(p.track_name))} R${escHtml(p.race_number)}</span>
@@ -438,7 +439,7 @@ setInterval(() => {
   document.querySelectorAll('.nextup-countdown[data-racetime]').forEach(el => {
     const secs = secsToJump(el.dataset.racetime);
     el.textContent = formatCountdown(secs);
-    if (secs !== null && secs < 300) el.classList.add('imminent');
+    if (secs !== null && secs < _IMMINENT_THRESHOLD_SECS) el.classList.add('imminent');
     else el.classList.remove('imminent');
   });
 }, 1000);

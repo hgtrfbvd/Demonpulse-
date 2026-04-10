@@ -175,9 +175,9 @@ class DogsCaptureModule(BaseModule):
         """POST screenshots to the configured extraction service."""
         import requests
 
+        opened = []
         try:
             files = {}
-            opened = []
             for name, path in screenshots.items():
                 f = open(path, "rb")
                 opened.append(f)
@@ -190,9 +190,6 @@ class DogsCaptureModule(BaseModule):
                 data=payload,
                 timeout=60,
             )
-            for f in opened:
-                f.close()
-
             resp.raise_for_status()
             data = resp.json()
             log.info(f"[dogs_capture] Extraction service returned {len(data.get('runners', []))} runners")
@@ -200,6 +197,9 @@ class DogsCaptureModule(BaseModule):
         except Exception as e:
             log.error(f"[dogs_capture] Extraction service POST failed: {e}")
             return self._ocr_stub(screenshots, race_uid, date_str)
+        finally:
+            for f in opened:
+                f.close()
 
     def _ocr_stub(
         self,

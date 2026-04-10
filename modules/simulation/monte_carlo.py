@@ -167,7 +167,7 @@ class SimulationModule(BaseModule):
             else:
                 scores[box] = early * 0.50 + finish * 0.30 + track_bias + random.gauss(0, 0.04)
 
-        lead_at_bend = max(scores, key=lambda b: scores[b] * _BOX_STRENGTH.get(b, 0.80))
+        lead_at_bend = max(scores, key=lambda b: scores[b])
         order = sorted(scores.keys(), key=lambda b: scores[b], reverse=True)
 
         return {

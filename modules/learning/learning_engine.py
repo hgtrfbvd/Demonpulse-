@@ -25,6 +25,10 @@ from modules.base_module import BaseModule
 
 log = logging.getLogger(__name__)
 
+# Speed thresholds for learning error classification
+_PRIMARY_HIGH_SPEED_THRESHOLD = 0.7   # primary must be above this to classify as early_speed_mismatch
+_WINNER_LOW_SPEED_THRESHOLD = 0.5     # winner must be below this to classify as early_speed_mismatch
+
 # Error tag definitions
 _ERROR_TAGS = {
     "early_speed_mismatch": "Primary selection lost early lead despite high early speed rating",
@@ -108,7 +112,7 @@ class LearningModule(BaseModule):
 
             if winner_in_scored:
                 winner_speed = winner_in_scored.get("early_speed", 0)
-                if primary_speed > 0.7 and winner_speed < 0.5:
+                if primary_speed > _PRIMARY_HIGH_SPEED_THRESHOLD and winner_speed < _WINNER_LOW_SPEED_THRESHOLD:
                     error_tags.append("early_speed_mismatch")
                     adjustments.append(
                         "SUGGESTION: early speed weight may be over-valued in this track condition"
@@ -156,8 +160,8 @@ class LearningModule(BaseModule):
         if not race_uid:
             return
         try:
-            from supabase_config import get_supabase_client
-            client = get_supabase_client()
+            from db import get_db
+            client = get_db()
             client.table("learning_history").upsert({
                 "race_uid": race_uid,
                 "error_tags": analysis.get("error_tags", []),

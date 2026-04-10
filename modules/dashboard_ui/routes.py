@@ -103,8 +103,8 @@ def run_pipeline(race_uid: str):
 def _load_packet(race_uid: str) -> dict | None:
     """Load packet from Supabase or assemble from existing data."""
     try:
-        from supabase_config import get_supabase_client
-        client = get_supabase_client()
+        from db import get_db
+        client = get_db()
         res = client.table("dogs_race_packets").select("*").eq("race_uid", race_uid).single().execute()
         if res.data:
             return res.data
@@ -139,8 +139,8 @@ def _list_packets_for_date(date_str: str) -> list[dict]:
     packets = []
 
     try:
-        from supabase_config import get_supabase_client
-        client = get_supabase_client()
+        from db import get_db
+        client = get_db()
         res = (
             client.table("dogs_race_packets")
             .select("race_uid,status,race_time,track_name,race_number")

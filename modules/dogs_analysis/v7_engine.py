@@ -49,6 +49,7 @@ _BOX_ADVANTAGE: dict[int, float] = {
 # PASS filter thresholds
 _MIN_CONFIDENCE = 0.55
 _MAX_CHAOS = 0.70
+_MIN_TOP3_SPREAD = 0.05  # minimum score spread between top-3 runners to avoid taking a race
 
 
 class DogsAnalysisModule(BaseModule):
@@ -192,7 +193,7 @@ class DogsAnalysisModule(BaseModule):
         if len(scored) >= 3:
             top3_scores = [s["score"] for s in scored[:3]]
             spread = max(top3_scores) - min(top3_scores)
-            if spread < 0.05:
+            if spread < _MIN_TOP3_SPREAD:
                 return False, f"field too even (top3 spread={spread:.3f})"
 
         return True, "all filters passed"

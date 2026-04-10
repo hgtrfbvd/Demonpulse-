@@ -208,14 +208,15 @@ def build_packet_for_race(race_uid: str) -> dict | None:
 def _persist_packet(packet: dict) -> None:
     """Upsert the race packet to Supabase dogs_race_packets table."""
     try:
-        from supabase_config import get_supabase_client
-        client = get_supabase_client()
-        # Exclude plain list values (e.g. raw runner lists) — only keep scalar and dict fields
-        _DICT_FIELDS = {"screenshots", "extracted_data", "engine_output", "simulation_output", "result", "learning"}
+        from db import get_db
+        client = get_db()
+        # Keep scalar fields and known structured dict fields; exclude raw runner lists
+        # that would be too large or are stored separately in today_runners.
+        _STRUCTURED_FIELDS = {"screenshots", "extracted_data", "engine_output", "simulation_output", "result", "learning"}
         serialisable = {
             k: v
             for k, v in packet.items()
-            if not isinstance(v, list) or k in _DICT_FIELDS
+            if not isinstance(v, list) or k in _STRUCTURED_FIELDS
         }
         client.table("dogs_race_packets").upsert(
             serialisable,
