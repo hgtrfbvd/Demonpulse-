@@ -53,9 +53,16 @@ def startup():
         return
 
     try:
-        from scheduler import start_scheduler
-        start_scheduler()
-        log.info("Scheduler started")
+        # Under gunicorn, GUNICORN_MANAGED=1 is set by gunicorn.conf.py's
+        # on_starting hook.  The scheduler is started per-worker in post_fork,
+        # so we must not start it here to avoid a duplicate thread in the master
+        # process (preload) or double-starting in each worker (non-preload).
+        if os.environ.get("GUNICORN_MANAGED") == "1":
+            log.info("Scheduler start deferred to gunicorn post_fork")
+        else:
+            from scheduler import start_scheduler
+            start_scheduler()
+            log.info("Scheduler started")
     except Exception as e:
         log.warning(f"Scheduler start skipped/failed: {e}")
 

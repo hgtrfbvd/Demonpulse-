@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -124,13 +125,17 @@ def collect_board(date_slug: str) -> list[DogsBoardEntry]:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
     except ImportError:
         log.error("[DOGS_BOARD] playwright not installed — cannot collect board")
+        log.error(f"[DOGS_BOARD_FAILED] date={date_slug} reason=playwright_not_installed")
         return []
 
     entries: list[DogsBoardEntry] = []
 
     try:
+        log.info("[DOGS_BOARD] browser launch start")
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
+            log.info("[DOGS_BOARD] browser launch success")
+
             context = browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -139,24 +144,72 @@ def collect_board(date_slug: str) -> list[DogsBoardEntry]:
                 viewport={"width": 1280, "height": 900},
             )
             page = context.new_page()
+            log.info("[DOGS_BOARD] page creation success")
             page.set_default_timeout(_PAGE_TIMEOUT_MS)
 
             attempt = 0
             loaded = False
             while attempt < _MAX_RETRIES and not loaded:
                 attempt += 1
+                response_status: int | None = None
+                final_url: str | None = None
+
+                # --- goto ---
                 try:
-                    log.info(f"[DOGS_BOARD] navigate attempt={attempt} url={url}")
-                    page.goto(url, wait_until="domcontentloaded")
-                    page.wait_for_selector(_WAIT_SELECTOR, timeout=_PAGE_TIMEOUT_MS)
-                    loaded = True
-                except PWTimeout:
+                    log.info(
+                        f"[DOGS_BOARD] goto start attempt={attempt}/{_MAX_RETRIES} url={url}"
+                    )
+                    response = page.goto(
+                        url,
+                        wait_until="domcontentloaded",
+                        timeout=_PAGE_TIMEOUT_MS,
+                    )
+                    if response is not None:
+                        response_status = response.status
+                        final_url = response.url
+                    log.info(
+                        f"[DOGS_BOARD] goto success attempt={attempt} "
+                        f"final_url={final_url} status={response_status}"
+                    )
+                except PWTimeout as exc:
                     log.warning(
-                        f"[DOGS_BOARD] page load timeout attempt={attempt}/{_MAX_RETRIES}"
+                        f"[DOGS_BOARD] goto timeout attempt={attempt}/{_MAX_RETRIES}: {exc}"
+                    )
+                    continue
+                except Exception as exc:
+                    log.warning(
+                        f"[DOGS_BOARD] goto error attempt={attempt}/{_MAX_RETRIES}: {exc}",
+                        exc_info=True,
+                    )
+                    continue
+
+                # --- page title ---
+                try:
+                    title = page.title()
+                    log.info(f"[DOGS_BOARD] page title: {title!r}")
+                except Exception:
+                    pass
+
+                # --- wait_for_selector ---
+                try:
+                    log.info(
+                        f"[DOGS_BOARD] wait_for_selector start selector={_WAIT_SELECTOR!r}"
+                    )
+                    page.wait_for_selector(_WAIT_SELECTOR, timeout=_PAGE_TIMEOUT_MS)
+                    log.info(
+                        f"[DOGS_BOARD] wait_for_selector success selector={_WAIT_SELECTOR!r}"
+                    )
+                    loaded = True
+                except PWTimeout as exc:
+                    log.warning(
+                        f"[DOGS_BOARD] wait_for_selector timeout "
+                        f"attempt={attempt}/{_MAX_RETRIES} selector={_WAIT_SELECTOR!r}: {exc}"
                     )
                 except Exception as exc:
                     log.warning(
-                        f"[DOGS_BOARD] page load error attempt={attempt}/{_MAX_RETRIES}: {exc}"
+                        f"[DOGS_BOARD] wait_for_selector error "
+                        f"attempt={attempt}/{_MAX_RETRIES}: {exc}",
+                        exc_info=True,
                     )
 
             if not loaded:
@@ -164,12 +217,38 @@ def collect_board(date_slug: str) -> list[DogsBoardEntry]:
                     f"[DOGS_BOARD] all {_MAX_RETRIES} load attempts failed — "
                     f"saving failure artifacts date={date_slug}"
                 )
-                _save_failure_artifacts(page, "board")
+                shot_path, html_path = _save_failure_artifacts(page, "board")
+                log.error(
+                    f"[DOGS_BOARD] load-failure artifacts: "
+                    f"screenshot={shot_path} html={html_path}"
+                )
                 context.close()
                 browser.close()
+                log.error(
+                    f"[DOGS_BOARD_FAILED] date={date_slug} reason=load_failed "
+                    f"screenshot={shot_path} html={html_path}"
+                )
                 return []
 
-            # Take a board screenshot for audit/debug
+            # --- count candidate meeting/race elements ---
+            _CANDIDATE_SELECTOR = (
+                "a[href*='/racing/'], [class*='race-row'], [class*='race-card']"
+            )
+            try:
+                candidates = page.query_selector_all(_CANDIDATE_SELECTOR)
+                log.info(
+                    f"[DOGS_BOARD] candidate elements found={len(candidates)} "
+                    f"selector={_CANDIDATE_SELECTOR!r}"
+                )
+                if len(candidates) == 0:
+                    log.warning(
+                        "[DOGS_BOARD] zero candidate elements found — "
+                        "page structure may have changed"
+                    )
+            except Exception as exc:
+                log.warning(f"[DOGS_BOARD] candidate element count failed: {exc}")
+
+            # --- audit screenshot ---
             _ensure_screenshot_dir()
             ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
             board_shot = os.path.join(_SCREENSHOT_DIR, f"board_{date_slug}_{ts}.png")
@@ -181,30 +260,46 @@ def collect_board(date_slug: str) -> list[DogsBoardEntry]:
 
             html = page.content()
             entries = _extract_board_entries(html, date_slug, url)
+            log.info(f"[DOGS_BOARD] parsed race rows={len(entries)} date={date_slug}")
 
             if not entries:
                 log.warning(
-                    f"[DOGS_BOARD] DOM extraction returned 0 entries — "
-                    f"saving fallback artifacts date={date_slug}"
+                    f"[DOGS_BOARD] zero rows parsed — saving fallback artifacts date={date_slug}"
                 )
-                _save_failure_artifacts(page, "board_empty")
+                shot_path, html_path = _save_failure_artifacts(page, "board_empty")
+                log.warning(
+                    f"[DOGS_BOARD] zero-row artifacts: screenshot={shot_path} html={html_path}"
+                )
+                log.warning(
+                    f"[DOGS_BOARD] not continuing silently — "
+                    f"date={date_slug} produced 0 valid entries"
+                )
 
             context.close()
             browser.close()
 
     except Exception as exc:
-        log.error(f"[DOGS_BOARD] collect_board failed: {exc}", exc_info=True)
+        tb = traceback.format_exc()
+        log.error(f"[DOGS_BOARD] collect_board failed: {exc}\n{tb}")
+        log.error(f"[DOGS_BOARD_FAILED] date={date_slug} reason=exception exc={exc!r}")
         return []
 
     # Sort by race_time ascending
     def _sort_key(e: DogsBoardEntry) -> str:
-        return f"{e.date or ''}_{e.race_time or '99:99'}_{e.race_number or 99:04d}"
+        return f"{e.date or ''}_{e.race_time or '99:99'}_{(e.race_number or 99):04d}"
 
     entries.sort(key=_sort_key)
+
     log.info(
-        f"[DOGS_BOARD] board collected date={date_slug} entries={len(entries)} "
+        f"[DOGS_BOARD] board save success date={date_slug} count={len(entries)} "
         f"source=thedogs.com.au"
     )
+
+    if entries:
+        log.info(f"[DOGS_BOARD_DONE] date={date_slug} entries={len(entries)}")
+    else:
+        log.warning(f"[DOGS_BOARD_DONE] date={date_slug} entries=0 — no races collected")
+
     return entries
 
 

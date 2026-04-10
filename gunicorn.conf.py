@@ -18,4 +18,8 @@ def post_fork(server, worker):
 
 
 def on_starting(server):
+    # Signal to the app that it is running under gunicorn so app.py's startup()
+    # skips starting the scheduler — post_fork handles that in each worker.
+    import os
+    os.environ["GUNICORN_MANAGED"] = "1"
     server.log.info("DemonPulse: gunicorn starting")
