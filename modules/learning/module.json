@@ -1,0 +1,9 @@
+{
+  "name": "learning",
+  "type": "learning",
+  "version": "1.0.0",
+  "enabled": true,
+  "description": "Compares engine predictions vs actual results and tags error patterns",
+  "input_requirements": ["engine_output", "result"],
+  "output_keys": ["learning"]
+}

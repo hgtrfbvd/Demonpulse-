@@ -1,0 +1,9 @@
+{
+  "name": "results",
+  "type": "results",
+  "version": "1.0.0",
+  "enabled": true,
+  "description": "Post-race Playwright results capture and extraction",
+  "input_requirements": ["race_uid", "race_time"],
+  "output_keys": ["result", "status"]
+}

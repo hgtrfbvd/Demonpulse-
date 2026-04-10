@@ -1,0 +1,9 @@
+{
+  "name": "dogs_analysis",
+  "type": "analysis",
+  "version": "7.0.0",
+  "enabled": true,
+  "description": "V7 greyhound analysis engine: early speed, tempo, PASS filter",
+  "input_requirements": ["extracted_data"],
+  "output_keys": ["engine_output"]
+}

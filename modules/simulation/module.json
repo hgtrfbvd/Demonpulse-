@@ -1,0 +1,9 @@
+{
+  "name": "simulation",
+  "type": "simulation",
+  "version": "1.0.0",
+  "enabled": true,
+  "description": "1000-cycle Monte Carlo greyhound race simulation",
+  "input_requirements": ["extracted_data"],
+  "output_keys": ["simulation_output"]
+}

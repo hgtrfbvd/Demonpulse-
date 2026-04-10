@@ -1,0 +1,8 @@
+{
+  "dogs_capture": true,
+  "dogs_analysis": true,
+  "simulation": true,
+  "results": true,
+  "learning": true,
+  "dashboard_ui": true
+}
