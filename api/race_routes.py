@@ -7,12 +7,28 @@ All race data is sourced from the Claude-powered pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import datetime, timezone, date
 from flask import Blueprint, jsonify, request
 
 log = logging.getLogger(__name__)
 
 race_bp = Blueprint("races", __name__, url_prefix="/api/races")
+
+# On-demand refresh: refresh race data if older than this many seconds
+LIVE_STALE_SECONDS = 90
+
+
+def _seconds_since(fetched_at: str | None) -> float:
+    """Return seconds elapsed since fetched_at (ISO string). Returns inf if unparseable."""
+    if not fetched_at:
+        return float("inf")
+    try:
+        dt = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds()
+    except Exception:
+        return float("inf")
 
 
 @race_bp.route("", methods=["GET"])
@@ -162,6 +178,62 @@ def save_race_note(race_uid: str):
     except Exception as e:
         log.error(f"/api/races/{race_uid}/note failed: {e}")
         return jsonify({"ok": False, "error": "Could not save note"}), 500
+
+
+@race_bp.route("/<race_uid>/live", methods=["GET"])
+def live_race(race_uid: str):
+    """
+    On-demand race refresh endpoint.
+    Returns cached data immediately if fresh (< LIVE_STALE_SECONDS old).
+    Triggers a targeted single-race scrape via ClaudeScraper if data is stale.
+    Never errors to the client — always returns stale data on failure.
+    """
+    from database import get_race, get_runners_for_race
+    from database import upsert_race as _db_upsert_race, upsert_runners as _db_upsert_runners
+
+    race = get_race(race_uid)
+    if not race:
+        return jsonify({"ok": False, "error": "not found"}), 404
+
+    age = _seconds_since(race.get("fetched_at"))
+    refreshed = False
+
+    if age > LIVE_STALE_SECONDS:
+        try:
+            from connectors.claude_scraper import ClaudeScraper
+            from pipeline import _normalise_greyhound_race, _normalise_horse_race
+            from pipeline import _store_race
+            from features import compute_greyhound_derived, compute_horse_derived
+
+            scraper = ClaudeScraper()
+            code = (race.get("code") or "GREYHOUND").upper()
+            track = race.get("track") or ""
+            venue_slug = track.lower().replace(" ", "-")
+            race_date = race.get("date") or date.today().isoformat()
+            race_num = int(race.get("race_num") or 0)
+
+            fresh_raw = scraper.fetch_single_race(
+                code=code,
+                venue_slug=venue_slug,
+                date_slug=race_date,
+                race_num=race_num,
+            )
+            if fresh_raw:
+                if code == "GREYHOUND":
+                    fresh_raw["derived"] = compute_greyhound_derived(fresh_raw)
+                    fresh = _normalise_greyhound_race(fresh_raw, race_date)
+                else:
+                    fresh_raw["derived"] = compute_horse_derived(fresh_raw)
+                    fresh = _normalise_horse_race(fresh_raw, race_date)
+                _store_race(fresh)
+                race = get_race(race_uid) or race
+                refreshed = True
+        except Exception as e:
+            log.warning(f"live_race refresh failed {race_uid}: {e}")
+            # Fall through — return stale data, never error
+
+    runners = get_runners_for_race(race_uid)
+    return jsonify({"ok": True, "race": race, "runners": runners, "refreshed": refreshed})
 
 
 @race_bp.route("/<race_uid>/blocked", methods=["GET"])

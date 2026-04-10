@@ -109,11 +109,18 @@ HORSE_SCHEMA = """{
   ]
 }"""
 
+GREYHOUND_BATCH_SIZE = 4   # venues per call (~42k tokens each → 168k under 200k limit)
+HORSE_BATCH_SIZE = 2       # venues per call (~72k tokens each → 144k under 200k limit)
+
 
 class ClaudeScraper:
     def __init__(self):
         self.client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         self.model = "claude-haiku-4-5-20251001"
+
+    # ------------------------------------------------------------------
+    # Single-venue helpers
+    # ------------------------------------------------------------------
 
     def fetch_greyhound_venue(self, venue_slug: str, date_slug: str) -> list[dict]:
         """Fetch all races for a greyhound venue. Returns list of race dicts."""
@@ -129,6 +136,91 @@ class ClaudeScraper:
         url = f"https://publishingservices.racingaustralia.horse/racebooks/{venue_name}/"
         return self._extract(url, HORSE_SYSTEM, HORSE_SCHEMA)
 
+    # ------------------------------------------------------------------
+    # Batch helpers — multiple venues per call to fill the 200k context
+    # ------------------------------------------------------------------
+
+    def fetch_greyhound_batch(self, venues: list[dict], date_slug: str) -> dict[str, list[dict]]:
+        """
+        Fetch multiple greyhound venues in one call.
+        Returns {slug: [races]} dict.
+        """
+        urls = [
+            f"https://www.thedogs.com.au/racing/{v['slug']}/{date_slug}?trial=false"
+            for v in venues
+        ]
+        prompt = (
+            f"Fetch each of these {len(urls)} venue pages plus their expert form pages "
+            f"and return a JSON object with venue slugs as keys, each containing an array "
+            f"of race objects matching the schema.\n\n"
+            f"Venues:\n" + "\n".join(f"- {v['slug']}: {url}" for v, url in zip(venues, urls))
+        )
+        result = self._extract_raw(prompt, GREYHOUND_SYSTEM, GREYHOUND_SCHEMA)
+        if isinstance(result, dict):
+            return result
+        # Fallback: if a list was returned, key it to the first slug
+        if isinstance(result, list) and venues:
+            return {venues[0]["slug"]: result}
+        return {}
+
+    def fetch_horse_batch(self, venues: list[dict]) -> dict[str, list[dict]]:
+        """
+        Fetch multiple horse venues in one call.
+        Returns {venue_name: [races]} dict.
+        """
+        urls = [
+            f"https://publishingservices.racingaustralia.horse/racebooks/{v['name']}/"
+            for v in venues
+        ]
+        prompt = (
+            f"Fetch each of these {len(urls)} racebook pages and return a JSON object "
+            f"with venue names as keys, each containing an array of race objects.\n\n"
+            + "\n".join(f"- {v['name']}: {url}" for v, url in zip(venues, urls))
+        )
+        result = self._extract_raw(prompt, HORSE_SYSTEM, HORSE_SCHEMA)
+        if isinstance(result, dict):
+            return result
+        if isinstance(result, list) and venues:
+            return {venues[0]["name"]: result}
+        return {}
+
+    # ------------------------------------------------------------------
+    # Single-race targeted refresh
+    # ------------------------------------------------------------------
+
+    def fetch_single_race(
+        self,
+        code: str,
+        venue_slug: str,
+        date_slug: str,
+        race_num: int,
+    ) -> dict | None:
+        """
+        Targeted refresh for one race. Used when a race is actively viewed.
+        Returns a single race dict or None on failure.
+        """
+        if code == "GREYHOUND":
+            url = (
+                f"https://www.thedogs.com.au/racing/"
+                f"{venue_slug}/{date_slug}/{race_num}/expert-form"
+            )
+            system = GREYHOUND_SYSTEM
+            schema = GREYHOUND_SCHEMA
+        else:
+            url = (
+                f"https://publishingservices.racingaustralia.horse"
+                f"/racebooks/{venue_slug}/"
+            )
+            system = HORSE_SYSTEM
+            schema = f"Extract only race number {race_num}. " + HORSE_SCHEMA
+
+        races = self._extract(url, system, schema)
+        return races[0] if races else None
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _get_expert_form_urls(self, venue_slug: str, date_slug: str, max_races: int = 12) -> list[str]:
         """Build expert-form URLs for each race number at the venue."""
         return [
@@ -136,7 +228,30 @@ class ClaudeScraper:
             for i in range(1, max_races + 1)
         ]
 
+    def _strip_fences(self, text: str) -> str:
+        """Strip markdown code fences from a Claude response."""
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.lstrip("`").lstrip("json").strip()
+        if text.endswith("```"):
+            text = text.rstrip("`").strip()
+        return text
+
     def _extract(self, url_or_content: str, system: str, schema: str) -> list[dict]:
+        """Fetch and extract, expecting a JSON array response."""
+        result = self._extract_raw(url_or_content, system, schema)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "races" in result:
+            return result["races"]
+        log.warning(f"ClaudeScraper._extract: unexpected shape {type(result)}")
+        return []
+
+    def _extract_raw(self, url_or_content: str, system: str, schema: str) -> list | dict:
+        """
+        Core Claude API call. Returns the parsed JSON (list or dict).
+        Falls back to empty list on error.
+        """
         try:
             response = self.client.messages.create(
                 model=self.model,
@@ -152,19 +267,8 @@ class ClaudeScraper:
                 }],
             )
             text = "".join(b.text for b in response.content if hasattr(b, "text"))
-            # Strip markdown code fences if present
-            text = text.strip()
-            if text.startswith("```"):
-                text = text.lstrip("`").lstrip("json").strip()
-            if text.endswith("```"):
-                text = text.rstrip("`").strip()
-            result = json.loads(text)
-            if isinstance(result, list):
-                return result
-            if isinstance(result, dict) and "races" in result:
-                return result["races"]
-            log.warning(f"ClaudeScraper: unexpected response shape: {type(result)}")
-            return []
+            text = self._strip_fences(text)
+            return json.loads(text)
         except json.JSONDecodeError as e:
             log.error(f"ClaudeScraper: JSON decode failed: {e}")
             return []

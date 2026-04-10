@@ -14,12 +14,15 @@ The only data path is:
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 from datetime import date
 from typing import Any
 
-from connectors.claude_scraper import ClaudeScraper
+from connectors.claude_scraper import (
+    ClaudeScraper,
+    GREYHOUND_BATCH_SIZE,
+    HORSE_BATCH_SIZE,
+)
 from features import compute_greyhound_derived, compute_horse_derived
 from database import upsert_race as _db_upsert_race, upsert_runners as _db_upsert_runners
 
@@ -246,9 +249,17 @@ def _discover_horse_venues() -> list[dict]:
 # PIPELINE FUNCTIONS
 # ---------------------------------------------------------------------------
 
+def _chunks(lst: list, n: int):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
 def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     """
     Fetch all venues for today, compute derived features, store to Supabase.
+    Uses batch scraping (4 greyhound venues / 2 horse venues per Claude call)
+    to maximise context window usage and minimise API calls.
 
     Args:
         target_date: ISO date string (default: today)
@@ -261,47 +272,51 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     stored = 0
     errors = 0
 
-    # Greyhounds
+    # Greyhounds — batch 4 venues per call
     try:
         venues = get_greyhound_venues(today)
         log.info(f"pipeline: greyhound venues for {today}: {len(venues)}")
-        for venue in venues:
+        for batch in _chunks(venues, GREYHOUND_BATCH_SIZE):
             try:
-                races = scraper.fetch_greyhound_venue(venue["slug"], today)
-                for raw in races:
-                    try:
-                        raw["derived"] = compute_greyhound_derived(raw)
-                        race = _normalise_greyhound_race(raw, today)
-                        _store_race(race)
-                        stored += 1
-                    except Exception as e:
-                        log.error(f"pipeline: greyhound race store failed ({venue}): {e}")
-                        errors += 1
+                results = scraper.fetch_greyhound_batch(batch, today)
+                for slug, races in results.items():
+                    for raw in races:
+                        try:
+                            raw["derived"] = compute_greyhound_derived(raw)
+                            race = _normalise_greyhound_race(raw, today)
+                            _store_race(race)
+                            stored += 1
+                        except Exception as e:
+                            log.error(f"pipeline: greyhound race store failed ({slug}): {e}")
+                            errors += 1
             except Exception as e:
-                log.error(f"pipeline: greyhound venue sweep failed ({venue}): {e}")
+                slugs = [v["slug"] for v in batch]
+                log.error(f"pipeline: greyhound batch failed ({slugs}): {e}")
                 errors += 1
     except Exception as e:
         log.error(f"pipeline: greyhound sweep failed: {e}")
         errors += 1
 
-    # Horses
+    # Horses — batch 2 venues per call
     try:
         venues = get_horse_venues(today)
         log.info(f"pipeline: horse venues for {today}: {len(venues)}")
-        for venue in venues:
+        for batch in _chunks(venues, HORSE_BATCH_SIZE):
             try:
-                races = scraper.fetch_horse_venue(venue["name"])
-                for raw in races:
-                    try:
-                        raw["derived"] = compute_horse_derived(raw)
-                        race = _normalise_horse_race(raw, today)
-                        _store_race(race)
-                        stored += 1
-                    except Exception as e:
-                        log.error(f"pipeline: horse race store failed ({venue}): {e}")
-                        errors += 1
+                results = scraper.fetch_horse_batch(batch)
+                for venue_name, races in results.items():
+                    for raw in races:
+                        try:
+                            raw["derived"] = compute_horse_derived(raw)
+                            race = _normalise_horse_race(raw, today)
+                            _store_race(race)
+                            stored += 1
+                        except Exception as e:
+                            log.error(f"pipeline: horse race store failed ({venue_name}): {e}")
+                            errors += 1
             except Exception as e:
-                log.error(f"pipeline: horse venue sweep failed ({venue}): {e}")
+                names = [v["name"] for v in batch]
+                log.error(f"pipeline: horse batch failed ({names}): {e}")
                 errors += 1
     except Exception as e:
         log.error(f"pipeline: horse sweep failed: {e}")
