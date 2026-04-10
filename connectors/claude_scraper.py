@@ -237,6 +237,65 @@ class ClaudeScraper:
             text = text.rstrip("`").strip()
         return text
 
+    # ------------------------------------------------------------------
+    # Venue discovery
+    # ------------------------------------------------------------------
+
+    def discover_greyhound_venues(self, date_slug: str) -> list[dict]:
+        """
+        Discover today's greyhound venues from thedogs.com.au.
+        Returns list of {"slug": ..., "state": ...} dicts.
+        """
+        url = f"https://www.thedogs.com.au/racing/{date_slug}?trial=false"
+        system = (
+            "You fetch Australian greyhound racing schedule pages. "
+            "Return ONLY a valid JSON array of venue objects. No markdown, no commentary."
+        )
+        schema = '[{"slug": "townsville", "state": "QLD"}]'
+        result = self._extract_venues(url, system, schema)
+        return result if isinstance(result, list) else []
+
+    def discover_horse_venues(self) -> list[dict]:
+        """
+        Discover today's horse venues from racingaustralia.horse.
+        Returns list of {"name": ..., "state": ...} dicts.
+        """
+        url = "https://publishingservices.racingaustralia.horse/racebooks/"
+        system = (
+            "You fetch Australian thoroughbred racing schedule pages. "
+            "Return ONLY a valid JSON array of venue objects. No markdown, no commentary."
+        )
+        schema = '[{"name": "Caulfield", "state": "VIC"}]'
+        result = self._extract_venues(url, system, schema)
+        return result if isinstance(result, list) else []
+
+    def _extract_venues(self, url: str, system: str, schema: str) -> list[dict]:
+        """Fetch a schedule page and extract venue objects (not race data)."""
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=2000,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                system=system,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Fetch this page and return a JSON array of venue objects "
+                        f"matching this schema:\n{schema}\n\nPage: {url}"
+                    ),
+                }],
+            )
+            text = "".join(b.text for b in response.content if hasattr(b, "text"))
+            text = self._strip_fences(text)
+            result = json.loads(text)
+            return result if isinstance(result, list) else []
+        except json.JSONDecodeError as e:
+            log.error(f"ClaudeScraper._extract_venues: JSON decode failed: {e}")
+            return []
+        except Exception as e:
+            log.error(f"ClaudeScraper._extract_venues failed: {e}")
+            return []
+
     def _extract(self, url_or_content: str, system: str, schema: str) -> list[dict]:
         """Fetch and extract, expecting a JSON array response."""
         result = self._extract_raw(url_or_content, system, schema)
