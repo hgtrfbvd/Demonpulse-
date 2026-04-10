@@ -1,6 +1,6 @@
 """
 simulation/models.py
-Shared dataclasses for the DemonPulse V8 Monte Carlo simulation engine.
+Shared dataclasses for the DemonPulse V9 Monte Carlo simulation engine.
 All inter-module data exchange goes through these types.
 """
 from __future__ import annotations

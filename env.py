@@ -1,5 +1,5 @@
 """
-env.py - DemonPulse V8 Environment Mode Authority
+env.py - DemonPulse V9 Environment Mode Authority
 ==================================================
 Single source of truth for TEST vs LIVE separation.
 
@@ -294,7 +294,7 @@ class Environment:
         border = "=" * 58
         if self.is_live:
             log.info(border)
-            log.info("  DEMONPULSE V8 — LIVE MODE")
+            log.info("  DEMONPULSE V9 — LIVE MODE")
             log.info("  ✓ Real data only")
             log.info("  ✓ Destructive operations blocked")
             log.info("  ✓ Fake data blocked")
@@ -302,7 +302,7 @@ class Environment:
             log.info(border)
         else:
             log.warning(border)
-            log.warning("  DEMONPULSE V8 — TEST MODE")
+            log.warning("  DEMONPULSE V9 — TEST MODE")
             log.warning("  ⚠ Fake data ALLOWED")
             log.warning("  ⚠ Auto-deletion ALLOWED")
             log.warning("  ⚠ Stress testing ALLOWED")

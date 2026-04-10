@@ -1,5 +1,5 @@
 """
-exotics.py - V8 Exotics Engine
+exotics.py - V9 Exotics Engine
 Exacta, trifecta, boxed combinations, multi bets
 Auto-suggestions based on signal type
 SNIPER = anchor | VALUE = support | GEM = booster

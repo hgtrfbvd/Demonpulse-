@@ -1,5 +1,5 @@
 """
-services/migration_runner.py — DemonPulse V8 Migration Runner
+services/migration_runner.py — DemonPulse V9 Migration Runner
 ==============================================================
 Runs the canonical SQL schema files against the connected Supabase
 instance via the Supabase Management API (if available) or by

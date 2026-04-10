@@ -1,24 +1,23 @@
 """
 pipeline.py
 ===========
-Daily data pipeline. Fetches all venues for today, extracts races,
-computes derived features, stores to Supabase.
+Daily data pipeline. Fetches horse venues via Claude API and stores to Supabase.
 
-Cycles:
-  full_sweep()     - fetch all venues for today (runs on startup + every 10 min)
-  venue_sweep(v)   - fetch single venue (for live refresh of horse races)
-  compute_derived()- calculate derived fields from raw stored data
+Cycles (v9 module separation):
+  full_sweep()       - horse pipeline only: Claude API → store (every 10 min)
+  greyhound_sweep()  - greyhound pipeline: thedogs.com.au browser → store
+  venue_sweep(v)     - single horse venue refresh
 
 Data paths:
-  GREYHOUND: thedogs.com.au browser collection
-             → services/dogs_board_service.py
+  GREYHOUND: thedogs.com.au browser collection  (scheduler: dogs_visual cycle)
+             → services/dogs_board_service.collect_greyhound_board()
              → collectors/dogs_board_collector.py
              → collectors/dogs_race_capturer.py
              → parsers/dogs_source_parser.py
              → Supabase → board_service.py
 
-  HORSE:     Claude API → ClaudeScraper
-             → pipeline.py → Supabase → board_service.py
+  HORSE:     Claude API → ClaudeScraper          (scheduler: full_sweep cycle)
+             → pipeline.full_sweep() → Supabase → board_service.py
 """
 from __future__ import annotations
 
@@ -74,9 +73,8 @@ _sweep_status: dict = {
     "last_venues_count": 0,
     "last_races_written": 0,
     "last_runners_written": 0,
-    # browser | live_claude | cached_claude | failed_no_cache | mixed
+    # live_claude | cached_claude | failed_no_cache | mixed
     "last_data_source": None,
-    "greyhound_source": None,   # browser_collected | failed
     "horse_source": None,
 }
 
@@ -271,17 +269,72 @@ def _chunks(lst: list, n: int):
         yield lst[i:i + n]
 
 
+def greyhound_sweep(target_date: str | None = None) -> dict[str, Any]:
+    """
+    Greyhound-only pipeline: browser collection via thedogs.com.au → store.
+    Called by the scheduler dogs_visual cycle every 10 minutes.
+    No Claude, no mixed APIs — one consistent source.
+
+    Args:
+        target_date: ISO date string (default: today AEST)
+
+    Returns:
+        {"ok": bool, "date": ..., "races_stored": N, "errors": N, "source": "thedogs_browser"}
+    """
+    today = target_date or datetime.now(_AEST).date().isoformat()
+    _start_races = _pipeline_db_state.get("last_rows_written_today_races", 0)
+    _start_runners = _pipeline_db_state.get("last_rows_written_today_runners", 0)
+
+    stored = 0
+    errors = 0
+
+    try:
+        from services.dogs_board_service import collect_greyhound_board
+        dog_races = collect_greyhound_board(today)
+        log.info(
+            f"[DOGS_BOARD_COLLECT] races_collected={len(dog_races)} "
+            f"date={today} source=thedogs_browser"
+        )
+        for race in dog_races:
+            try:
+                _store_race(race)
+                stored += 1
+            except Exception as e:
+                log.error(f"pipeline: greyhound race store failed: {e}")
+                errors += 1
+    except Exception as e:
+        log.error(f"pipeline: greyhound_sweep failed: {e}")
+        errors += 1
+
+    races_written = _pipeline_db_state.get("last_rows_written_today_races", 0) - _start_races
+    runners_written = _pipeline_db_state.get("last_rows_written_today_runners", 0) - _start_runners
+
+    ok = stored > 0
+    log.info(
+        f"pipeline: greyhound_sweep complete — date={today} races_stored={stored} "
+        f"errors={errors} races_written={races_written} runners_written={runners_written}"
+    )
+    return {
+        "ok": ok,
+        "date": today,
+        "races_stored": stored,
+        "errors": errors,
+        "source": "thedogs_browser",
+        "races_written": races_written,
+        "runners_written": runners_written,
+    }
+
+
 def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     """
-    Fetch all venues for today, compute derived features, store to Supabase.
-    Uses batch scraping (4 greyhound venues / 2 horse venues per Claude call)
-    to maximise context window usage and minimise API calls.
+    Horse pipeline: Claude API venue discovery → normalise → store to Supabase.
+    Called by the scheduler full_sweep cycle every 10 minutes.
 
     On HTTP 429, venue discovery falls back to cached venue lists so the
     board can still be built with slightly stale venue data.
 
     Args:
-        target_date: ISO date string (default: today)
+        target_date: ISO date string (default: today AEST)
 
     Returns:
         {"ok": True, "date": ..., "races_stored": N, "status": "success"|"partial_cached"|...}
@@ -300,7 +353,6 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "last_status": "running",
         "last_failure_stage": None,
         "last_failure_reason": None,
-        "greyhound_source": None,
         "horse_source": None,
     })
     log.info(f"[BOARD_BUILD_START] sweep_id={sweep_id} date={today}")
@@ -314,34 +366,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     races_prepared = 0
 
     # ------------------------------------------------------------------
-    # GREYHOUNDS — browser-based collection via thedogs.com.au
-    # One consistent source: no Claude, no mixed APIs
-    # ------------------------------------------------------------------
-    try:
-        from services.dogs_board_service import collect_greyhound_board
-        dog_races = collect_greyhound_board(today)
-        races_prepared += len(dog_races)
-        log.info(
-            f"[DOGS_BOARD_COLLECT] sweep_id={sweep_id} "
-            f"races_collected={len(dog_races)} date={today} source=thedogs_browser"
-        )
-        for race in dog_races:
-            try:
-                _store_race(race)
-                stored += 1
-            except Exception as e:
-                log.error(f"pipeline: greyhound race store failed: {e}")
-                errors += 1
-        _sweep_status["greyhound_source"] = (
-            "browser_collected" if dog_races else "failed"
-        )
-    except Exception as e:
-        log.error(f"pipeline: greyhound browser sweep failed: {e}")
-        _sweep_status["greyhound_source"] = "failed"
-        errors += 1
-
-    # ------------------------------------------------------------------
-    # HORSES — Claude API via ClaudeScraper (unchanged)
+    # HORSES — Claude API via ClaudeScraper
     # ------------------------------------------------------------------
     scraper = ClaudeScraper()
     try:
@@ -373,8 +398,6 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     races_written = _pipeline_db_state.get("last_rows_written_today_races", 0) - _start_races
     runners_written = _pipeline_db_state.get("last_rows_written_today_runners", 0) - _start_runners
 
-    # Determine data source
-    gdog_src = _sweep_status.get("greyhound_source") or "browser_collected"
     horse_src = _sweep_status.get("horse_source") or "live_claude"
     any_cached = "cached_claude" in (horse_src,)
     any_no_cache = "failed_no_cache" in (horse_src,)
@@ -385,8 +408,6 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         data_source = "failed_no_cache"
     elif any_cached:
         data_source = "cached_claude"
-    elif gdog_src == "browser_collected":
-        data_source = "browser+claude"
     else:
         data_source = "live_claude"
 
@@ -403,7 +424,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     if stored == 0 and errors == 0:
         log.warning(
             f"pipeline: full_sweep stored 0 races with 0 errors for {today} — "
-            "board collector may have returned an empty list or horse venues not configured."
+            "horse venues may not be configured or Claude returned no data."
         )
 
     # Structured board-build logs
@@ -429,7 +450,6 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         "last_data_source": data_source,
     })
 
-    # ok=True whenever races were stored
     ok = stored > 0
     return {
         "ok": ok,

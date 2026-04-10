@@ -1,5 +1,5 @@
 """
-services/data_integrity_service.py — DemonPulse V8 Data Integrity
+services/data_integrity_service.py — DemonPulse V9 Data Integrity
 ==================================================================
 Checks and enforces referential and logical integrity across all
 Supabase tables.

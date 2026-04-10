@@ -2,7 +2,7 @@
 migrations.py - DemonPulse Database Migrations
 ================================================
 Ensures the Supabase schema has all columns and tables required by the
-V8 architecture and Phase 3/4/4.6 intelligence layers.
+V9 architecture and Phase 3/4/4.6 intelligence layers.
 
 Run once after deploying new code that adds columns or tables.
 Safe to re-run — uses ADD COLUMN IF NOT EXISTS throughout.

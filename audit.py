@@ -1,5 +1,5 @@
 """
-audit.py — DemonPulse V8 Audit Log
+audit.py — DemonPulse V9 Audit Log
 ====================================
 Routes all audit events through the canonical db.py layer.
 audit_log is always-live (never test-prefixed) per env.py.
