@@ -1205,4 +1205,84 @@ Be direct and useful. Mention key strengths or concerns. Do not use filler phras
 
         loadLiveRace();
     });
+
+    // -------------------------------------------------------
+    // On-demand live refresh & polling
+    // Exposed as window globals so home/board pages can call them.
+    // -------------------------------------------------------
+
+    let _racePoller = null;
+    let _currentPolledRace = null;
+
+    function showRefreshBadge(msg) {
+        let badge = document.getElementById("refresh-badge");
+        if (!badge) {
+            badge = document.createElement("div");
+            badge.id = "refresh-badge";
+            badge.style.cssText = (
+                "position:fixed;top:12px;right:16px;z-index:9999;"
+                + "background:var(--accent,#00bcd4);color:#fff;"
+                + "padding:6px 14px;border-radius:6px;font-size:0.78rem;"
+                + "letter-spacing:.05em;opacity:0;transition:opacity .3s;"
+            );
+            document.body.appendChild(badge);
+        }
+        badge.textContent = msg || "Updated";
+        badge.style.opacity = "1";
+        setTimeout(() => { badge.style.opacity = "0"; }, 3000);
+    }
+
+    async function selectRace(raceUid) {
+        _currentPolledRace = raceUid;
+        try {
+            const data = await fetch(`/api/races/${encodeURIComponent(raceUid)}/live`)
+                .then(r => r.json());
+            if (data.refreshed) showRefreshBadge("Updated just now");
+            if (data.race) liveRace = data.race;
+            if (Array.isArray(data.runners) && data.runners.length) liveRunners = data.runners;
+            try { renderRaceHeader(); } catch (_) {}
+            try { renderAnalysis(); } catch (_) {}
+            if (liveRunners.length) {
+                try { buildRunnerCards(liveRunners, liveAnalysis); } catch (_) {}
+            }
+        } catch (err) {
+            console.warn("selectRace fetch failed:", err);
+        }
+        startRacePoller(raceUid);
+    }
+
+    function startRacePoller(raceUid) {
+        clearInterval(_racePoller);
+        _racePoller = setInterval(async () => {
+            if (_currentPolledRace !== raceUid) return;
+            try {
+                const data = await fetch(`/api/races/${encodeURIComponent(raceUid)}/live`)
+                    .then(r => r.json());
+                if (data.refreshed && data.race) {
+                    liveRace = data.race;
+                    if (Array.isArray(data.runners) && data.runners.length) liveRunners = data.runners;
+                    showRefreshBadge("Updated just now");
+                    try { renderRaceHeader(); } catch (_) {}
+                    try { renderAnalysis(); } catch (_) {}
+                    if (liveRunners.length) {
+                        try { buildRunnerCards(liveRunners, liveAnalysis); } catch (_) {}
+                    }
+                }
+            } catch (err) {
+                console.warn("racePoller fetch failed:", err);
+            }
+        }, 60_000);
+    }
+
+    function deselectRace() {
+        clearInterval(_racePoller);
+        _currentPolledRace = null;
+    }
+
+    // Expose for external callers (board/home page)
+    window.selectRace = selectRace;
+    window.startRacePoller = startRacePoller;
+    window.deselectRace = deselectRace;
+    window.showRefreshBadge = showRefreshBadge;
+
 })();
