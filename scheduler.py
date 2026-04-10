@@ -106,6 +106,10 @@ def _run_full_sweep():
         from pipeline import full_sweep
         result = full_sweep()
         ok = result.get("ok", False)
+        sweep_status = result.get("status", "")
+        # Rebuild the board for both full successes and partial-cached sweeps so
+        # that a 429 rate-limit never leaves the dashboard blank.
+        should_rebuild = ok or sweep_status in ("partial_cached", "success")
         if ok:
             log.info(f"scheduler: full_sweep complete: {result}")
         else:
@@ -123,7 +127,7 @@ def _run_full_sweep():
         except Exception:
             pass
 
-        if ok:
+        if should_rebuild:
             _trigger_board_rebuild()
 
         return result

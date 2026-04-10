@@ -14,13 +14,104 @@ import re
 import json
 import hashlib
 import logging
+from datetime import datetime
 from typing import Any
 from anthropic import Anthropic
+
+try:
+    from anthropic import RateLimitError as _AnthropicRateLimitError
+except ImportError:
+    _AnthropicRateLimitError = None  # type: ignore[assignment,misc]
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# VENUE CACHE — last-good venue JSON persisted locally so board can continue
+# building when Claude is temporarily rate-limited.
+# ---------------------------------------------------------------------------
+_VENUE_CACHE_FILE = os.environ.get(
+    "VENUE_CACHE_FILE", "/tmp/demonpulse_venue_cache.json"
+)
+_venue_cache: dict[str, list] = {}  # in-memory mirror of the file
+
+
+def save_venue_cache(key: str, venues: list) -> None:
+    """Persist venues list to in-memory + file cache under *key*."""
+    _venue_cache[key] = venues
+    try:
+        existing: dict = {}
+        if os.path.exists(_VENUE_CACHE_FILE):
+            with open(_VENUE_CACHE_FILE, "r") as fh:
+                existing = json.load(fh)
+        existing[key] = venues
+        with open(_VENUE_CACHE_FILE, "w") as fh:
+            json.dump(existing, fh)
+        log.debug(f"[VENUE CACHE] saved key={key!r} count={len(venues)}")
+    except Exception as exc:
+        log.warning(f"[VENUE CACHE] file write failed key={key!r}: {exc}")
+
+
+def load_venue_cache(key: str) -> list | None:
+    """Return cached venues for *key*, or None if no cache exists."""
+    if key in _venue_cache:
+        return _venue_cache[key]
+    try:
+        if os.path.exists(_VENUE_CACHE_FILE):
+            with open(_VENUE_CACHE_FILE, "r") as fh:
+                data = json.load(fh)
+            venues = data.get(key)
+            if venues is not None:
+                _venue_cache[key] = venues
+                log.info(
+                    f"[VENUE CACHE] loaded from file key={key!r} count={len(venues)}"
+                )
+                return venues
+    except Exception as exc:
+        log.warning(f"[VENUE CACHE] file read failed key={key!r}: {exc}")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# RATE-LIMIT HELPERS
+# ---------------------------------------------------------------------------
+
+class ClaudeRateLimitError(Exception):
+    """Raised when Anthropic returns HTTP 429 Too Many Requests."""
+
+    def __init__(self, retry_after: float = 0.0, endpoint: str = "") -> None:
+        self.retry_after = retry_after
+        self.endpoint = endpoint
+        super().__init__(
+            f"Anthropic 429 rate limit (retry_after={retry_after:.0f}s "
+            f"endpoint={endpoint!r})"
+        )
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True when *exc* is an Anthropic HTTP 429 error."""
+    if _AnthropicRateLimitError and isinstance(exc, _AnthropicRateLimitError):
+        return True
+    return getattr(exc, "status_code", None) == 429
+
+
+def _get_retry_after(exc: Exception) -> float:
+    """Extract retry-after seconds from an Anthropic 429 exception."""
+    try:
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            headers = getattr(resp, "headers", {}) or {}
+            val = headers.get("retry-after") or headers.get(
+                "x-ratelimit-reset-requests"
+            )
+            if val:
+                return float(val)
+    except Exception:
+        pass
+    return 0.0
+
+# ---------------------------------------------------------------------------
 # PIPELINE STATE — updated on every Claude call; read by /api/debug/claude-pipeline
+# and /api/debug/board-status
 # ---------------------------------------------------------------------------
 _pipeline_state: dict[str, Any] = {
     "prompt_source": "connectors/claude_scraper.py",
@@ -33,6 +124,14 @@ _pipeline_state: dict[str, Any] = {
     "last_top_level_keys": None,
     "last_race_count": None,
     "last_runner_count": None,
+    # 429 / rate-limit tracking
+    "last_429_at": None,
+    "last_429_endpoint": None,
+    "last_429_stage": None,
+    "last_429_retry_after": None,
+    # data-source for the most recent venue fetch
+    "last_fetch_source": None,   # live_claude | cached_claude | failed_no_cache
+    "last_venues_count": None,
 }
 
 
@@ -195,7 +294,12 @@ def _extract_json_from_text(text: str) -> list | dict | None:
 
 class ClaudeScraper:
     def __init__(self):
-        self.client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        # max_retries=0: fail fast on 429 so the pipeline can fall back to
+        # cached venues immediately rather than blocking for ~51 s.
+        self.client = Anthropic(
+            api_key=os.environ["ANTHROPIC_API_KEY"],
+            max_retries=0,
+        )
         self.model = "claude-haiku-4-5-20251001"
 
     # ------------------------------------------------------------------
@@ -350,7 +454,11 @@ class ClaudeScraper:
         return result if isinstance(result, list) else []
 
     def _extract_venues(self, url: str, system: str, schema: str) -> list[dict]:
-        """Fetch a schedule page and extract venue objects (not race data)."""
+        """Fetch a schedule page and extract venue objects (not race data).
+
+        Raises ClaudeRateLimitError on HTTP 429 so callers can fall back to
+        cached venues rather than silently returning an empty list.
+        """
         system_hash = hashlib.md5(system.encode()).hexdigest()[:12]
         log.info(
             f"[CLAUDE PROMPT] source=connectors/claude_scraper.py "
@@ -380,9 +488,33 @@ class ClaudeScraper:
             log.info(f"[CLAUDE PARSE] function=_extract_venues appears_json={appears_json}")
             text = self._strip_fences(text)
             result = _parse_json_strict(text, context="_extract_venues")
-            return result if isinstance(result, list) else []
-        except Exception as e:
-            log.error(f"[CLAUDE REQUEST ERROR] _extract_venues failed: {e}", exc_info=True)
+            venues = result if isinstance(result, list) else []
+            _pipeline_state["last_fetch_source"] = "live_claude"
+            _pipeline_state["last_venues_count"] = len(venues)
+            return venues
+        except Exception as exc:
+            if _is_rate_limit_error(exc):
+                retry_after = _get_retry_after(exc)
+                now_iso = datetime.utcnow().isoformat()
+                _pipeline_state.update({
+                    "last_429_at": now_iso,
+                    "last_429_endpoint": url,
+                    "last_429_stage": "venue_fetch",
+                    "last_429_retry_after": retry_after,
+                    "last_fetch_source": None,
+                })
+                log.error(
+                    f"[VENUES_FETCH_429] endpoint={url!r} provider=anthropic "
+                    f"stage=venue_fetch retry_delay={retry_after:.0f}s "
+                    f"at={now_iso}"
+                )
+                raise ClaudeRateLimitError(
+                    retry_after=retry_after, endpoint=url
+                ) from exc
+            log.error(
+                f"[CLAUDE REQUEST ERROR] _extract_venues failed: {exc}",
+                exc_info=True,
+            )
             return []
 
     def _extract(self, url_or_content: str, system: str, schema: str) -> list[dict]:
@@ -471,6 +603,23 @@ class ClaudeScraper:
             return []
 
         except Exception as e:
+            if _is_rate_limit_error(e):
+                retry_after = _get_retry_after(e)
+                now_iso = datetime.utcnow().isoformat()
+                _pipeline_state.update({
+                    "last_429_at": now_iso,
+                    "last_429_endpoint": str(url_or_content)[:200],
+                    "last_429_stage": "race_fetch",
+                    "last_429_retry_after": retry_after,
+                    "last_parse_success": False,
+                    "last_parse_error": f"429 rate limit retry_after={retry_after:.0f}s",
+                })
+                log.error(
+                    f"[CLAUDE_RACE_FETCH_429] provider=anthropic stage=race_fetch "
+                    f"retry_delay={retry_after:.0f}s at={now_iso} "
+                    f"endpoint={str(url_or_content)[:200]!r}"
+                )
+                return []
             log.error(f"[CLAUDE REQUEST ERROR] _extract_raw failed: {e}", exc_info=True)
             _pipeline_state.update({
                 "last_parse_success": False,
