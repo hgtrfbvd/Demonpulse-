@@ -8,7 +8,11 @@ python-dotenv==1.0.1
 beautifulsoup4==4.12.3
 lxml==5.2.2
 schedule==1.2.1
-playwright==1.44.0
 pandas==2.2.2
 numpy==1.26.4
 anthropic>=0.25.0
+playwright==1.50.1
+playwright-stealth==1.0.0
+pytesseract==0.3.13
+easyocr==1.7.2
+pillow==10.4.0
