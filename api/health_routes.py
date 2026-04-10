@@ -20,56 +20,33 @@ health_bp = Blueprint("health", __name__, url_prefix="/api/health")
 @health_bp.route("", methods=["GET"])
 @health_bp.route("/", methods=["GET"])
 def health():
-    """Basic liveness probe — includes connector enabled flags for settings UI."""
-    oddspro_enabled = False
-    formfav_enabled = False
-    try:
-        from connectors.oddspro_connector import OddsProConnector
-        oddspro_enabled = OddsProConnector().is_enabled()
-    except Exception as e:
-        log.debug(f"health: OddsPro connector check failed: {e}")
-    try:
-        from connectors.formfav_connector import FormFavConnector
-        formfav_enabled = FormFavConnector().is_enabled()
-    except Exception as e:
-        log.debug(f"health: FormFav connector check failed: {e}")
+    """Basic liveness probe."""
+    claude_enabled = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
     return jsonify({
         "ok": True,
         "app": "DemonPulse",
         "mode": env.mode,
-        "oddspro_enabled": oddspro_enabled,
-        "formfav_enabled": formfav_enabled,
+        "claude_enabled": claude_enabled,
+        "data_source": "claude",
     })
 
 
 @health_bp.route("/connectors", methods=["GET"])
 def health_connectors():
-    """Check all data connector health."""
+    """Check data pipeline health (Claude API)."""
     results: dict[str, dict] = {}
 
-    # OddsPro — primary source
-    try:
-        from connectors.oddspro_connector import OddsProConnector
-        results["oddspro"] = OddsProConnector().healthcheck()
-    except Exception as e:
-        log.error(f"OddsPro healthcheck error: {e}")
-        results["oddspro"] = {"ok": False, "error": "OddsPro connector unavailable"}
-
-    # FormFav — provisional overlay
-    try:
-        from connectors.formfav_connector import FormFavConnector
-        results["formfav"] = FormFavConnector().healthcheck()
-    except Exception as e:
-        log.error(f"FormFav healthcheck error: {e}")
-        results["formfav"] = {"ok": False, "error": "FormFav connector unavailable"}
-
-    all_ok = results.get("oddspro", {}).get("ok", False)
+    claude_enabled = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+    results["claude"] = {
+        "ok": claude_enabled,
+        "enabled": claude_enabled,
+        "model": "claude-haiku-4-5-20251001",
+    }
 
     return jsonify({
-        "ok": all_ok,
+        "ok": claude_enabled,
         "connectors": results,
-        "primary_source": "oddspro",
-        "note": "formfav is provisional overlay only",
+        "primary_source": "claude",
     })
 
 

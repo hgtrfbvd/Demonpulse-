@@ -821,16 +821,15 @@ def test_backtesting() -> _Result:
 
 def test_result_triggers_evaluation() -> _Result:
     """
-    Fix 1 verification: _write_result() must call evaluate_prediction().
-    Writes a prediction snapshot, then writes a result via _write_result(),
+    Fix 1 verification: write_result() must call evaluate_prediction().
+    Writes a prediction snapshot, then writes a result via database._write_result(),
     then confirms a row appears in test_learning_evaluations.
     """
     r = _Result("result_triggers_evaluation")
-    r.code_path = "data_engine._write_result() → test_learning_evaluations"
+    r.code_path = "database._write_result() → test_learning_evaluations"
 
     from db import get_db, safe_query, T
     from ai.learning_store import save_prediction_snapshot
-    from data_engine import _write_result
     from database import upsert_race, get_race
 
     uid      = _uid()
@@ -884,7 +883,23 @@ def test_result_triggers_evaluation() -> _Result:
         winning_time    = None
         source          = "oddspro"
 
-    _write_result(FakeResult())
+    fake = FakeResult()
+    from database import upsert_result
+    upsert_result({
+        "race_uid": fake.race_uid,
+        "date": fake.date,
+        "track": fake.track,
+        "race_num": fake.race_num,
+        "code": fake.code,
+        "winner": fake.winner,
+        "winner_number": fake.winner_number,
+        "win_price": fake.win_price,
+        "place_2": fake.place_2,
+        "place_3": fake.place_3,
+        "margin": fake.margin,
+        "winning_time": fake.winning_time,
+        "source": fake.source,
+    })
 
     rows = safe_query(
         lambda: get_db()

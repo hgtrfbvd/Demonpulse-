@@ -2,8 +2,7 @@
 api/race_routes.py - DemonPulse Race API Routes
 =================================================
 Provides API endpoints for race data.
-All race data is sourced from OddsPro (authoritative).
-FormFav provisional overlays are applied near-jump only.
+All race data is sourced from the Claude-powered pipeline.
 """
 from __future__ import annotations
 
@@ -42,6 +41,18 @@ def list_races():
         return jsonify({"ok": False, "error": "Could not retrieve races"}), 500
 
 
+@race_bp.route("/upcoming", methods=["GET"])
+def get_upcoming_races():
+    """Get upcoming races from the live board (alias for board)."""
+    try:
+        from board_service import get_board_for_today
+        result = get_board_for_today()
+        return jsonify(result)
+    except Exception as e:
+        log.error(f"/api/races/upcoming failed: {e}")
+        return jsonify({"ok": False, "error": "Could not retrieve upcoming races"}), 500
+
+
 @race_bp.route("/<race_uid>", methods=["GET"])
 def get_race(race_uid: str):
     """Get a single race by race_uid."""
@@ -61,6 +72,25 @@ def get_race(race_uid: str):
         return jsonify({"ok": False, "error": "Could not retrieve race"}), 500
 
 
+@race_bp.route("/<race_uid>/analysis", methods=["GET"])
+def get_race_analysis(race_uid: str):
+    """Get race data and runners for analysis (Claude pipeline)."""
+    try:
+        from database import get_race, get_runners_for_race
+        from race_status import compute_ntj
+
+        race = get_race(race_uid)
+        if not race:
+            return jsonify({"ok": False, "error": "Race not found"}), 404
+
+        ntj = compute_ntj(race.get("jump_time"), race.get("date"))
+        runners = get_runners_for_race(race_uid)
+        return jsonify({"ok": True, "race": {**race, **ntj, "runners": runners}})
+    except Exception as e:
+        log.error(f"/api/races/{race_uid}/analysis failed: {e}")
+        return jsonify({"ok": False, "error": "Could not retrieve race analysis"}), 500
+
+
 @race_bp.route("/<race_uid>/result", methods=["GET"])
 def get_race_result(race_uid: str):
     """Get the settled result for a race."""
@@ -77,39 +107,10 @@ def get_race_result(race_uid: str):
 
 @race_bp.route("/<race_uid>/results", methods=["GET"])
 def get_race_results(race_uid: str):
-    """
-    Get official race results for a single race from OddsPro.
-    Falls back to local DB result if OddsPro is not configured.
-    """
+    """Get stored result for a race."""
     try:
-        from connectors.oddspro_connector import OddsProConnector
-        from database import get_race, get_result
+        from database import get_result
 
-        conn = OddsProConnector()
-        if conn.is_enabled():
-            race = get_race(race_uid)
-            oddspro_id = (race or {}).get("oddspro_race_id") or race_uid
-            result = conn.fetch_race_result(oddspro_id)
-            if result:
-                return jsonify({
-                    "ok": True,
-                    "race_uid": race_uid,
-                    "oddspro_race_id": result.oddspro_race_id,
-                    "date": result.date,
-                    "track": result.track,
-                    "race_num": result.race_num,
-                    "code": result.code,
-                    "winner": result.winner,
-                    "winner_number": result.winner_number,
-                    "win_price": result.win_price,
-                    "place_2": result.place_2,
-                    "place_3": result.place_3,
-                    "margin": result.margin,
-                    "winning_time": result.winning_time,
-                    "source": result.source,
-                })
-
-        # Fallback to local DB
         stored = get_result(race_uid)
         if stored:
             return jsonify({"ok": True, **stored})
@@ -123,32 +124,23 @@ def get_race_results(race_uid: str):
 @race_bp.route("/<race_uid>/refresh", methods=["POST"])
 def refresh_race(race_uid: str):
     """
-    Manually trigger an OddsPro refresh for a single race.
-    Requires the oddspro_race_id to be stored in the race record.
+    Trigger a venue sweep to refresh a single race.
+    Identifies venue from stored race record and re-fetches.
     """
     try:
         from database import get_race
-        from connectors.oddspro_connector import OddsProConnector
-        from data_engine import _write_race
-
         race = get_race(race_uid)
         if not race:
             return jsonify({"ok": False, "error": "Race not found"}), 404
 
-        oddspro_id = race.get("oddspro_race_id") or ""
-        if not oddspro_id:
-            return jsonify({"ok": False, "error": "No OddsPro race ID stored"}), 400
+        track = race.get("track") or ""
+        code = (race.get("code") or "GREYHOUND").upper()
+        race_date = race.get("date") or ""
 
-        conn = OddsProConnector()
-        if not conn.is_enabled():
-            return jsonify({"ok": False, "error": "OddsPro connector not configured"}), 503
-
-        fresh_race, _ = conn.fetch_race_with_runners(oddspro_id)
-        if not fresh_race:
-            return jsonify({"ok": False, "error": "OddsPro returned no data"}), 502
-
-        _write_race(fresh_race)
-        return jsonify({"ok": True, "race_uid": race_uid, "source": "oddspro"})
+        from pipeline import venue_sweep
+        venue = {"slug": track.lower().replace(" ", "-"), "name": track}
+        result = venue_sweep(venue, code=code, target_date=race_date)
+        return jsonify({"ok": result.get("ok", False), "race_uid": race_uid, "source": "claude"})
 
     except Exception as e:
         log.error(f"/api/races/{race_uid}/refresh failed: {e}")
@@ -172,7 +164,8 @@ def save_race_note(race_uid: str):
         return jsonify({"ok": False, "error": "Could not save note"}), 500
 
 
-@race_bp.route("/<race_uid>/blocked", methods=["GET"])def get_blocked_status(race_uid: str):
+@race_bp.route("/<race_uid>/blocked", methods=["GET"])
+def get_blocked_status(race_uid: str):
     """Check if a race is explicitly blocked."""
     try:
         from database import get_race

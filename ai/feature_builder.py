@@ -4,31 +4,31 @@ ai/feature_builder.py - DemonPulse Feature Builder
 Builds structured model-ready feature snapshots from stored validated races.
 
 Feature source rules:
-  - Uses only stored validated race data (OddsPro-confirmed authoritative storage)
-  - FormFav enrichment may be included only when clearly flagged as non-authoritative
-  - Never uses raw connector payloads directly if validated data already exists
-  - Preserves exact lineage to race_uid and oddspro_race_id
+  - Uses only stored validated race data (Claude-scraped authoritative storage)
+  - Derived fields (early_speed_rating, consistency_rating etc.) are pre-computed
+    in features.py and stored in runner records
+  - Preserves exact lineage to race_uid
 
 Output:
   - Clean feature dicts, one row per non-scratched runner
   - Stable feature names, serializable output
-  - Exact race_uid / oddspro_race_id lineage
+  - Exact race_uid lineage
 
 Feature groups:
   A. race_metadata       : track, code, distance, grade, condition, field_size, jump time
   B. runner_features     : box/barrier, runner_num, name, trainer, jockey
   C. market_features     : win_odds, implied_prob, odds_rank, relative_to_fav, spread,
                            opening_odds, current_odds, market_movement_pct,
-                           market_overround, implied_probability (OddsPro authoritative)
+                           market_overround, implied_probability (optional Betfair feed)
   D. sectional_features  : early_speed_score, late_speed_score, closing_delta,
                            fatigue_index, acceleration_index,
-                           sectional_consistency_score (OddsPro authoritative)
+                           sectional_consistency_score (derived from split_time)
   E. race_shape_features : pace_scenario, leader_pressure, early_speed_density,
                            collapse_risk, race_shape_fit
   F. collision_features  : collision_risk_score, interference_probability,
                            boxed_runner_penalty (greyhounds only)
-  G. enrichment_features : FormFav-sourced fields clearly flagged as non-authoritative
-                           (has_enrichment, running_style, earlySpeedIndex, etc.)
+  G. derived_features    : early_speed_rating, consistency_rating, run_style
+                           (computed in features.py — not scraped)
 """
 from __future__ import annotations
 
@@ -195,6 +195,7 @@ def _extract_race_meta(race: dict[str, Any]) -> dict[str, Any]:
     jump_hour, jump_minute, jump_dow = _parse_jump_time(race.get("jump_time"))
     return {
         "race_uid": race.get("race_uid") or "",
+        # oddspro_race_id kept for downstream compatibility; empty string in new pipeline
         "oddspro_race_id": race.get("oddspro_race_id") or "",
         "race_date": str(race.get("date") or ""),
         "track": (race.get("track") or "").upper(),
@@ -219,8 +220,9 @@ def _build_runner_row(
     collision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a complete feature row for one runner."""
-    box_num = runner.get("box_num") or 0
-    win_odds = _safe_float(runner.get("price"))
+    box_num = runner.get("box_num") or runner.get("box") or runner.get("barrier") or 0
+    # Support both 'odds' (new pipeline) and 'price' (legacy) field names
+    win_odds = _safe_float(runner.get("odds") or runner.get("price"))
     implied_prob = (1.0 / win_odds) if win_odds and win_odds > 1.0 else 0.0
     fav_odds = market_stats.get("fav_odds") or win_odds or 1.0
 
@@ -230,6 +232,16 @@ def _build_runner_row(
     market_movement_pct = 0.0
     if opening_odds and opening_odds > 1.0 and current_odds and current_odds > 1.0:
         market_movement_pct = round((opening_odds - current_odds) / opening_odds * 100, 2)
+
+    # Derived fields from features.py (new pipeline)
+    early_speed_rating = runner.get("early_speed_rating")
+    consistency_rating = runner.get("consistency_rating")
+    # run_style: from speed_map for horses, or derived from split_time rank for dogs
+    run_style = (
+        runner.get("run_style")
+        or runner.get("enrichment_running_style")
+        or ""
+    )
 
     # Race shape features
     rs = race_shape or {}
@@ -243,15 +255,23 @@ def _build_runner_row(
         if implied_prob < 0.25 else 0.3
     )
 
-    # Sectional features (OddsPro authoritative)
+    # Sectional features — derived from split_time (greyhounds) or null (horses)
     sec = sectionals or {}
-    early_speed_score           = _safe_float(sec.get("early_speed_score"))
+    # Use split_time as the raw sectional source when no precomputed sectionals are provided
+    split_time = _safe_float(runner.get("split_time") or runner.get("best_time"))
+    early_speed_score           = _safe_float(sec.get("early_speed_score") or (
+        # Derive from runner's early_speed_rating if no precomputed sectionals
+        (10.0 - runner.get("early_speed_rating", 0)) / 10.0 if runner.get("early_speed_rating") else None
+    ))
     late_speed_score            = _safe_float(sec.get("late_speed_score"))
     closing_delta               = _safe_float(sec.get("closing_delta"))
     fatigue_index               = _safe_float(sec.get("fatigue_index"), 1.0)
     acceleration_index          = _safe_float(sec.get("acceleration_index"))
-    sectional_consistency_score = _safe_float(sec.get("sectional_consistency_score"), 0.5)
-    has_sectionals              = 1 if sec else 0
+    sectional_consistency_score = _safe_float(sec.get("sectional_consistency_score") or
+        # Derive from consistency_rating (inverse — lower stdev = higher consistency)
+        ((1.0 - min(runner.get("consistency_rating", 0) or 0, 5.0) / 5.0) if runner.get("consistency_rating") else None),
+        0.5)
+    has_sectionals              = 1 if (sec or split_time) else 0
 
     # Collision features (greyhounds only — zero for others)
     col = collision or {}
@@ -282,6 +302,10 @@ def _build_runner_row(
         "trainer": runner.get("trainer") or "",
         "jockey": runner.get("jockey") or runner.get("driver") or "",
         "is_scratched": 0,
+        # --- New derived fields (computed in features.py) ---
+        "early_speed_rating": early_speed_rating,
+        "consistency_rating": consistency_rating,
+        "run_style": run_style,
         # --- Market features (OddsPro authoritative) ---
         "win_odds": win_odds,
         "opening_odds": opening_odds,
@@ -334,9 +358,19 @@ def _build_runner_row(
         row["enrichment_place_pct"]          = _safe_float(enrichment.get("place_pct"), 0.0)
         row["enrichment_track_win_pct"]      = _safe_float(enrichment.get("track_win_pct"), 0.0)
         row["enrichment_distance_win_pct"]   = _safe_float(enrichment.get("distance_win_pct"), 0.0)
-        row["enrichment_recent_form"]        = str(enrichment.get("form_string") or "")
-        row["enrichment_running_style"]      = str(enrichment.get("running_style") or enrichment.get("run_style") or "")
-        row["enrichment_early_speed_index"]  = _safe_float(enrichment.get("earlySpeedIndex") or enrichment.get("early_speed_index"), 0.0)
+        row["enrichment_recent_form"]        = str(enrichment.get("form_string") or enrichment.get("form_last5") or "")
+        # New pipeline: run_style comes from speed_map (horses) or derived from split_time rank (dogs)
+        row["enrichment_running_style"]      = str(
+            enrichment.get("run_style") or enrichment.get("running_style") or
+            enrichment.get("runStyle") or ""
+        )
+        # New pipeline: early_speed_rating replaces earlySpeedIndex
+        row["enrichment_early_speed_index"]  = _safe_float(
+            enrichment.get("early_speed_rating")
+            or enrichment.get("earlySpeedIndex")
+            or enrichment.get("early_speed_index"),
+            0.0
+        )
         row["enrichment_settling_position"]  = _safe_float(enrichment.get("settlingPosition") or enrichment.get("settling_position"), 0.0)
         row["enrichment_pace_scenario"]      = str(enrichment.get("paceScenario") or enrichment.get("pace_scenario") or "")
         row["enrichment_class_profile"]      = str(enrichment.get("classProfile") or enrichment.get("class_profile") or "")

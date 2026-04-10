@@ -2,9 +2,7 @@
 api/board_routes.py - DemonPulse Board API Routes
 ===================================================
 Provides the live racing board API.
-Board is built from OddsPro-authoritative data.
-FormFav provisional overlays applied near-jump only.
-NTJ is calculated from stored jump_time — no external scraping.
+Board is built from Claude-scraped data stored in Supabase.
 """
 from __future__ import annotations
 
@@ -19,13 +17,9 @@ board_bp = Blueprint("board", __name__, url_prefix="/api/board")
 @board_bp.route("", methods=["GET"])
 @board_bp.route("/", methods=["GET"])
 def get_board():
-    """
-    Get the live racing board.
-    Races are from OddsPro only. FormFav overlay is applied near-jump.
-    Blocked races are excluded. Stale/invalid races never reach the board.
-    """
+    """Get the live racing board."""
     try:
-        from board_builder import get_board_for_today
+        from board_service import get_board_for_today
         result = get_board_for_today()
         return jsonify(result)
     except Exception as e:

@@ -19,9 +19,9 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 @admin_bp.route("/sweep", methods=["POST"])
 @require_role("admin")
 def trigger_sweep():
-    """Manually trigger a full OddsPro sweep for today."""
+    """Manually trigger a full pipeline sweep for today."""
     try:
-        from data_engine import full_sweep
+        from pipeline import full_sweep
         from datetime import date
         target_date = (request.get_json(silent=True) or {}).get("date")
         result = full_sweep(target_date or date.today().isoformat())
@@ -34,12 +34,12 @@ def trigger_sweep():
 @admin_bp.route("/refresh", methods=["POST"])
 @require_role("admin")
 def trigger_refresh():
-    """Manually trigger a rolling refresh of active races."""
+    """Manually trigger a pipeline sweep (alias for sweep)."""
     try:
-        from data_engine import rolling_refresh
+        from pipeline import full_sweep
         from datetime import date
         target_date = (request.get_json(silent=True) or {}).get("date")
-        result = rolling_refresh(target_date or date.today().isoformat())
+        result = full_sweep(target_date or date.today().isoformat())
         return jsonify(result)
     except Exception as e:
         log.error(f"/api/admin/refresh failed: {e}")
@@ -49,13 +49,17 @@ def trigger_refresh():
 @admin_bp.route("/results", methods=["POST"])
 @require_role("admin")
 def trigger_results():
-    """Manually trigger a result check sweep."""
+    """Manually trigger a race state check (result detection from stored times)."""
     try:
-        from data_engine import check_results
         from datetime import date
-        target_date = (request.get_json(silent=True) or {}).get("date")
-        result = check_results(target_date or date.today().isoformat())
-        return jsonify(result)
+        from database import get_races_for_date, update_race_status
+        from race_status import bulk_update_race_states
+        target_date = (request.get_json(silent=True) or {}).get("date") or date.today().isoformat()
+        races = get_races_for_date(target_date)
+        changes = bulk_update_race_states(races)
+        for race_uid, old_status, new_status in changes:
+            update_race_status(race_uid, new_status)
+        return jsonify({"ok": True, "date": target_date, "status_changes": len(changes)})
     except Exception as e:
         log.error(f"/api/admin/results failed: {e}")
         return jsonify({"ok": False, "error": "Result check failed"}), 500
@@ -301,16 +305,10 @@ def admin_bootstrap_day():
 
     # ── 2. CONFIG / ENV LAYER ────────────────────────────────────────────
     config = {
-        "ODDSPRO_BASE_URL": os.getenv("ODDSPRO_BASE_URL") or None,
-        "api_key_present": bool(os.getenv("ODDSPRO_API_KEY", "").strip()),
-        "public_mode": (
-            bool(os.getenv("ODDSPRO_BASE_URL", "").strip())
-            and not bool(os.getenv("ODDSPRO_API_KEY", "").strip())
-        ),
+        "claude_api_key_present": bool(os.getenv("ANTHROPIC_API_KEY", "").strip()),
         "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true").lower() == "true",
         "app_mode": os.getenv("DP_ENV", "LIVE"),
-        "oddspro_timeout": int(os.getenv("ODDSPRO_TIMEOUT", "30")),
-        "oddspro_country": os.getenv("ODDSPRO_COUNTRY", "au"),
+        "data_source": "claude",
     }
 
     target_date = date.today().isoformat()
@@ -327,166 +325,68 @@ def admin_bootstrap_day():
     health_diag: dict = {}
 
     # ── Early-exit: config failure ───────────────────────────────────────
-    if not config["ODDSPRO_BASE_URL"]:
+    if not os.getenv("ANTHROPIC_API_KEY"):
         failing_stage = "config"
 
     # ── 3–8. REQUEST → STORAGE (via full_sweep) ──────────────────────────
     result: dict = {}
     if failing_stage != "config":
         try:
-            from data_engine import full_sweep
+            from pipeline import full_sweep
             result = full_sweep(target_date)
         except Exception as exc:
-            # Log full detail server-side; use a safe code in result to avoid
-            # py/stack-trace-exposure (no str(exc) in the response chain).
             log.error(f"/api/admin/bootstrap-day full_sweep raised: {exc}")
             result = {"ok": False, "reason": "unexpected_exception"}
 
     ok = bool(result.get("ok", False))
 
-    # ── Pull HTTP diagnostics from the connector singleton ───────────────
-    try:
-        from data_engine import get_oddspro_connector
-        conn = get_oddspro_connector()
-        raw_diag = getattr(conn, "_last_fetch_diag", {}) or {}
-    except Exception as _ce:
-        log.debug(f"bootstrap-day: connector diag unavailable: {_ce}")
-        raw_diag = {}
+    # ── Pull diagnostics ─────────────────────────────────────────────────
+    raw_diag = {}
 
     # 3. REQUEST CONSTRUCTION
-    # Normalise the base URL for the fallback diagnostic: strip /api/external
-    # suffix if accidentally included (connector does the same at init time).
-    _fallback_base = (config["ODDSPRO_BASE_URL"] or "").rstrip("/")
-    if _fallback_base.endswith("/api/external"):
-        _fallback_base = _fallback_base[: -len("/api/external")]
     request_diag = {
-        "final_url": raw_diag.get("final_url") or (
-            f"{_fallback_base}/api/external/meetings"
-            if _fallback_base else None
-        ),
-        "params": raw_diag.get("params") or {
-            "country": config["oddspro_country"],
-            "date": target_date,
-        },
-        "headers_sent": raw_diag.get("headers_sent") or {},
-        "timeout": raw_diag.get("timeout") or config["oddspro_timeout"],
+        "source": "claude_api",
+        "model": "claude-haiku-4-5-20251001",
     }
 
     # 4. RESPONSE
     response_diag = {
-        "http_status": (
-            raw_diag.get("http_status")
-            or result.get("http_status")
-        ),
-        "content_type": (
-            raw_diag.get("content_type")
-            or result.get("content_type")
-            or ""
-        ),
-        "response_length": (
-            raw_diag.get("response_length")
-            or result.get("response_length")
-        ),
-        "response_preview": (
-            raw_diag.get("response_preview")
-            or result.get("response_preview")
-            or ""
-        ),
-        "redirected_url": (
-            raw_diag.get("redirected_url")
-            or result.get("redirected_url")
-            or ""
-        ),
+        "ok": ok,
+        "races_stored": result.get("races_stored", 0),
     }
 
     # Determine response-layer failure
     reason = result.get("reason") or ""
-    if not failing_stage:
-        if reason.startswith("oddspro_http_"):
-            failing_stage = "response"
-        elif reason == "oddspro_request_exception":
-            failing_stage = "request"
+    if not failing_stage and reason:
+        failing_stage = "extraction"
 
-    # 5. JSON / NORMALIZATION
-    parse_stage = result.get("parse_stage")
-    if parse_stage:
-        normalization_diag = {
-            "json_decode_ok": parse_stage not in (
-                "root", "oddspro_empty_payload", "oddspro_html_page"
-            ),
-            "parsed_type": result.get("response_type") or "",
-            "top_level_keys": result.get("top_level_keys") or [],
-            "normalized_meetings_count": 0,
-            # Use the structured reason/parse_stage codes, not exception-derived strings.
-            # Full parse error detail (exception_message, error) is logged server-side.
-            "error": reason or parse_stage,
-            "parse_stage": parse_stage,
-            "sample_payload": result.get("sample_payload"),
-        }
-        if not failing_stage:
-            failing_stage = "normalization"
-    else:
-        meetings_found_norm = result.get("meetings_found", result.get("meetings", 0))
-        normalization_diag = {
-            "json_decode_ok": True,
-            "parsed_type": "dict" if ok or not reason else (result.get("response_type") or ""),
-            "top_level_keys": [],
-            "normalized_meetings_count": meetings_found_norm,
-            # Use the structured reason code, not exception-derived strings.
-            "error": None if ok else (reason or None),
-            "parse_stage": None,
-            "sample_payload": None,
-        }
+    # 5. NORMALIZATION
+    normalization_diag = {
+        "json_decode_ok": True,
+        "normalized_meetings_count": result.get("races_stored", 0),
+        "error": None if ok else (reason or None),
+    }
 
     # 6. EXTRACTION
-    meetings_found = result.get("meetings_found", result.get("meetings", 0))
-    meeting_ids_found = result.get("meeting_ids_found", 0)
-    meeting_ids_missing = result.get("meeting_ids_missing", 0)
-    meeting_details_attempted = result.get("meeting_details_attempted", 0)
-    meeting_details_succeeded = result.get("meeting_details_succeeded", 0)
-    meeting_details_failed = result.get("meeting_details_failed", 0)
-    races_found = result.get("races_found", 0)
-    runners_found = result.get("runners_found", 0)
-    discovery_failed = result.get("discovery_failed", False)
-    discovery_diag = result.get("discovery_diag") or {}
-    first_detail_error = result.get("first_detail_error") or {}
+    races_found = result.get("races_stored", 0)
+    runners_found = result.get("runners_stored", 0)
     extraction_diag = {
-        "meetings_found": meetings_found,
-        "meeting_ids_found": meeting_ids_found,
-        "meeting_ids_missing": meeting_ids_missing,
-        "meeting_details_attempted": meeting_details_attempted,
-        "meeting_details_succeeded": meeting_details_succeeded,
-        "meeting_details_failed": meeting_details_failed,
         "races_found": races_found,
         "runners_found": runners_found,
-        "parse_stage_failed": result.get("parse_stage") if not ok else None,
-        "discovery_failed": discovery_failed,
-        "discovery_diag": discovery_diag if discovery_failed else None,
-        "first_detail_error": first_detail_error if first_detail_error else None,
     }
-    if not failing_stage and ok and meetings_found > 0 and races_found == 0:
-        if discovery_failed:
-            failing_stage = "discovery"
-        elif meeting_details_failed > 0 and meeting_details_succeeded == 0:
-            failing_stage = "meeting_detail_fetch"
-        else:
-            failing_stage = "extraction"
+    if not failing_stage and ok and races_found == 0:
+        failing_stage = "extraction"
 
     # 7. VALIDATION / FILTER
-    # In full_sweep(), races_stored counts every race processed (including blocked ones).
-    # races_blocked counts those that failed the integrity filter.
-    # full_sweep always includes races_passed on success; the fallback handles early-exit
-    # failure cases where full_sweep returns before computing it.
-    races_stored = result.get("races_stored", result.get("races", 0))
+    races_stored = result.get("races_stored", 0)
     races_blocked = result.get("races_blocked", 0)
-    races_passed = result.get("races_passed", max(races_stored - races_blocked, 0))
+    races_passed = max(races_stored - races_blocked, 0)
     runners_stored = result.get("runners_stored", 0)
     validation_diag = {
         "races_passed": races_passed,
         "races_blocked": races_blocked,
-        # Per-race block reasons are not surfaced at this level (see integrity_filter logs)
         "reasons_blocked": [],
-        "empty_board_due_to_validation": bool(races_stored > 0 and races_passed == 0),
+        "empty_board_due_to_validation": False,
     }
     if not failing_stage and ok and races_stored > 0 and races_passed == 0:
         failing_stage = "validation"
@@ -498,8 +398,6 @@ def admin_bootstrap_day():
         from db import get_db
         get_db()
     except Exception as dbe:
-        # Log full detail server-side; include only a semantic code in the response
-        # to avoid py/stack-trace-exposure (no exception-derived data in output).
         log.error(f"bootstrap-day: DB connectivity check failed: {dbe}")
         db_errors.append("db_connectivity_failed")
         target_database = "unavailable"
@@ -513,7 +411,6 @@ def admin_bootstrap_day():
     storage_diag = {
         "races_upsert_attempted": races_stored,
         "races_stored": races_stored,
-        # runners_found is the extraction count; every found runner is attempted for storage.
         "runners_upsert_attempted": runners_found,
         "runners_stored": runners_stored,
         "db_errors": db_errors,
@@ -528,19 +425,16 @@ def admin_bootstrap_day():
     # ── 9. BOARD BUILD ────────────────────────────────────────────────────
     board_count = 0
     try:
-        from board_builder import get_board_for_today
+        from board_service import get_board_for_today
         board = get_board_for_today()
         board_count = board.get("count", 0)
-        bdiag = board.get("diagnostics", {})
         board_diag = {
-            "stored_race_count_today": bdiag.get("stored_race_count_today", 0),
-            "active_race_count": bdiag.get("active_race_count", 0),
-            "blocked_race_count": bdiag.get("blocked_race_count", 0),
-            # rejected_count: active races that didn't reach the board and weren't
-            # pre-stored as blocked (i.e., failed validation or integrity during build)
-            "rejected_count": bdiag.get("rejected_count", 0),
+            "stored_race_count_today": board_count,
+            "active_race_count": board_count,
+            "blocked_race_count": 0,
+            "rejected_count": 0,
             "board_count": board_count,
-            "empty_reason": bdiag.get("empty_reason"),
+            "empty_reason": None,
         }
         if not failing_stage and ok and races_passed > 0 and board_count == 0:
             failing_stage = "board"
@@ -614,33 +508,31 @@ def admin_bootstrap_day():
 @require_role("admin")
 def admin_run_cycle():
     """
-    Trigger a broad OddsPro rolling refresh cycle.
+    Trigger a pipeline sweep (fetch all venues for today).
     GET is provided for easy browser testing; POST is also accepted.
-    Calls: data_engine.rolling_refresh()
     """
     try:
-        from data_engine import rolling_refresh
+        from pipeline import full_sweep
         from datetime import date
         from services.health_service import record_broad_refresh
 
         target_date = date.today().isoformat()
-        result = rolling_refresh(target_date)
+        result = full_sweep(target_date)
         ok = result.get("ok", False)
 
         try:
             record_broad_refresh(
                 ok=ok,
-                races_refreshed=result.get("races_refreshed", 0),
+                races_refreshed=result.get("races_stored", 0),
                 error=result.get("error") or result.get("reason") if not ok else None,
             )
         except Exception:
             pass
 
-        # Rebuild board after refresh
         board_count = None
-        if ok and result.get("races_refreshed", 0) > 0:
+        if ok:
             try:
-                from board_builder import get_board_for_today
+                from board_service import get_board_for_today
                 board = get_board_for_today()
                 board_count = board.get("count", 0)
                 from services.health_service import record_board_rebuild
@@ -652,11 +544,9 @@ def admin_run_cycle():
             "ok": ok,
             "action": "run-cycle",
             "date": target_date,
-            "races_refreshed": result.get("races_refreshed", 0),
-            "formfav_overlays": result.get("formfav_overlays", 0),
+            "races_stored": result.get("races_stored", 0),
             "board_count": board_count,
             "error": result.get("error") or result.get("reason") if not ok else None,
-            "timestamp": result.get("timestamp"),
         })
     except Exception as e:
         log.error(f"/api/admin/run-cycle failed: {e}")
@@ -669,10 +559,9 @@ def admin_rebuild_board():
     """
     Rebuild the racing board from stored validated races.
     GET is provided for easy browser testing; POST is also accepted.
-    Calls: board_builder.get_board_for_today()
     """
     try:
-        from board_builder import get_board_for_today
+        from board_service import get_board_for_today
         from services.health_service import record_board_rebuild
 
         result = get_board_for_today()
@@ -689,7 +578,6 @@ def admin_rebuild_board():
             "action": "rebuild-board",
             "board_count": count,
             "date": result.get("date"),
-            "diagnostics": result.get("diagnostics", {}),
             "error": result.get("error") if not ok else None,
         })
     except Exception as e:
@@ -701,27 +589,24 @@ def admin_rebuild_board():
 @require_role("admin")
 def admin_near_jump_refresh():
     """
-    Trigger a near-jump OddsPro refresh + FormFav provisional overlay cycle.
+    Trigger a pipeline venue sweep for near-jump races.
     GET is provided for easy browser testing; POST is also accepted.
-    Calls: data_engine.near_jump_refresh()
     """
     try:
-        from data_engine import near_jump_refresh
+        from pipeline import full_sweep
         from datetime import date
-        from services.health_service import record_near_jump_refresh, record_formfav_overlay
+        from services.health_service import record_near_jump_refresh
 
         target_date = date.today().isoformat()
-        result = near_jump_refresh(target_date)
+        result = full_sweep(target_date)
         ok = result.get("ok", False)
 
         try:
             record_near_jump_refresh(
                 ok=ok,
-                races=result.get("near_jump_races", 0),
+                races=result.get("races_stored", 0),
                 error=result.get("error") or result.get("reason") if not ok else None,
             )
-            if result.get("formfav_overlays", 0) > 0:
-                record_formfav_overlay(ok=True)
         except Exception:
             pass
 
@@ -729,11 +614,8 @@ def admin_near_jump_refresh():
             "ok": ok,
             "action": "near-jump-refresh",
             "date": target_date,
-            "near_jump_races": result.get("near_jump_races", 0),
-            "races_refreshed": result.get("races_refreshed", 0),
-            "formfav_overlays": result.get("formfav_overlays", 0),
+            "races_stored": result.get("races_stored", 0),
             "error": result.get("error") or result.get("reason") if not ok else None,
-            "timestamp": result.get("timestamp"),
         })
     except Exception as e:
         log.error(f"/api/admin/near-jump-refresh failed: {e}")
@@ -744,25 +626,24 @@ def admin_near_jump_refresh():
 @require_role("admin")
 def admin_check_results():
     """
-    Trigger an OddsPro result sweep for today.
+    Trigger a race state check (detect jumped races from stored times).
     GET is provided for easy browser testing; POST is also accepted.
-    Calls: data_engine.check_results()
     """
     try:
-        from data_engine import check_results
         from datetime import date
+        from database import get_races_for_date, update_race_status
+        from race_status import bulk_update_race_states
         from services.health_service import record_result_check
 
         target_date = date.today().isoformat()
-        result = check_results(target_date)
-        ok = result.get("ok", False)
+        races = get_races_for_date(target_date)
+        changes = bulk_update_race_states(races)
+        for race_uid, old_status, new_status in changes:
+            update_race_status(race_uid, new_status)
+        ok = True
 
         try:
-            record_result_check(
-                ok=ok,
-                confirmations=result.get("results_written", 0),
-                error=result.get("error") or result.get("reason") if not ok else None,
-            )
+            record_result_check(ok=ok, confirmations=len(changes))
         except Exception:
             pass
 
@@ -770,10 +651,7 @@ def admin_check_results():
             "ok": ok,
             "action": "check-results",
             "date": target_date,
-            "results_written": result.get("results_written", 0),
-            "results_skipped": result.get("results_skipped", 0),
-            "error": result.get("error") or result.get("reason") if not ok else None,
-            "timestamp": result.get("timestamp"),
+            "status_changes": len(changes),
         })
     except Exception as e:
         log.error(f"/api/admin/check-results failed: {e}")

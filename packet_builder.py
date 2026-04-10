@@ -110,7 +110,6 @@ def save_packet_snapshot(race_uid, packet):
             "packet_built_at": datetime.utcnow().isoformat(),
         }).eq("race_uid", race_uid).execute()
 
-        from data_engine import update_lifecycle
-        update_lifecycle(race_uid, "packet_built")
+        log.debug(f"packet_builder: lifecycle packet_built for {race_uid}")
     except Exception as e:
         log.error(f"Save packet snapshot failed {race_uid}: {e}")
