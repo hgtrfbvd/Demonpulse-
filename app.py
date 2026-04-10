@@ -581,41 +581,72 @@ def api_debug_formfav():
     except Exception as e:
         log.exception(f"/api/debug/formfav failed: {e}")
         return jsonify({"ok": False, "error": "Could not retrieve pipeline state"}), 500
+
+
+@app.route("/api/debug/claude-pipeline", methods=["GET"])
+def api_debug_claude_pipeline():
     """
-    End-to-end pipeline diagnostic for the Claude-powered data pipeline.
-    No auth required, no writes.
+    End-to-end diagnostic for the Claude-powered data pipeline.
+    Returns prompt identity, last raw response preview, parse outcome,
+    and DB write counts. No auth required, no writes.
     """
     from datetime import date as _date
     today = _date.today().isoformat()
-    result: dict = {"date": today}
-    tests: dict = {}
+    result: dict = {"ok": True, "date": today}
 
-    # Claude API connectivity
-    result["claude_api_key_present"] = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+    # Claude pipeline state (prompt + parse)
+    try:
+        from connectors.claude_scraper import get_pipeline_state
+        claude_state = get_pipeline_state()
+        result["active_prompt_source"] = claude_state.get("prompt_source")
+        result["active_prompt_function"] = claude_state.get("prompt_function")
+        result["prompt_fingerprint"] = claude_state.get("prompt_fingerprint")
+        result["last_raw_response_preview"] = claude_state.get("last_raw_response_preview")
+        result["last_response_appeared_json"] = claude_state.get("last_response_appeared_json")
+        result["last_parse_success"] = claude_state.get("last_parse_success")
+        result["last_parse_error"] = claude_state.get("last_parse_error")
+        result["last_top_level_keys"] = claude_state.get("last_top_level_keys")
+        result["last_race_count"] = claude_state.get("last_race_count")
+        result["last_runner_count"] = claude_state.get("last_runner_count")
+    except Exception as e:
+        result["claude_state_error"] = str(e)
 
-    # Database: today_races count
+    # DB write state (rows stored + resolved table names)
+    try:
+        from pipeline import get_pipeline_db_state
+        db_state = get_pipeline_db_state()
+        result["last_rows_written_today_races"] = db_state.get("last_rows_written_today_races", 0)
+        result["last_rows_written_today_runners"] = db_state.get("last_rows_written_today_runners", 0)
+        result["resolved_table_today_races"] = db_state.get("resolved_table_today_races")
+        result["resolved_table_today_runners"] = db_state.get("resolved_table_today_runners")
+        result["last_race_uids_written"] = (db_state.get("last_race_uids_written") or [])[-10:]
+    except Exception as e:
+        result["db_state_error"] = str(e)
+
+    # Live table counts for the current date
     try:
         from database import get_races_for_date
-        tests["database"] = {
-            "ok": True,
-            "today_races_count": len(get_races_for_date(today)),
-        }
+        all_races = get_races_for_date(today)
+        result["today_races_in_db"] = len(all_races)
     except Exception as e:
-        tests["database"] = {"ok": False, "error": str(e)}
+        result["today_races_error"] = str(e)
 
     # Scheduler state
     try:
         import scheduler
-        sched_status = scheduler.get_status()
-        tests["scheduler"] = {
-            "last_full_sweep_at":     sched_status.get("last_full_sweep_at"),
-            "last_full_sweep_result": sched_status.get("last_full_sweep_result"),
-            "last_error":             sched_status.get("last_error"),
+        sched = scheduler.get_status()
+        result["scheduler"] = {
+            "running": sched.get("running"),
+            "last_full_sweep_at": sched.get("last_full_sweep_at"),
+            "last_full_sweep_result": sched.get("last_full_sweep_result"),
+            "last_error": sched.get("last_error"),
         }
     except Exception as e:
-        tests["scheduler"] = {"ok": False, "error": str(e)}
+        result["scheduler_error"] = str(e)
 
-    result["tests"] = tests
+    # Claude API key present
+    result["claude_api_key_present"] = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+
     return jsonify(result)
 
 

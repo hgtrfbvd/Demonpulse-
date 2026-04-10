@@ -28,8 +28,26 @@ from connectors.claude_scraper import (
 )
 from features import compute_greyhound_derived, compute_horse_derived
 from database import upsert_race as _db_upsert_race, upsert_runners as _db_upsert_runners
+from db import T
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# PIPELINE DB STATE — updated by _store_race(); read by /api/debug/claude-pipeline
+# ---------------------------------------------------------------------------
+_pipeline_db_state: dict = {
+    "last_rows_written_today_races": 0,
+    "last_rows_written_today_runners": 0,
+    "resolved_table_today_races": None,
+    "resolved_table_today_runners": None,
+    "last_race_uids_written": [],
+}
+
+
+def get_pipeline_db_state() -> dict:
+    """Return a snapshot of the pipeline DB write state for diagnostics."""
+    return dict(_pipeline_db_state)
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +391,32 @@ def _store_race(race: dict) -> None:
     runners_raw = race.pop("_runners", [])
     race_uid = race.pop("_race_uid", race.get("race_uid", ""))
 
+    # Resolve canonical table names via T() so TEST/LIVE are always correct.
+    table_races = T("today_races")
+    table_runners = T("today_runners")
+    _pipeline_db_state["resolved_table_today_races"] = table_races
+    _pipeline_db_state["resolved_table_today_runners"] = table_runners
+
+    log.info(
+        f"[PIPELINE DB] upsert race race_uid={race_uid!r} "
+        f"table={table_races!r} runners_prepared={len(runners_raw)}"
+    )
+
     upsert_result = _db_upsert_race(race)
+    if upsert_result:
+        _pipeline_db_state["last_rows_written_today_races"] += 1
+        uids = _pipeline_db_state.setdefault("last_race_uids_written", [])
+        if race_uid and race_uid not in uids:
+            uids.append(race_uid)
+        log.info(
+            f"[PIPELINE DB] race upserted race_uid={race_uid!r} table={table_races!r}"
+        )
+    else:
+        log.warning(
+            f"[PIPELINE DB] race upsert returned no data race_uid={race_uid!r} "
+            f"table={table_races!r} — check DB connection and payload"
+        )
+
     # Resolve the UUID primary key of the newly upserted race so that
     # today_runners.race_id (a UUID FK) can be set to a valid value.
     # If the upsert didn't return a row (e.g. Supabase returned nothing),
@@ -395,4 +438,13 @@ def _store_race(race: dict) -> None:
             )
             for r in runners_raw
         ]
-        _db_upsert_runners(race_id_uuid, norm_runners)
+        log.info(
+            f"[PIPELINE DB] upsert {len(norm_runners)} runners race_uid={race_uid!r} "
+            f"table={table_runners!r}"
+        )
+        count = _db_upsert_runners(race_id_uuid, norm_runners)
+        _pipeline_db_state["last_rows_written_today_runners"] += count
+        log.info(
+            f"[PIPELINE DB] runners upserted count={count} race_uid={race_uid!r} "
+            f"table={table_runners!r}"
+        )
