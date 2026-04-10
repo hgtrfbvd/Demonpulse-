@@ -28,7 +28,7 @@ import logging
 import os
 import re
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +62,24 @@ _EXPERT_FORM_LABELS = ["Expert Form", "Expert", "Form Guide", "Form"]
 _BOX_HISTORY_LABELS = ["Box History", "Box Stats", "History"]
 _RESULTS_LABELS = ["Results", "Result", "Finishing Order"]
 
+# Module-level EasyOCR singleton — heavy to initialise, reused across runs.
+_easyocr_reader = None
+_easyocr_lock = None
+
+
+def _get_easyocr_reader():
+    """Return the module-level EasyOCR reader, initialising it once."""
+    global _easyocr_reader, _easyocr_lock
+    import threading
+    if _easyocr_lock is None:
+        _easyocr_lock = threading.Lock()
+    with _easyocr_lock:
+        if _easyocr_reader is None:
+            import easyocr
+            _easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+            log.info("[DOGS_VISUAL] EasyOCR reader initialised (cpu, singleton)")
+    return _easyocr_reader
+
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
@@ -82,9 +100,7 @@ class DogsVisualCollector:
     """
 
     def __init__(self) -> None:
-        import easyocr  # lazy import — heavy; only needed at OCR time
-        self._reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-        log.info("[DOGS_VISUAL] EasyOCR reader initialised (cpu)")
+        self._reader = _get_easyocr_reader()
 
     # ──────────────────────────────────────────────────────────────────────────
     # PUBLIC ENTRY POINT
@@ -153,8 +169,8 @@ class DogsVisualCollector:
                 log.info(f"[DOGS_VISUAL] board.png saved path={board_path}")
 
                 # ── STEP 5: detect & navigate to next upcoming race ──────────
-                race_link, race_slug = self._detect_next_race(page)
-                if not race_link:
+                race_handle, race_slug = self._detect_next_race(page)
+                if not race_handle:
                     log.warning("[DOGS_VISUAL] no upcoming race link found — using board fallback")
                     structured = self._parse_board_fallback(str(board_path), date_str)
                     json_path = day_dir / "race.json"
@@ -169,7 +185,7 @@ class DogsVisualCollector:
                     }
 
                 log.info(f"[DOGS_VISUAL] navigating to race slug={race_slug}")
-                page.click(f'a[href="{race_link}"]', timeout=_PAGE_TIMEOUT_MS)
+                race_handle.click(timeout=_PAGE_TIMEOUT_MS)
                 page.wait_for_load_state("networkidle", timeout=_PAGE_TIMEOUT_MS)
                 page.wait_for_timeout(_RENDER_PAUSE_MS)
 
@@ -242,10 +258,12 @@ class DogsVisualCollector:
     # NAVIGATION HELPERS
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _detect_next_race(self, page) -> tuple[str | None, str | None]:
+    def _detect_next_race(self, page) -> tuple[Any | None, str | None]:
         """
         Scan the loaded board page for the next upcoming race link.
-        Returns (href, slug) or (None, None) if nothing found.
+        Returns (element_handle, slug) or (None, None) if nothing found.
+        The element handle is used directly for clicking to avoid any selector
+        injection risk.
         """
         for selector in _RACE_NAV_SELECTORS:
             try:
@@ -254,10 +272,9 @@ class DogsVisualCollector:
                     href = el.get_attribute("href") or ""
                     m = re.search(r"/racing/([^/]+)/(\d{4}-\d{2}-\d{2})/(\d+)", href)
                     if m:
-                        full_href = href if href.startswith("http") else f"{_BASE_URL}{href}"
                         slug = f"{m.group(1)}_R{m.group(3)}"
-                        log.info(f"[DOGS_VISUAL] detected race href={full_href} slug={slug}")
-                        return full_href, slug
+                        log.info(f"[DOGS_VISUAL] detected race href={href} slug={slug}")
+                        return el, slug
             except Exception as exc:
                 log.debug(f"[DOGS_VISUAL] selector {selector!r} failed: {exc}")
         return None, None
@@ -293,7 +310,7 @@ class DogsVisualCollector:
         """Save failure screenshot + HTML dump to target_dir/debug/."""
         debug_dir = target_dir / "debug"
         _ensure_dir(debug_dir)
-        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         try:
             page.screenshot(path=str(debug_dir / f"failure_{ts}.png"), full_page=True)
             log.info(f"[DOGS_VISUAL] debug screenshot saved dir={debug_dir}")
@@ -693,13 +710,14 @@ class DogsVisualCollector:
             table_name = T("dogs_races")
 
             meta = data.get("race_metadata") or {}
-            track = meta.get("track") or ""
+            track = (meta.get("track") or "").strip()
+            track_slug = re.sub(r"\s+", "_", track).lower() if track else "unknown"
             race_num = meta.get("race_number") or 0
             row = {
                 "race_date":    date_str,
-                "track":        track,
+                "track":        track or None,
                 "race_num":     race_num,
-                "race_uid":     f"{date_str}_GREYHOUND_{track.lower().replace(' ', '_')}_{race_num}",
+                "race_uid":     f"{date_str}_GREYHOUND_{track_slug}_{race_num}",
                 "source":       data.get("source", "visual_playwright_ocr"),
                 "race_metadata": meta,
                 "runners":      data.get("runners", []),
@@ -707,7 +725,7 @@ class DogsVisualCollector:
                 "box_history":  data.get("box_history", []),
                 "results":      data.get("results", []),
                 "raw_ocr":      data.get("raw_ocr", {}),
-                "captured_at":  datetime.utcnow().isoformat(),
+                "captured_at":  datetime.now(timezone.utc).isoformat(),
             }
             db.table(table_name).upsert(row, on_conflict="race_uid").execute()
             log.info(f"[DOGS_VISUAL] saved to Supabase table={table_name} race_uid={row['race_uid']}")
