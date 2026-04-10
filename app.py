@@ -650,6 +650,100 @@ def api_debug_claude_pipeline():
     return jsonify(result)
 
 
+@app.route("/api/debug/board-status", methods=["GET"])
+def api_debug_board_status():
+    """
+    Admin/debug endpoint — returns the current board-build health state.
+
+    Fields:
+      last_sweep_*           — lifecycle of the most recent full_sweep
+      last_claude_fetch_*    — Claude pipeline parse/response state
+      last_429_*             — most recent rate-limit occurrence
+      cache_used             — whether cached venues were used in last sweep
+      today_races_count      — live count from today_races table
+      today_runners_count    — live count from today_runners table
+      last_venues_count      — venues returned by last venue-discovery call
+      prompt_source/function/hash — active prompt identity
+    """
+    from datetime import datetime as _datetime
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    today = _datetime.now(_ZoneInfo("Australia/Sydney")).date().isoformat()
+    out: dict = {"ok": True, "date": today}
+
+    # Sweep lifecycle
+    try:
+        from pipeline import get_sweep_status
+        sw = get_sweep_status()
+        out["last_sweep_id"] = sw.get("last_sweep_id")
+        out["last_sweep_started_at"] = sw.get("last_started_at")
+        out["last_sweep_completed_at"] = sw.get("last_completed_at")
+        out["last_sweep_status"] = sw.get("last_status")
+        out["last_sweep_failure_stage"] = sw.get("last_failure_stage")
+        out["last_sweep_failure_reason"] = sw.get("last_failure_reason")
+        out["last_sweep_races_written"] = sw.get("last_races_written", 0)
+        out["last_sweep_runners_written"] = sw.get("last_runners_written", 0)
+        out["last_sweep_data_source"] = sw.get("last_data_source")
+        out["cache_used"] = sw.get("last_data_source") in ("cached_claude", "mixed")
+    except Exception as exc:
+        out["sweep_status_error"] = str(exc)
+
+    # Claude pipeline state (prompt + parse + 429)
+    try:
+        from connectors.claude_scraper import get_pipeline_state
+        cs = get_pipeline_state()
+        out["last_claude_fetch_source"] = cs.get("last_fetch_source")
+        out["last_claude_parse_success"] = cs.get("last_parse_success")
+        out["last_claude_parse_error"] = cs.get("last_parse_error")
+        out["last_venues_count"] = cs.get("last_venues_count")
+        out["last_429_at"] = cs.get("last_429_at")
+        out["last_429_endpoint"] = cs.get("last_429_endpoint")
+        out["last_429_stage"] = cs.get("last_429_stage")
+        out["last_429_retry_after"] = cs.get("last_429_retry_after")
+        out["prompt_source"] = cs.get("prompt_source")
+        out["prompt_function"] = cs.get("prompt_function")
+        out["prompt_hash"] = cs.get("prompt_fingerprint")
+    except Exception as exc:
+        out["claude_state_error"] = str(exc)
+
+    # Live table counts for today
+    try:
+        from database import get_races_for_date
+        races = get_races_for_date(today)
+        out["today_races_count"] = len(races)
+    except Exception as exc:
+        out["today_races_error"] = str(exc)
+
+    try:
+        from db import get_db, safe_query, T
+        runners = safe_query(
+            lambda: get_db()
+            .table(T("today_runners"))
+            .select("race_uid", count="exact")
+            .eq("date", today)
+            .execute()
+            .count,
+            None,
+        )
+        out["today_runners_count"] = runners
+    except Exception as exc:
+        out["today_runners_error"] = str(exc)
+
+    # Scheduler state
+    try:
+        import scheduler
+        sched = scheduler.get_status()
+        out["scheduler"] = {
+            "running": sched.get("running"),
+            "last_full_sweep_at": sched.get("last_full_sweep_at"),
+            "last_full_sweep_result": sched.get("last_full_sweep_result"),
+            "last_error": sched.get("last_error"),
+        }
+    except Exception as exc:
+        out["scheduler_error"] = str(exc)
+
+    return jsonify(out)
+
+
 # ------------------------------------------------------------
 # SMOKE TEST
 # ------------------------------------------------------------

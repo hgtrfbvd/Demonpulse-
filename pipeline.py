@@ -23,8 +23,11 @@ _AEST = ZoneInfo("Australia/Sydney")
 
 from connectors.claude_scraper import (
     ClaudeScraper,
+    ClaudeRateLimitError,
     GREYHOUND_BATCH_SIZE,
     HORSE_BATCH_SIZE,
+    save_venue_cache,
+    load_venue_cache,
 )
 from features import compute_greyhound_derived, compute_horse_derived
 from database import upsert_race as _db_upsert_race, upsert_runners as _db_upsert_runners
@@ -48,6 +51,32 @@ _pipeline_db_state: dict = {
 def get_pipeline_db_state() -> dict:
     """Return a snapshot of the pipeline DB write state for diagnostics."""
     return dict(_pipeline_db_state)
+
+
+# ---------------------------------------------------------------------------
+# SWEEP STATUS — per-sweep lifecycle tracking; read by /api/debug/board-status
+# ---------------------------------------------------------------------------
+_sweep_status: dict = {
+    "last_sweep_id": None,
+    "last_started_at": None,
+    "last_completed_at": None,
+    # success | partial_cached | failed_rate_limited | failed_parse | failed_db_write
+    "last_status": None,
+    "last_failure_stage": None,
+    "last_failure_reason": None,
+    "last_venues_count": 0,
+    "last_races_written": 0,
+    "last_runners_written": 0,
+    # live_claude | cached_claude | failed_no_cache | mixed
+    "last_data_source": None,
+    "greyhound_source": None,
+    "horse_source": None,
+}
+
+
+def get_sweep_status() -> dict:
+    """Return a snapshot of the last full_sweep lifecycle for diagnostics."""
+    return dict(_sweep_status)
 
 
 # ---------------------------------------------------------------------------
@@ -226,17 +255,50 @@ def _discover_greyhound_venues(today: str) -> list[dict]:
     """
     Discover today's greyhound venues from thedogs.com.au schedule via Claude.
     Returns list of {"slug": ..., "state": ...} dicts.
+
+    On HTTP 429 the last cached venue list is used so board building can
+    continue. Sets _sweep_status["greyhound_source"] to reflect the source.
     """
+    cache_key = f"greyhound_{today}"
     try:
         scraper = ClaudeScraper()
         venues = scraper.discover_greyhound_venues(today)
         if venues:
-            log.info(f"pipeline: discovered {len(venues)} greyhound venues for {today}")
+            log.info(
+                f"[VENUES_FETCH_SUCCESS] type=greyhound count={len(venues)} "
+                f"date={today} source=live_claude"
+            )
+            save_venue_cache(cache_key, venues)
+            _sweep_status["greyhound_source"] = "live_claude"
         else:
-            log.warning(f"pipeline: greyhound venue discovery returned 0 venues for {today}")
+            log.warning(
+                f"pipeline: greyhound venue discovery returned 0 venues for {today}"
+            )
+            _sweep_status["greyhound_source"] = "live_claude"
         return venues
-    except Exception as e:
-        log.warning(f"pipeline: greyhound venue discovery failed: {e}")
+    except ClaudeRateLimitError as exc:
+        log.error(
+            f"[VENUES_FETCH_429] type=greyhound provider=anthropic "
+            f"stage=venue_fetch retry_delay={exc.retry_after:.0f}s "
+            f"endpoint={exc.endpoint!r} date={today}"
+        )
+        cached = load_venue_cache(cache_key)
+        if cached:
+            log.info(
+                f"[VENUES_FETCH_CACHE_USED] type=greyhound source=cached_claude "
+                f"count={len(cached)} date={today}"
+            )
+            _sweep_status["greyhound_source"] = "cached_claude"
+            return cached
+        log.error(
+            f"[VENUES_FETCH_NO_CACHE] type=greyhound source=failed_no_cache "
+            f"date={today}"
+        )
+        _sweep_status["greyhound_source"] = "failed_no_cache"
+        return []
+    except Exception as exc:
+        log.warning(f"pipeline: greyhound venue discovery failed: {exc}")
+        _sweep_status["greyhound_source"] = "failed_no_cache"
     return []
 
 
@@ -244,17 +306,49 @@ def _discover_horse_venues() -> list[dict]:
     """
     Discover today's horse venues from racingaustralia.horse via Claude.
     Returns list of {"name": ..., "state": ...} dicts.
+
+    On HTTP 429 the last cached venue list is used so board building can
+    continue. Sets _sweep_status["horse_source"] to reflect the source.
     """
+    today = datetime.now(_AEST).date().isoformat()
+    cache_key = f"horse_{today}"
     try:
         scraper = ClaudeScraper()
         venues = scraper.discover_horse_venues()
         if venues:
-            log.info(f"pipeline: discovered {len(venues)} horse venues")
+            log.info(
+                f"[VENUES_FETCH_SUCCESS] type=horse count={len(venues)} "
+                f"date={today} source=live_claude"
+            )
+            save_venue_cache(cache_key, venues)
+            _sweep_status["horse_source"] = "live_claude"
         else:
             log.warning("pipeline: horse venue discovery returned 0 venues")
+            _sweep_status["horse_source"] = "live_claude"
         return venues
-    except Exception as e:
-        log.warning(f"pipeline: horse venue discovery failed: {e}")
+    except ClaudeRateLimitError as exc:
+        log.error(
+            f"[VENUES_FETCH_429] type=horse provider=anthropic "
+            f"stage=venue_fetch retry_delay={exc.retry_after:.0f}s "
+            f"endpoint={exc.endpoint!r} date={today}"
+        )
+        cached = load_venue_cache(cache_key)
+        if cached:
+            log.info(
+                f"[VENUES_FETCH_CACHE_USED] type=horse source=cached_claude "
+                f"count={len(cached)} date={today}"
+            )
+            _sweep_status["horse_source"] = "cached_claude"
+            return cached
+        log.error(
+            f"[VENUES_FETCH_NO_CACHE] type=horse source=failed_no_cache "
+            f"date={today}"
+        )
+        _sweep_status["horse_source"] = "failed_no_cache"
+        return []
+    except Exception as exc:
+        log.warning(f"pipeline: horse venue discovery failed: {exc}")
+        _sweep_status["horse_source"] = "failed_no_cache"
     return []
 
 
@@ -274,19 +368,42 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     Uses batch scraping (4 greyhound venues / 2 horse venues per Claude call)
     to maximise context window usage and minimise API calls.
 
+    On HTTP 429, venue discovery falls back to cached venue lists so the
+    board can still be built with slightly stale venue data.
+
     Args:
         target_date: ISO date string (default: today)
 
     Returns:
-        {"ok": True, "date": ..., "races_stored": N}
+        {"ok": True, "date": ..., "races_stored": N, "status": "success"|"partial_cached"|...}
     """
     # Always use AEST date so stored races match board_service queries (which
     # also use AEST).  On a UTC server date.today() can differ from the AEST
     # calendar date by up to 10–11 hours, causing an empty board.
     today = target_date or datetime.now(_AEST).date().isoformat()
+    sweep_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
+    # --- sweep start ---
+    _sweep_status.update({
+        "last_sweep_id": sweep_id,
+        "last_started_at": datetime.utcnow().isoformat(),
+        "last_completed_at": None,
+        "last_status": "running",
+        "last_failure_stage": None,
+        "last_failure_reason": None,
+        "greyhound_source": None,
+        "horse_source": None,
+    })
+    log.info(f"[BOARD_BUILD_START] sweep_id={sweep_id} date={today}")
+
+    # Snapshot DB counters at sweep start so we can compute delta at the end
+    _start_races = _pipeline_db_state.get("last_rows_written_today_races", 0)
+    _start_runners = _pipeline_db_state.get("last_rows_written_today_runners", 0)
+
     scraper = ClaudeScraper()
     stored = 0
     errors = 0
+    races_prepared = 0
 
     # Greyhounds — batch 4 venues per call
     try:
@@ -296,6 +413,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             try:
                 results = scraper.fetch_greyhound_batch(batch, today)
                 for slug, races in results.items():
+                    races_prepared += len(races)
                     for raw in races:
                         try:
                             raw["derived"] = compute_greyhound_derived(raw)
@@ -321,6 +439,7 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
             try:
                 results = scraper.fetch_horse_batch(batch)
                 for venue_name, races in results.items():
+                    races_prepared += len(races)
                     for raw in races:
                         try:
                             raw["derived"] = compute_horse_derived(raw)
@@ -338,16 +457,79 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         log.error(f"pipeline: horse sweep failed: {e}")
         errors += 1
 
+    # --- compute sweep metrics ---
+    races_written = _pipeline_db_state.get("last_rows_written_today_races", 0) - _start_races
+    runners_written = _pipeline_db_state.get("last_rows_written_today_runners", 0) - _start_runners
+
+    # Determine data source based on what venue discovery reported
+    gdog_src = _sweep_status.get("greyhound_source") or "live_claude"
+    horse_src = _sweep_status.get("horse_source") or "live_claude"
+    any_cached = "cached_claude" in (gdog_src, horse_src)
+    any_no_cache = "failed_no_cache" in (gdog_src, horse_src)
+
+    if any_no_cache and any_cached:
+        data_source = "mixed"
+    elif any_no_cache:
+        data_source = "failed_no_cache"
+    elif any_cached:
+        data_source = "cached_claude"
+    else:
+        data_source = "live_claude"
+
+    # Determine sweep status
+    if stored == 0 and any_no_cache:
+        sweep_status_val = "failed_rate_limited"
+    elif stored == 0 and errors > 0:
+        sweep_status_val = "failed_parse"
+    elif stored == 0:
+        sweep_status_val = "failed_rate_limited"
+    elif any_cached:
+        sweep_status_val = "partial_cached"
+    else:
+        sweep_status_val = "success"
+
     if stored == 0 and errors == 0:
         log.warning(
             f"pipeline: full_sweep stored 0 races with 0 errors for {today} — "
             "venue discovery may have returned an empty list. "
             "Check ANTHROPIC_API_KEY and ClaudeScraper logs."
         )
-    log.info(f"pipeline: full_sweep complete — date={today} races_stored={stored} errors={errors}")
-    # Return ok=False if nothing was stored (empty venue list counts as a failure)
-    ok = errors == 0 and stored > 0
-    return {"ok": ok, "date": today, "races_stored": stored, "errors": errors}
+
+    # Structured board-build logs
+    log.info(f"[RACES_PREPARED] sweep_id={sweep_id} count={races_prepared}")
+    log.info(f"[TODAY_RACES_UPSERTED] sweep_id={sweep_id} count={races_written}")
+    log.info(f"[TODAY_RUNNERS_UPSERTED] sweep_id={sweep_id} count={runners_written}")
+    log.info(
+        f"[BOARD_BUILD_DONE] sweep_id={sweep_id} status={sweep_status_val} "
+        f"races_stored={stored} errors={errors} data_source={data_source}"
+    )
+    log.info(
+        f"pipeline: full_sweep complete — date={today} races_stored={stored} "
+        f"errors={errors} status={sweep_status_val} source={data_source}"
+    )
+
+    now_iso = datetime.utcnow().isoformat()
+    _sweep_status.update({
+        "last_completed_at": now_iso,
+        "last_status": sweep_status_val,
+        "last_venues_count": 0,  # legacy; per-type counts are in greyhound/horse logs
+        "last_races_written": races_written,
+        "last_runners_written": runners_written,
+        "last_data_source": data_source,
+    })
+
+    # ok=True whenever races were stored (covers both success and partial_cached)
+    ok = stored > 0
+    return {
+        "ok": ok,
+        "date": today,
+        "races_stored": stored,
+        "errors": errors,
+        "status": sweep_status_val,
+        "data_source": data_source,
+        "races_written": races_written,
+        "runners_written": runners_written,
+    }
 
 
 def venue_sweep(venue: dict, code: str = "GREYHOUND",
