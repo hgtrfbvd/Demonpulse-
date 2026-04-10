@@ -404,9 +404,7 @@ def _store_race(race: dict) -> None:
 
     upsert_result = _db_upsert_race(race)
     if upsert_result:
-        _pipeline_db_state["last_rows_written_today_races"] = (
-            _pipeline_db_state.get("last_rows_written_today_races", 0) + 1
-        )
+        _pipeline_db_state["last_rows_written_today_races"] += 1
         uids = _pipeline_db_state.setdefault("last_race_uids_written", [])
         if race_uid and race_uid not in uids:
             uids.append(race_uid)
@@ -445,9 +443,7 @@ def _store_race(race: dict) -> None:
             f"table={table_runners!r}"
         )
         count = _db_upsert_runners(race_id_uuid, norm_runners)
-        _pipeline_db_state["last_rows_written_today_runners"] = (
-            _pipeline_db_state.get("last_rows_written_today_runners", 0) + count
-        )
+        _pipeline_db_state["last_rows_written_today_runners"] += count
         log.info(
             f"[PIPELINE DB] runners upserted count={count} race_uid={race_uid!r} "
             f"table={table_runners!r}"

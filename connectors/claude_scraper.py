@@ -311,8 +311,8 @@ class ClaudeScraper:
     def _strip_fences(self, text: str) -> str:
         """Strip markdown code fences from a Claude response."""
         text = text.strip()
-        # Remove opening fence: ```json or ``` (with optional language tag and newline)
-        text = re.sub(r'^```[a-zA-Z]*\n?', '', text)
+        # Remove opening fence: ```json or ``` (with optional language tag and trailing whitespace/newline)
+        text = re.sub(r'^```[a-zA-Z0-9]*[ \t]*\n?', '', text)
         # Remove closing fence
         text = re.sub(r'\n?```$', '', text)
         return text.strip()
@@ -428,13 +428,13 @@ class ClaudeScraper:
             log.info("[CLAUDE RAW RESPONSE START]")
             log.info(
                 f"[CLAUDE RAW RESPONSE] type={type(text).__name__} len={len(text)} "
-                f"appears_json={text.strip()[:1] in ('{', '[')}"
+                f"appears_json={text.strip().startswith(('{', '['))}"
             )
             log.info(f"[CLAUDE RAW RESPONSE PREVIEW] {text[:1000]!r}")
             log.info("[CLAUDE RAW RESPONSE END]")
 
             _pipeline_state["last_raw_response_preview"] = text[:1000]
-            _pipeline_state["last_response_appeared_json"] = text.strip()[:1] in ('{', '[')
+            _pipeline_state["last_response_appeared_json"] = text.strip().startswith(('{', '['))
 
             text_clean = self._strip_fences(text)
             result = _parse_json_strict(text_clean, context="_extract_raw")
