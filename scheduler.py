@@ -37,6 +37,7 @@ RESULT_CHECK_INTERVAL = 180     # 3 min — check for jumped races
 RACE_STATE_INTERVAL = 90        # 90 s — automated race state machine
 HEALTH_SNAPSHOT_INTERVAL = 120  # 2 min — health metrics snapshot
 EVAL_BACKFILL_INTERVAL = 3600   # once per hour
+DOGS_VISUAL_INTERVAL = 600      # 10 min — visual dogs pipeline (Playwright + OCR)
 LOOP_SLEEP_SECONDS = 10
 RESTART_BACKOFF_SECONDS = 5
 
@@ -51,6 +52,7 @@ _scheduler_lock = threading.Lock()
 _sweep_lock = threading.Lock()
 _result_check_lock = threading.Lock()
 _state_update_lock = threading.Lock()
+_dogs_visual_lock = threading.Lock()
 
 _scheduler_status = {
     "running": False,
@@ -69,6 +71,9 @@ _scheduler_status = {
     "board_rebuild_interval": BOARD_REBUILD_INTERVAL,
     "result_check_interval": RESULT_CHECK_INTERVAL,
     "race_state_interval": RACE_STATE_INTERVAL,
+    "last_dogs_visual_at": None,
+    "last_dogs_visual_result": None,
+    "dogs_visual_interval": DOGS_VISUAL_INTERVAL,
 }
 
 
@@ -289,6 +294,45 @@ def _run_evaluation_backfill():
         log.warning(f"scheduler: evaluation_backfill failed: {e}")
 
 
+def _run_dogs_visual_pipeline():
+    """
+    Run the Playwright visual pipeline for TheDogs.com.au.
+    Captures board + race screenshots, runs local OCR, saves structured JSON
+    to disk and upserts to Supabase dogs_races table.
+    Skipped if already running.
+    """
+    acquired = _dogs_visual_lock.acquire(blocking=False)
+    if not acquired:
+        log.warning("Dogs visual pipeline still running — skipping this cycle")
+        return {"ok": False, "reason": "cycle_already_running"}
+
+    try:
+        log.info("scheduler: running dogs_visual_pipeline...")
+        from collectors.dogs_visual_collector import DogsVisualCollector
+        collector = DogsVisualCollector()
+        result = collector.run_full_pipeline()
+        ok = result.get("ok", False)
+        if ok:
+            log.info(f"scheduler: dogs_visual_pipeline complete: {result}")
+        else:
+            log.warning(f"scheduler: dogs_visual_pipeline not-ok: {result}")
+        _set_status(
+            last_dogs_visual_at=_utc_now(),
+            last_dogs_visual_result=result,
+            last_error=None if ok else (result.get("error") or "dogs_visual_not_ok"),
+        )
+        return result
+    except Exception as e:
+        log.error(f"scheduler: dogs_visual_pipeline failed: {e}")
+        _set_status(
+            last_dogs_visual_at=_utc_now(),
+            last_error=f"dogs_visual: {e}",
+        )
+        return {"ok": False, "error": str(e)}
+    finally:
+        _dogs_visual_lock.release()
+
+
 # --------------------------------------------------------
 # BOARD REBUILD HELPERS
 # --------------------------------------------------------
@@ -331,6 +375,7 @@ def run_scheduler():
     last_race_state = now
     last_health_snapshot = now
     last_eval_backfill = 0
+    last_dogs_visual = 0  # run on first tick
 
     if FULL_SWEEP_ON_START:
         try:
@@ -382,6 +427,10 @@ def run_scheduler():
             if now - last_eval_backfill >= EVAL_BACKFILL_INTERVAL:
                 _run_evaluation_backfill()
                 last_eval_backfill = now
+
+            if now - last_dogs_visual >= DOGS_VISUAL_INTERVAL:
+                _run_dogs_visual_pipeline()
+                last_dogs_visual = now
 
         except Exception as e:
             log.error(f"scheduler: loop error: {e}")
