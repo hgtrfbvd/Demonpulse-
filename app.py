@@ -688,11 +688,8 @@ def api_debug_formfav():
             "date": today,
         })
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/debug/pipeline-test", methods=["GET"])
-def api_debug_pipeline_test():
+        log.exception(f"/api/debug/formfav failed: {e}")
+        return jsonify({"ok": False, "error": "Could not retrieve pipeline state"}), 500
     """
     End-to-end pipeline diagnostic for the Claude-powered data pipeline.
     No auth required, no writes.
