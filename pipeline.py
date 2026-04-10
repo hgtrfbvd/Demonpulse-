@@ -15,8 +15,11 @@ The only data path is:
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Any
+
+_AEST = ZoneInfo("Australia/Sydney")
 
 from connectors.claude_scraper import (
     ClaudeScraper,
@@ -208,16 +211,12 @@ def _discover_greyhound_venues(today: str) -> list[dict]:
     """
     try:
         scraper = ClaudeScraper()
-        url = f"https://www.thedogs.com.au/racing/{today}?trial=false"
-        raw = scraper._extract(
-            url,
-            "You fetch Australian greyhound racing schedule pages. "
-            "Return ONLY a JSON array of venue objects with 'slug' and 'state' fields. "
-            "Example: [{\"slug\": \"townsville\", \"state\": \"QLD\"}]",
-            '[{"slug": "townsville", "state": "QLD"}]',
-        )
-        if isinstance(raw, list):
-            return raw
+        venues = scraper.discover_greyhound_venues(today)
+        if venues:
+            log.info(f"pipeline: discovered {len(venues)} greyhound venues for {today}")
+        else:
+            log.warning(f"pipeline: greyhound venue discovery returned 0 venues for {today}")
+        return venues
     except Exception as e:
         log.warning(f"pipeline: greyhound venue discovery failed: {e}")
     return []
@@ -230,16 +229,12 @@ def _discover_horse_venues() -> list[dict]:
     """
     try:
         scraper = ClaudeScraper()
-        url = "https://publishingservices.racingaustralia.horse/racebooks/"
-        raw = scraper._extract(
-            url,
-            "You fetch Australian thoroughbred racing schedule pages. "
-            "Return ONLY a JSON array of venue objects with 'name' and 'state' fields. "
-            "Example: [{\"name\": \"Caulfield\", \"state\": \"VIC\"}]",
-            '[{"name": "Caulfield", "state": "VIC"}]',
-        )
-        if isinstance(raw, list):
-            return raw
+        venues = scraper.discover_horse_venues()
+        if venues:
+            log.info(f"pipeline: discovered {len(venues)} horse venues")
+        else:
+            log.warning("pipeline: horse venue discovery returned 0 venues")
+        return venues
     except Exception as e:
         log.warning(f"pipeline: horse venue discovery failed: {e}")
     return []
@@ -267,7 +262,10 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
     Returns:
         {"ok": True, "date": ..., "races_stored": N}
     """
-    today = target_date or date.today().isoformat()
+    # Always use AEST date so stored races match board_service queries (which
+    # also use AEST).  On a UTC server date.today() can differ from the AEST
+    # calendar date by up to 10–11 hours, causing an empty board.
+    today = target_date or datetime.now(_AEST).date().isoformat()
     scraper = ClaudeScraper()
     stored = 0
     errors = 0
@@ -322,8 +320,16 @@ def full_sweep(target_date: str | None = None) -> dict[str, Any]:
         log.error(f"pipeline: horse sweep failed: {e}")
         errors += 1
 
+    if stored == 0 and errors == 0:
+        log.warning(
+            f"pipeline: full_sweep stored 0 races with 0 errors for {today} — "
+            "venue discovery may have returned an empty list. "
+            "Check ANTHROPIC_API_KEY and ClaudeScraper logs."
+        )
     log.info(f"pipeline: full_sweep complete — date={today} races_stored={stored} errors={errors}")
-    return {"ok": errors == 0, "date": today, "races_stored": stored, "errors": errors}
+    # Return ok=False if nothing was stored (empty venue list counts as a failure)
+    ok = errors == 0 and stored > 0
+    return {"ok": ok, "date": today, "races_stored": stored, "errors": errors}
 
 
 def venue_sweep(venue: dict, code: str = "GREYHOUND",
@@ -336,7 +342,7 @@ def venue_sweep(venue: dict, code: str = "GREYHOUND",
         code: "GREYHOUND" or "HORSE"
         target_date: ISO date string (default: today)
     """
-    today = target_date or date.today().isoformat()
+    today = target_date or datetime.now(_AEST).date().isoformat()
     scraper = ClaudeScraper()
     stored = 0
 
@@ -367,7 +373,15 @@ def _store_race(race: dict) -> None:
     runners_raw = race.pop("_runners", [])
     race_uid = race.pop("_race_uid", race.get("race_uid", ""))
 
-    _db_upsert_race(race)
+    upsert_result = _db_upsert_race(race)
+    # Resolve the UUID primary key of the newly upserted race so that
+    # today_runners.race_id (a UUID FK) can be set to a valid value.
+    # If the upsert didn't return a row (e.g. Supabase returned nothing),
+    # pass None — the column is nullable and the conflict key is (race_uid,
+    # box_num), so runners will still be stored correctly.
+    race_id_uuid: str | None = (
+        upsert_result.get("id") if isinstance(upsert_result, dict) else None
+    )
 
     if runners_raw:
         norm_runners = [
@@ -376,9 +390,9 @@ def _store_race(race: dict) -> None:
                 race_uid=race_uid,
                 race_num=race.get("race_num", 0),
                 track=race.get("track", ""),
-                race_date=race.get("date", date.today().isoformat()),
+                race_date=race.get("date", datetime.now(_AEST).date().isoformat()),
                 code=race.get("code", ""),
             )
             for r in runners_raw
         ]
-        _db_upsert_runners(race_uid, norm_runners)
+        _db_upsert_runners(race_id_uuid, norm_runners)

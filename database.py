@@ -589,6 +589,10 @@ def _build_race_payload(race: dict[str, Any]) -> dict[str, Any] | None:
         # integrity_filter NO_RUNNERS check can use it.  Only included when
         # explicitly set; absence means unknown (not zero).
         "runner_count": int(race["runner_count"]) if race.get("runner_count") is not None else 0,
+        # Claude pipeline columns — store derived features and raw scraped data.
+        # Added in migration 004. Null-safe: absent in legacy OddsPro rows.
+        "derived_json": _as_json(race.get("derived_json")),
+        "raw_json": _as_json(race.get("raw_json")),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
