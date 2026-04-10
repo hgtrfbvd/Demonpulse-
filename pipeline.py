@@ -379,7 +379,7 @@ def _store_race(race: dict) -> None:
     # If the upsert didn't return a row (e.g. Supabase returned nothing),
     # pass None — the column is nullable and the conflict key is (race_uid,
     # box_num), so runners will still be stored correctly.
-    race_uuid: str | None = (
+    race_id_uuid: str | None = (
         upsert_result.get("id") if isinstance(upsert_result, dict) else None
     )
 
@@ -395,4 +395,4 @@ def _store_race(race: dict) -> None:
             )
             for r in runners_raw
         ]
-        _db_upsert_runners(race_uuid, norm_runners)
+        _db_upsert_runners(race_id_uuid, norm_runners)
