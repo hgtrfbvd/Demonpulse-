@@ -1,10 +1,12 @@
 """
-scheduler.py - DemonPulse Scheduler (Claude Pipeline)
-======================================================
-Continuous scheduler for the Claude-API-powered data pipeline.
+scheduler.py - DemonPulse Scheduler
+=====================================
+Continuous scheduler for the data pipeline.
 
 Cycles:
   full_sweep          - fetch all venues for today (every 10 min)
+                        GREYHOUND: browser-based via thedogs.com.au
+                        HORSE: Claude API
   board_rebuild       - rebuild board from stored data (every 90 s)
   result_check        - detect jumped races, update statuses (every 3 min)
   race_state_update   - drive race state machine from stored data (every 90 s)
@@ -95,7 +97,7 @@ def get_status():
 # --------------------------------------------------------
 
 def _run_full_sweep():
-    """Fetch all venues for today via ClaudeScraper. Skipped if already running."""
+    """Fetch all venues for today. GREYHOUND uses browser; HORSE uses Claude. Skipped if already running."""
     acquired = _sweep_lock.acquire(blocking=False)
     if not acquired:
         log.warning("Full sweep still running — skipping this cycle")
@@ -314,7 +316,7 @@ def _trigger_board_rebuild():
 def run_scheduler():
     global _scheduler_thread
 
-    log.info("=== SCHEDULER STARTED (Claude Pipeline) ===")
+    log.info("=== SCHEDULER STARTED ===")
     _set_status(
         running=True,
         thread_alive=True,
@@ -428,7 +430,7 @@ def start_scheduler():
         _scheduler_started = True
 
     _set_status(running=True, thread_alive=True, last_error=None)
-    log.info("Scheduler started (Claude Pipeline)")
+    log.info("Scheduler started")
 
 
 # --------------------------------------------------------

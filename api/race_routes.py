@@ -2,7 +2,8 @@
 api/race_routes.py - DemonPulse Race API Routes
 =================================================
 Provides API endpoints for race data.
-All race data is sourced from the Claude-powered pipeline.
+GREYHOUND data is sourced from the browser-based dogs pipeline (thedogs.com.au).
+HORSE data is sourced from the Claude-powered pipeline.
 """
 from __future__ import annotations
 
@@ -90,7 +91,7 @@ def get_race(race_uid: str):
 
 @race_bp.route("/<race_uid>/analysis", methods=["GET"])
 def get_race_analysis(race_uid: str):
-    """Get race data and runners for analysis (Claude pipeline)."""
+    """Get race data and runners for analysis."""
     try:
         from database import get_race, get_runners_for_race
         from race_status import compute_ntj
@@ -141,7 +142,8 @@ def get_race_results(race_uid: str):
 def refresh_race(race_uid: str):
     """
     Trigger a venue sweep to refresh a single race.
-    Identifies venue from stored race record and re-fetches.
+    GREYHOUND: uses browser-based dogs_capture_service (thedogs.com.au).
+    HORSE: uses ClaudeScraper venue sweep.
     """
     try:
         from database import get_race
@@ -149,12 +151,22 @@ def refresh_race(race_uid: str):
         if not race:
             return jsonify({"ok": False, "error": "Race not found"}), 404
 
-        track = race.get("track") or ""
         code = (race.get("code") or "GREYHOUND").upper()
         race_date = race.get("date") or ""
 
+        if code == "GREYHOUND":
+            from services.dogs_capture_service import refresh_race as dogs_refresh
+            from pipeline import _store_race
+            fresh = dogs_refresh(race_uid, race)
+            if not fresh:
+                return jsonify({"ok": False, "error": "Greyhound race refresh failed"}), 500
+            _store_race(fresh)
+            return jsonify({"ok": True, "race_uid": race_uid, "source": "thedogs_browser"})
+
+        # Horse refresh via venue_sweep
+        track = race.get("track") or ""
         from pipeline import venue_sweep
-        venue = {"slug": track.lower().replace(" ", "-"), "name": track}
+        venue = {"name": track, "slug": track.lower().replace(" ", "-")}
         result = venue_sweep(venue, code=code, target_date=race_date)
         return jsonify({"ok": result.get("ok", False), "race_uid": race_uid, "source": "claude"})
 
@@ -185,7 +197,8 @@ def live_race(race_uid: str):
     """
     On-demand race refresh endpoint.
     Returns cached data immediately if fresh (< LIVE_STALE_SECONDS old).
-    Triggers a targeted single-race scrape via ClaudeScraper if data is stale.
+    GREYHOUND: triggers browser-based dogs_capture_service refresh.
+    HORSE: triggers ClaudeScraper refresh.
     Never errors to the client — always returns stale data on failure.
     """
     from database import get_race, get_runners_for_race
@@ -200,34 +213,39 @@ def live_race(race_uid: str):
 
     if age > LIVE_STALE_SECONDS:
         try:
-            from connectors.claude_scraper import ClaudeScraper
-            from pipeline import _normalise_greyhound_race, _normalise_horse_race
-            from pipeline import _store_race
-            from features import compute_greyhound_derived, compute_horse_derived
-
-            scraper = ClaudeScraper()
             code = (race.get("code") or "GREYHOUND").upper()
-            track = race.get("track") or ""
-            venue_slug = track.lower().replace(" ", "-")
-            race_date = race.get("date") or date.today().isoformat()
-            race_num = int(race.get("race_num") or 0)
 
-            fresh_raw = scraper.fetch_single_race(
-                code=code,
-                venue_slug=venue_slug,
-                date_slug=race_date,
-                race_num=race_num,
-            )
-            if fresh_raw:
-                if code == "GREYHOUND":
-                    fresh_raw["derived"] = compute_greyhound_derived(fresh_raw)
-                    fresh = _normalise_greyhound_race(fresh_raw, race_date)
-                else:
+            if code == "GREYHOUND":
+                from services.dogs_capture_service import refresh_race as dogs_refresh
+                from pipeline import _store_race
+                fresh = dogs_refresh(race_uid, race)
+                if fresh:
+                    _store_race(fresh)
+                    race = get_race(race_uid) or race
+                    refreshed = True
+            else:
+                from connectors.claude_scraper import ClaudeScraper
+                from pipeline import _normalise_horse_race, _store_race
+                from features import compute_horse_derived
+
+                scraper = ClaudeScraper()
+                track = race.get("track") or ""
+                venue_slug = track.lower().replace(" ", "-")
+                race_date = race.get("date") or date.today().isoformat()
+                race_num = int(race.get("race_num") or 0)
+
+                fresh_raw = scraper.fetch_single_race(
+                    code=code,
+                    venue_slug=venue_slug,
+                    date_slug=race_date,
+                    race_num=race_num,
+                )
+                if fresh_raw:
                     fresh_raw["derived"] = compute_horse_derived(fresh_raw)
                     fresh = _normalise_horse_race(fresh_raw, race_date)
-                _store_race(fresh)
-                race = get_race(race_uid) or race
-                refreshed = True
+                    _store_race(fresh)
+                    race = get_race(race_uid) or race
+                    refreshed = True
         except Exception as e:
             log.warning(f"live_race refresh failed {race_uid}: {e}")
             # Fall through — return stale data, never error

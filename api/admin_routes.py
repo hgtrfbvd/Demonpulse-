@@ -308,7 +308,8 @@ def admin_bootstrap_day():
         "claude_api_key_present": bool(os.getenv("ANTHROPIC_API_KEY", "").strip()),
         "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true").lower() == "true",
         "app_mode": os.getenv("DP_ENV", "LIVE"),
-        "data_source": "claude",
+        "data_source_horses": "claude",
+        "data_source_greyhounds": "thedogs_browser",
     }
 
     target_date = date.today().isoformat()
@@ -345,7 +346,8 @@ def admin_bootstrap_day():
 
     # 3. REQUEST CONSTRUCTION
     request_diag = {
-        "source": "claude_api",
+        "source_horses": "claude_api",
+        "source_greyhounds": "thedogs_browser",
         "model": "claude-haiku-4-5-20251001",
     }
 

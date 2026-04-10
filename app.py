@@ -20,12 +20,14 @@ try:
     from api.admin_routes import admin_bp
     from api.prediction_routes import prediction_bp
     from api.bet_routes import bet_bp
+    from routes.dashboard_dogs import dogs_dashboard_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(race_bp)
     app.register_blueprint(board_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(prediction_bp)
     app.register_blueprint(bet_bp)
+    app.register_blueprint(dogs_dashboard_bp)
     log.info("API blueprints registered")
 except Exception as _bp_err:
     log.warning(f"Blueprint registration failed: {_bp_err}")
@@ -316,12 +318,12 @@ def api_auth_logout():
 # ------------------------------------------------------------
 @app.route("/api/debug/thedogs-meetings")
 def api_debug_thedogs_meetings():
-    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
+    return jsonify({"ok": False, "error": "Use /api/dogs/board for the new browser-based dogs pipeline"}), 410
 
 
 @app.route("/api/debug/thedogs-races")
 def api_debug_thedogs_races():
-    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
+    return jsonify({"ok": False, "error": "Use /api/dogs/board for the new browser-based dogs pipeline"}), 410
 
 
 # ------------------------------------------------------------
@@ -556,12 +558,12 @@ def api_live_mark_watched():
 
 @app.route("/api/debug/thedogs-fetch")
 def api_debug_thedogs_fetch():
-    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
+    return jsonify({"ok": False, "error": "Use /api/dogs/collect for the new browser-based dogs pipeline"}), 410
 
 
 @app.route("/api/debug/thedogs-scratchings-fetch")
 def api_debug_thedogs_scratchings_fetch():
-    return jsonify({"ok": False, "error": "thedogs_connector removed — use Claude scraper"}), 410
+    return jsonify({"ok": False, "error": "Use /api/dogs/collect for the new browser-based dogs pipeline"}), 410
 
 
 @app.route("/api/debug/formfav", methods=["GET"])
@@ -574,7 +576,7 @@ def api_debug_formfav():
         all_races = get_races_for_date(today)
         return jsonify({
             "ok": True,
-            "note": "FormFav removed — Claude API is now the only data source",
+            "note": "FormFav removed — GREYHOUND uses browser pipeline, HORSE uses Claude API",
             "total_races_stored": len(all_races),
             "date": today,
         })
@@ -586,9 +588,11 @@ def api_debug_formfav():
 @app.route("/api/debug/claude-pipeline", methods=["GET"])
 def api_debug_claude_pipeline():
     """
-    End-to-end diagnostic for the Claude-powered data pipeline.
+    End-to-end diagnostic for the Claude-powered HORSE data pipeline.
     Returns prompt identity, last raw response preview, parse outcome,
     and DB write counts. No auth required, no writes.
+
+    For GREYHOUND (dogs) pipeline diagnostics use /api/dogs/health.
     """
     from datetime import date as _date
     today = _date.today().isoformat()
@@ -687,7 +691,7 @@ def api_debug_board_status():
     except Exception as exc:
         out["sweep_status_error"] = str(exc)
 
-    # Claude pipeline state (prompt + parse + 429)
+    # Claude pipeline state (prompt + parse + 429) — HORSE pipeline only
     try:
         from connectors.claude_scraper import get_pipeline_state
         cs = get_pipeline_state()
@@ -702,6 +706,7 @@ def api_debug_board_status():
         out["prompt_source"] = cs.get("prompt_source")
         out["prompt_function"] = cs.get("prompt_function")
         out["prompt_hash"] = cs.get("prompt_fingerprint")
+        out["note_dogs"] = "GREYHOUND uses browser pipeline — see /api/dogs/health"
     except Exception as exc:
         out["claude_state_error"] = str(exc)
 
@@ -771,7 +776,8 @@ def api_health():
         "app": "DemonPulse",
         "mode": env.mode,
         "claude_enabled": claude_enabled,
-        "data_source": "claude",
+        "data_source_horses": "claude",
+        "data_source_greyhounds": "thedogs_browser",
     })
 
 
