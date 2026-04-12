@@ -1,1412 +1,1382 @@
-# DemonPulse — Copilot Instructions (V9)
+# DEMONPULSE V2 — COMPLETE REBUILD PROMPT FOR GITHUB COPILOT
 
-## Project overview
-
-DemonPulse is an Australian greyhound (Phase 1) and horse racing (Phase 2) AI betting terminal.
-
-**Stack:** Flask · Supabase (Postgres) · Playwright · Render
-
-**Phase status:**
-
-- Greyhounds (GREYHOUND code): fully active — browser-based pipeline via thedogs.com.au
-- Horses (GALLOPS/HARNESS): Phase 2 — Claude API pipeline (connectors/claude_scraper.py)
+## Professional Punting Intelligence Platform — Horses + Greyhounds (AU)
 
 -----
 
-## Environment
+> **HOW TO USE THIS PROMPT**
+> Paste this entire document into Copilot Workspace or use it as your agent session context.
+> Work through each phase in order. Each phase produces self-contained modules with clear interfaces.
+> Do not skip phases — later modules depend on earlier ones.
 
-### Required variables
+-----
 
-|Variable                |Purpose                                                          |
-|------------------------|-----------------------------------------------------------------|
-|`DP_ENV`                |`LIVE` (default/production) or `TEST` (dev/stress-test)          |
-|`SUPABASE_URL`          |Supabase project URL (production)                                |
-|`SUPABASE_KEY`          |Supabase anon key (production)                                   |
-|`SUPABASE_TEST_URL`     |Supabase URL for TEST mode (optional; falls back to table prefix)|
-|`SUPABASE_TEST_KEY`     |Supabase key for TEST mode                                       |
-|`JWT_SECRET`            |HMAC-SHA256 signing secret for JWT tokens                        |
-|`FLASK_SECRET`          |Flask session secret                                             |
-|`ANTHROPIC_API_KEY`     |Claude API key (horse pipeline + AI commentary)                  |
-|`ADMIN_PASSWORD`        |Override bootstrap admin password                                |
-|`ADMIN_USERNAME`        |Override bootstrap admin username                                |
-|`SESSION_TIMEOUT_MIN`   |JWT TTL in minutes (default 480)                                 |
-|`DOGS_SCREENSHOT_DIR`   |Screenshot output dir (default `/tmp/demonpulse_dogs`)           |
-|`DOGS_BOARD_MAX_RETRIES`|Playwright retry count (default 3)                               |
-|`DOGS_PAGE_TIMEOUT_MS`  |Playwright page load timeout ms (default 30000)                  |
-|`EXTRACTION_SERVICE_URL`|External screenshot-to-JSON extraction endpoint                  |
+## PROJECT OVERVIEW
 
-### Environment mode rules
+Build **DemonPulse V2** — a professional Australian racing intelligence platform for serious punters.
+Comparable in feel to a Bloomberg terminal crossed with a professional bookmaking back-office tool.
+Target users: professional / semi-professional punters who want data, signals, and structured bet management.
 
-`env.py` is the single source of truth. Never check `DP_ENV` directly — always import from `env`.
+**Stack:**
+
+- Backend: Python 3.11 + Flask 3.x + Gunicorn
+- Database: Supabase (PostgreSQL via supabase-py)
+- Frontend: Vanilla JS + Jinja2 templates (NO React, NO build step)
+- Scraping: Playwright (headless Chromium) + Anthropic Claude API
+- Deployment: Render.com (single web service, 1 worker)
+
+**Two race codes only:** `GREYHOUND` and `GALLOPS` (horses). No harness.
+
+-----
+
+## PHASE 0 — PROJECT SKELETON
+
+### Directory Structure
+
+```
+demonpulse/
+├── app.py                    # Flask app factory, blueprint registration
+├── config.py                 # All env vars, constants, mode flags
+├── requirements.txt
+├── Procfile
+├── render.yaml
+├── gunicorn.conf.py
+│
+├── core/                     # Shared utilities used by everything
+│   ├── db.py                 # Supabase client, T(), safe_query()
+│   ├── env.py                # TEST/LIVE mode authority
+│   ├── auth.py               # JWT auth, user management
+│   ├── cache.py              # Simple in-memory TTL cache
+│   └── clock.py              # AEST datetime helpers
+│
+├── data/                     # Data ingestion layer
+│   ├── scheduler.py          # Background thread scheduler
+│   ├── pipeline.py           # Orchestrates all ingestion sweeps
+│   ├── horse_collector.py    # Claude API → horse race data
+│   ├── dogs_collector.py     # Playwright → thedogs.com.au
+│   ├── dogs_parser.py        # HTML → normalised race dicts
+│   └── result_checker.py     # Race status / result detection
+│
+├── intelligence/             # Scoring + AI layer
+│   ├── scorer.py             # Multi-signal race scoring engine
+│   ├── features.py           # Feature extraction from race/runners
+│   ├── signals.py            # Signal generation (BET/SESSION/PASS)
+│   ├── predictor.py          # Prediction runner, snapshot saver
+│   ├── race_shape.py         # Pace classification, collapse projection
+│   ├── collision.py          # Greyhound box/collision model
+│   ├── packet_builder.py     # Build pre-scored packet for Claude
+│   └── system_prompt.py      # Claude AI interpreter instructions
+│
+├── betting/                  # Bet management layer
+│   ├── bet_manager.py        # Place, settle, history, P/L
+│   ├── staking.py            # Kelly criterion, EV, stake sizing
+│   └── exotics.py            # Exacta, trifecta, first4, multi calculators
+│
+├── learning/                 # Self-improvement layer
+│   ├── evaluator.py          # Post-race evaluation against results
+│   ├── tagger.py             # ETG loss tagging
+│   ├── adjustments.py        # AEEE weight adjustment system
+│   └── backtester.py         # Historical replay engine
+│
+├── api/                      # All Flask blueprints
+│   ├── races.py              # /api/races/*
+│   ├── board.py              # /api/board/*
+│   ├── predictions.py        # /api/predictions/*
+│   ├── bets.py               # /api/bets/*
+│   ├── analytics.py          # /api/analytics/*
+│   ├── admin.py              # /api/admin/*
+│   ├── auth.py               # /api/auth/*
+│   └── health.py             # /api/health/* + /debug
+│
+├── static/
+│   ├── css/
+│   │   ├── tokens.css        # Design system variables
+│   │   ├── terminal.css      # Dark terminal aesthetic
+│   │   └── components.css    # Reusable UI components
+│   └── js/
+│       ├── core.js           # Auth, fetch wrapper, shared utils
+│       ├── board.js          # Race board module
+│       ├── live.js           # Live race view module
+│       ├── bets.js           # Bet management module
+│       ├── analytics.js      # Reports + P/L charts
+│       ├── learning.js       # AI learning module
+│       └── settings.js       # Settings module
+│
+├── templates/
+│   ├── base.html             # Shell: topbar, nav, status cluster
+│   ├── board.html            # Race board (home page)
+│   ├── live.html             # Live race form guide + analysis
+│   ├── bets.html             # Bet log + open bets
+│   ├── analytics.html        # P/L reports, performance charts
+│   ├── learning.html         # AI learning, backtesting
+│   └── settings.html         # System settings, admin tools
+│
+└── sql/
+    └── schema.sql            # Complete Supabase schema
+```
+
+-----
+
+## PHASE 1 — CORE INFRASTRUCTURE
+
+### `config.py` — All Configuration
 
 ```python
-from env import env
-env.mode          # "TEST" or "LIVE"
-env.is_live       # bool
-env.is_test       # bool
-env.require_test()        # raises EnvViolation if LIVE
-env.guard_fake_data()     # raises EnvViolation if LIVE
-env.guard_destructive(op) # raises EnvViolation if LIVE
+# All environment variables with typed defaults
+# Sections: Database, API Keys, Auth, Scheduler, Racing Logic
+
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+CLAUDE_API_KEY = os.environ["CLAUDE_API_KEY"]
+ODDSPRO_API_KEY = os.environ.get("ODDSPRO_API_KEY", "")
+FORMFAV_API_KEY = os.environ.get("FORMFAV_API_KEY", "")
+JWT_SECRET = os.environ["JWT_SECRET"]
+FLASK_SECRET = os.environ["FLASK_SECRET"]
+DP_ENV = os.environ.get("DP_ENV", "LIVE")  # TEST or LIVE
+
+# Scheduler intervals (seconds)
+HORSE_SWEEP_INTERVAL = 600     # 10 min
+DOGS_SWEEP_INTERVAL = 600      # 10 min
+BOARD_REBUILD_INTERVAL = 90    # 90 sec
+RESULT_CHECK_INTERVAL = 180    # 3 min
+
+# AI/Scoring
+CLAUDE_MODEL = "claude-haiku-4-5"
+MAX_PACKET_CHARS = 1200
+
+# Racing logic
+VALID_CODES = {"GREYHOUND", "GALLOPS"}
+AEST_TZ = ZoneInfo("Australia/Sydney")
 ```
 
-**TEST mode:** fake/demo data allowed, demo user bootstrap, table names prefixed `test_`, stress endpoints active.
-**LIVE mode:** no fake data, no auto-deletion, no destructive bulk ops, all data permanent and audited.
-
-Tables in `_ALWAYS_LIVE_TABLES` (`users`, `audit_log`) always use production namespace regardless of mode.
-Tables in `_TESTABLE_TABLES` use `test_` prefix in TEST mode.
-
------
-
-## Architecture
-
-```
-app.py                          Flask app, blueprint registration, startup
-env.py                          TEST/LIVE authority — import this, never os.getenv("DP_ENV")
-db.py                           Supabase client + safe_query + T() table resolver
-database.py                     Race/runner/result CRUD helpers over db.py
-auth.py                         JWT (HMAC-SHA256), PBKDF2 passwords, RBAC
-scheduler.py                    Background thread — all polling cycles live here
-pipeline.py                     Daily data pipeline entry point
-board_service.py                Live race board builder from stored data
-race_status.py                  Race state machine + NTJ calculator
-safety.py                       Betting window, recommendation expiry, circuit breaker
-scorer.py                       Scoring engines E23-E29: early speed, box, pace, EV, Kelly
-signals.py                      Signal generation: SNIPER / VALUE / GEM / WATCH / RISK / NO_BET
-integrity_filter.py             Race integrity guard (blocks invalid/incomplete races)
-features.py                     Derived field computation for horse racing
-exotics.py                      Exotic bet suggestions
-audit.py                        Audit log helpers
-cache.py                        In-memory TTL cache
-learning_engine.py              EPR / AEEE / GPIL learning loop
-
-api/
-  health_routes.py              GET /api/health, /api/health/connectors, /scheduler, /live
-  race_routes.py                GET/POST /api/races, /api/races/<uid>, /analysis, /result
-  board_routes.py               GET /api/board, /blocked, /ntj
-  bet_routes.py                 GET/POST /api/bets — summary, history, place, settle, reset-bank
-  admin_routes.py               POST /api/admin — sweep, refresh, results, block, migrate, predict
-  prediction_routes.py          GET/POST /api/predictions — race, today, performance, backtest
-
-routes/
-  dashboard_dogs.py             GET/POST /api/dogs — board, upcoming, race, health, collect
-
-collectors/
-  dogs_board_collector.py       Playwright → thedogs.com.au board page (meetings + race times)
-  dogs_race_capturer.py         Playwright → thedogs.com.au race detail (runners + form)
-  dogs_upcoming_selector.py     Selects next upcoming greyhound races for capture
-
-parsers/
-  dogs_source_parser.py         Parses raw Playwright DOM output into DogsBoardEntry objects
-
-models/
-  dogs_race_packet.py           DogsBoardEntry dataclass (canonical dogs board item)
-
-services/
-  dogs_board_service.py         Orchestrates greyhound board collection pipeline
-  dogs_capture_service.py       Manages race capture + extraction service POST
-  health_service.py             Thread-safe in-memory health metrics
-  race_service.py               Race update helpers
-  result_service.py             Result write + settlement
-  data_integrity_service.py     Cross-table data validation
-  migration_runner.py           Schema migration orchestrator
-  schema_bootstrap.py           Idempotent schema bootstrap on startup
-
-connectors/
-  claude_scraper.py             Horse racing pipeline — Claude API structured extraction
-
-ai/
-  predictor.py                  Race prediction: baseline_v1 + v2_feature_engine
-  feature_builder.py            Feature engineering from runner + race data
-  learning_store.py             Prediction lineage, snapshots, evaluations
-  backtest_engine.py            Historical backtesting (no-leakage rule enforced)
-  race_shape.py                 Race shape / pace scenario analysis
-  sectionals_engine.py          Per-runner OddsPro sectional metric extraction
-  collision_model.py            Box collision / interference model (GREYHOUND only)
-  enrichment_guard.py           FormFav enrichment application guard (non-authoritative cap)
-  disagreement_engine.py        Model vs market disagreement detection
-
-simulation/
-  core_simulation_engine.py     Monte Carlo simulation orchestrator
-  race_shape_engine.py          Pre-race shape analysis for simulation
-  simulation_aggregator.py      Aggregates N simulation results
-  filter_engine.py              Filter pipeline (hard blocks, value, risk, decision)
-  expert_guide_integration.py   Generates ExpertGuide from simulation results
-  crash_map_engine.py           Crash/interference probability mapping
-  models.py                     Simulation dataclasses (RaceMeta, RunnerProfile, etc.)
-  filters/
-    base_filter.py
-    hard_block_filters.py
-    core_decision_filters.py
-    value_filters.py
-    risk_filters.py
-    output_filters.py
-  race_code_modules/
-    greyhound_module.py
-    thoroughbred_module.py
-    harness_module.py
-
-sql/
-  001_canonical_schema.sql      SOLE SCHEMA AUTHORITY — run this in Supabase SQL Editor
-```
-
------
-
-## Data pipeline
-
-### Greyhound pipeline (Phase 1 — ACTIVE)
-
-```
-scheduler._run_dogs_visual()
-  └─ services/dogs_board_service.py: collect_dogs_board()
-       └─ collectors/dogs_board_collector.py: collect_board(date)
-            └─ Playwright → thedogs.com.au/racing/YYYY-MM-DD
-               (headless, stealth, screenshots on failure)
-       └─ collectors/dogs_upcoming_selector.py: select_upcoming(entries)
-       └─ collectors/dogs_race_capturer.py: capture_race(entry)
-            └─ Playwright → thedogs.com.au/racing/SLUG/DATE/N
-               → screenshot (PNG)
-               → POST to EXTRACTION_SERVICE_URL/extract/dogs/race (multipart, PNGs attached)
-               → sync JSON response: {success, race_uid, extracted_data, warnings, errors}
-       └─ parsers/dogs_source_parser.py: parse(raw)
-       └─ database.upsert_race() + database.upsert_runners()
-```
-
-**Extraction service contract:**
-
-```
-POST /extract/dogs/race
-Content-Type: multipart/form-data
-  race_uid: str
-  date: YYYY-MM-DD
-  track: str
-  race_num: int
-  screenshots: PNG files (one or more)
-
-Response (sync JSON):
-  {
-    "success": true,
-    "race_uid": "...",
-    "extracted_data": { runners: [...], race: {...} },
-    "warnings": [],
-    "errors": []
-  }
-```
-
-No OCR inside DemonPulse. No Claude Vision inside DemonPulse. No file polling. All extraction is sync via the external service.
-
-### Horse pipeline (Phase 2 — ACTIVE)
-
-```
-scheduler._run_full_sweep()
-  └─ pipeline.full_sweep()
-       └─ connectors/claude_scraper.py: ClaudeScraper
-            → Claude API (claude-haiku-4-5) structured extraction
-            → venues discovered, races + runners built
-       └─ features.compute_horse_derived()
-       └─ database.upsert_race() + database.upsert_runners()
-```
-
-Claude rate-limit (429) handling: `ClaudeRateLimitError` raised, pipeline falls back to `load_venue_cache()` and marks sweep as `partial_cached`.
-
-### Pipeline invariants
-
-- **GREYHOUND data source:** `thedogs_browser` (stored in `today_races.source`)
-- **HORSE data source:** `oddspro` or `claude` (stored in `today_races.source`)
-- OddsPro is the authoritative source label for confirmed results
-- FormFav / external enrichment is non-authoritative; never overwrites official tables
-- `race_uid` format: `{date}_{track}_{race_num}_{code}` (e.g. `2026-04-10_sandown_3_GREYHOUND`)
-- Upsert conflict key for races: `(date, track, race_num, code)`
-- Upsert conflict key for runners: `(race_uid, box_num)`
-
------
-
-## Scheduler cycles
-
-Defined in `scheduler.py`. All cycles use `threading.Lock` with `acquire(blocking=False)` — skips if already running.
-
-|Cycle              |Interval      |Function                                            |
-|-------------------|--------------|----------------------------------------------------|
-|`full_sweep`       |600 s (10 min)|`pipeline.full_sweep()` — horse races via Claude API|
-|`board_rebuild`    |90 s          |`board_service.get_board_for_today()` rebuild       |
-|`result_check`     |180 s (3 min) |`race_status.bulk_update_race_states()`             |
-|`race_state_update`|90 s          |State machine transitions from stored jump_time     |
-|`health_snapshot`  |120 s (2 min) |`services/health_service.py` aggregation            |
-|`eval_backfill`    |3600 s (1 hr) |Learning evaluation backfill                        |
-|`dogs_visual`      |600 s (10 min)|Playwright greyhound board collection               |
-
-Scheduler is started per-worker in gunicorn `post_fork`. `GUNICORN_MANAGED=1` env var prevents double-start. Self-healing: `/api/system/status` and `/api/scheduler/watchdog` restart a dead thread.
-
------
-
-## Race state machine
-
-States and transitions (managed by `race_status.py`):
-
-```
-upcoming
-  → near_jump          (< 600 s to jump_time)
-  → jumped_estimated   (jump_time passed, no result)
-  → awaiting_result    (30+ min past jump, no result)
-  → result_posted      (OddsPro result confirmed)
-  → final              (terminal: result settled)
-  → paying             (terminal: dividends paying)
-  → abandoned          (terminal: race abandoned)
-
-Any state → blocked    (hard block via integrity_filter or admin)
-Any state → stale_unknown (no/unparseable jump_time, data stale)
-```
-
-`LIVE_STATUSES` = `{upcoming, open, interim, near_jump, jumped_estimated, awaiting_result}`
-`SETTLED_STATUSES` = `{final, paying, abandoned, result_posted}`
-`FINAL_STATES` = `{final, paying, abandoned}` — never downgraded by time-based logic
-
-NTJ windows (from `race_status.compute_ntj()`):
-
-- `IMMINENT`: 0–120 s
-- `NEAR`: 120–600 s
-- `UPCOMING`: 600+ s
-- `PAST`: jump_time in the past
-
------
-
-## Board service
-
-`board_service.get_board_for_today()` returns:
-
-```json
-{
-  "ok": true,
-  "items": [
-    {
-      "race_uid": "2026-04-10_sandown_3_GREYHOUND",
-      "track": "sandown",
-      "race_num": 3,
-      "code": "GREYHOUND",
-      "date": "2026-04-10",
-      "jump_time": "14:02",
-      "status": "near_jump",
-      "distance": "515",
-      "grade": "Grade 5",
-      "runners": [...],
-      "seconds_to_jump": 480,
-      "ntj_label": "NEAR"
-    }
-  ],
-  "count": 24,
-  "date": "2026-04-10"
-}
-```
-
-Board filters out `abandoned`, `invalid`, `blocked`, `cancelled` races. Sorted by `seconds_to_jump` ascending.
-
------
-
-## Authentication
-
-`auth.py` — JWT (HMAC-SHA256, no external lib), PBKDF2-SHA256 passwords.
-
-### Roles and permissions
-
-|Role      |Permissions                                                                                                       |
-|----------|------------------------------------------------------------------------------------------------------------------|
-|`admin`   |home, live, betting, reports, simulator, ai_learning, settings, audit, users, backtest, data, quality, performance|
-|`operator`|home, live, betting, reports                                                                                      |
-|`viewer`  |home, reports                                                                                                     |
-
-### JWT structure
+### `core/db.py` — Database Layer
 
 ```python
-{
-  "sub": "<user_id>",
-  "username": "<username>",
-  "role": "<role>",
-  "iat": <epoch>,
-  "exp": <epoch + TTL>,
-  "jti": "<hex16>",
-  "env": "LIVE" | "TEST"
-}
+# Supabase client singleton
+# T(name) → resolves table name for current env (test_ prefix in TEST mode)
+# safe_query(fn, default) → wraps all DB calls with error handling
+# TESTABLE_TABLES = complete set of all tables that use test_ prefix
+
+# Key tables (always use T() for access):
+# today_races, today_runners, bet_log, signals
+# prediction_snapshots, learning_evaluations
+# scored_races, results_log, sessions, system_state
 ```
 
-Token delivered as `dp_token` httponly cookie (+ JSON body). TTL = `SESSION_TIMEOUT_MIN × 60`.
-
-Token validation: checks signature, expiry, env match, user active status, session revocation via `user_sessions` table.
-
-### Decorators
+### `core/env.py` — Environment Authority
 
 ```python
-from auth import require_role, get_current_user
-
-@require_role("admin")          # 403 if not admin
-@require_role("operator")       # 403 if not operator or admin
-user = get_current_user()       # returns decoded JWT payload or None
+# Singleton: env.mode → "TEST" or "LIVE"
+# env.table(name) → adds test_ prefix in TEST mode
+# env.guard_destructive(op) → raises EnvViolation in LIVE mode
+# env.is_live / env.is_test properties
+# TEST mode: allows fake data, stress tests, auto-delete
+# LIVE mode: real data only, non-destructive, audited
 ```
 
-### Rate limiting
+### `core/auth.py` — Authentication
 
-Max 10 login attempts per IP per 5-minute window (in-memory `LOGIN_RATE` dict).
-
-### Bootstrap
-
-`auth.bootstrap_admin()` — runs on startup. Creates admin user if no users exist. In TEST mode also creates `operator_demo` and `viewer_demo` accounts.
+```python
+# Custom JWT (no external library dependency)
+# Roles: admin, operator, viewer
+# generate_token(user_id, username, role) → (access_token, refresh_token)
+# decode_token(token) → payload dict or None
+# require_auth decorator (Flask)
+# require_role(*roles) decorator (Flask)
+# bootstrap_admin() → creates admin user if none exists
+# Rate limiting: max 5 failed attempts per IP per minute
+```
 
 -----
 
-## Database layer
+## PHASE 2 — DATABASE SCHEMA
 
-### db.py
+### `sql/schema.sql` — Complete Supabase Schema
 
-```python
-from db import get_db, safe_query, T
+Design all tables with these principles:
 
-# T() resolves table name respecting env mode prefix
-T("bet_log")          # → "bet_log" (LIVE) or "test_bet_log" (TEST)
-T("users")            # → always "users" (in _ALWAYS_LIVE_TABLES)
+- `race_uid` is always `DATE_CODE_TRACK_RACENUM` e.g. `2026-04-12_GREYHOUND_sandown_5`
+- All timestamps in UTC, stored as ISO strings
+- JSONB columns for flexible payload data (`raw_json`, `features_json`)
+- Conflict keys explicitly defined for all upserts
 
-# safe_query wraps any Supabase query with exception handling
-result = safe_query(lambda: get_db().table(T("signals")).select("*").execute().data, [])
-```
+**Required tables:**
 
-### database.py
+```sql
+-- Race data
+today_races (
+  id uuid PK,
+  race_uid text UNIQUE,
+  date date,
+  track text,
+  state text,
+  country text DEFAULT 'AUS',
+  code text CHECK (code IN ('GREYHOUND','GALLOPS')),
+  race_num int,
+  race_name text,
+  distance int,
+  grade text,
+  condition text,
+  prize_money text,
+  jump_time timestamptz,
+  runner_count int,
+  status text DEFAULT 'upcoming', -- upcoming/open/jumped/resulted/abandoned
+  source text,                     -- dogs_browser / claude_api
+  raw_json jsonb,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+)
 
-High-level CRUD helpers. Always use these instead of raw Supabase calls for race/runner/result data.
+today_runners (
+  id uuid PK,
+  race_uid text REFERENCES today_races(race_uid),
+  race_id uuid,
+  box_num int,
+  name text,
+  trainer text,
+  jockey text,            -- horses only
+  weight numeric,         -- horses only
+  barrier int,            -- horses only
+  scratched boolean DEFAULT false,
+  run_style text,
+  best_time numeric,
+  career text,            -- "starts:wins-places"
+  win_odds numeric,
+  place_odds numeric,
+  tab_no int,
+  form_json jsonb,        -- recent starts data
+  source_confidence text,
+  UNIQUE (race_uid, box_num)
+)
 
-```python
-from database import (
-    upsert_race, get_race, get_races_for_date, get_active_races,
-    upsert_runners, get_runners_for_race,
-    upsert_meeting, get_meeting,
-    mark_race_blocked, update_race_status,
-    write_source_log, save_race_note,
-    sync_result_statuses, get_result,
-    get_blocked_races, get_formfav_enrichments_for_date,
+-- Bet management
+bet_log (
+  id uuid PK,
+  user_id uuid,
+  race_uid text,
+  date date,
+  track text,
+  race_num int,
+  code text,
+  runner_name text,
+  box_num int,
+  bet_type text,          -- WIN/PLACE/EACH_WAY/EXACTA/TRIFECTA/FIRST4/MULTI
+  stake numeric,
+  odds numeric,
+  expected_return numeric,
+  ev numeric,
+  kelly_fraction numeric,
+  confidence text,
+  result text DEFAULT 'PENDING',  -- PENDING/WIN/LOSS/VOID
+  return_amount numeric DEFAULT 0,
+  pl numeric DEFAULT 0,
+  signal_id uuid,
+  settled_at timestamptz,
+  created_at timestamptz DEFAULT now()
+)
+
+-- AI Intelligence
+signals (
+  id uuid PK,
+  race_uid text UNIQUE,
+  signal text,            -- BET/SESSION/PASS
+  decision text,
+  confidence text,
+  ev numeric,
+  selection text,
+  box_num int,
+  odds numeric,
+  stake_rec numeric,
+  race_shape text,
+  pace_type text,
+  collapse_risk text,
+  filters_json jsonb,
+  audit_json jsonb,
+  model_version text,
+  created_at timestamptz DEFAULT now()
+)
+
+prediction_snapshots (
+  id uuid PK,
+  race_uid text UNIQUE,
+  race_date date,
+  track text,
+  race_num int,
+  code text,
+  signal text,
+  decision text,
+  confidence text,
+  ev numeric,
+  top_runner text,
+  top_runner_box int,
+  runner_scores_json jsonb,
+  features_json jsonb,
+  model_version text DEFAULT 'v2',
+  created_at timestamptz DEFAULT now()
+)
+
+scored_races (
+  id uuid PK,
+  race_uid text UNIQUE,
+  decision text,
+  confidence text,
+  selection text,
+  box_num int,
+  race_shape text,
+  pace_type text,
+  collapse_risk text,
+  pressure_score int,
+  separation text,
+  crash_map text,
+  filters_json jsonb,
+  audit_json jsonb,
+  packet_snapshot text,
+  scorer_version text,
+  scored_at timestamptz DEFAULT now()
+)
+
+-- Results
+results_log (
+  id uuid PK,
+  race_uid text UNIQUE,
+  date date,
+  track text,
+  race_num int,
+  code text,
+  winner text,
+  winner_box int,
+  second text,
+  third text,
+  fourth text,
+  win_dividend numeric,
+  place_dividend numeric,
+  resulted_at timestamptz DEFAULT now()
+)
+
+-- Learning
+learning_evaluations (
+  id uuid PK,
+  race_uid text UNIQUE,
+  predicted_winner text,
+  actual_winner text,
+  was_correct boolean,
+  confidence text,
+  ev numeric,
+  signal text,
+  evaluated_at timestamptz DEFAULT now()
+)
+
+etg_tags (
+  id uuid PK,
+  bet_id uuid REFERENCES bet_log(id),
+  race_uid text,
+  tag text,         -- DATA_GAP/FORM_MISS/MARKET_MOVE/CHAOS/BOX_DRAW/TRAINER
+  notes text,
+  manual boolean DEFAULT false,
+  created_at timestamptz DEFAULT now()
+)
+
+-- System
+system_state (
+  id int PRIMARY KEY DEFAULT 1,
+  bankroll numeric DEFAULT 1000,
+  bank_mode text DEFAULT 'STANDARD',  -- SAFE/STANDARD/AGGRESSIVE
+  active_code text DEFAULT 'GREYHOUND',
+  ev_threshold numeric DEFAULT 0.08,
+  confidence_threshold numeric DEFAULT 0.65,
+  tempo_weight numeric DEFAULT 1.0,
+  updated_at timestamptz DEFAULT now()
+)
+
+sessions (
+  id uuid PK,
+  date date UNIQUE,
+  bankroll_start numeric,
+  bankroll_end numeric,
+  total_bets int DEFAULT 0,
+  wins int DEFAULT 0,
+  pl numeric DEFAULT 0,
+  roi numeric DEFAULT 0,
+  created_at timestamptz DEFAULT now()
+)
+
+users (
+  id uuid PK,
+  username text UNIQUE,
+  password_hash text,
+  role text DEFAULT 'operator',
+  active boolean DEFAULT true,
+  last_login timestamptz,
+  created_at timestamptz DEFAULT now()
 )
 ```
 
 -----
 
-## Full database schema
+## PHASE 3 — DATA PIPELINE
 
-Schema file: `sql/001_canonical_schema.sql` — sole authority. Run in Supabase SQL Editor. Idempotent (safe on existing databases). All `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` guards included.
-
-### Section 1: Core runtime tables
-
-#### `meetings`
-
-Meeting-level identity. Conflict key: `(date, track, code)`.
-
-|Column    |Type       |Notes                                             |
-|----------|-----------|--------------------------------------------------|
-|id        |UUID PK    |gen_random_uuid()                                 |
-|date      |DATE       |                                                  |
-|track     |TEXT       |                                                  |
-|code      |TEXT       |CHECK IN (‘GREYHOUND’,‘HARNESS’,‘GALLOPS’,‘HORSE’)|
-|state     |TEXT       |                                                  |
-|country   |TEXT       |default ‘AUS’                                     |
-|weather   |TEXT       |                                                  |
-|rail      |TEXT       |                                                  |
-|track_cond|TEXT       |                                                  |
-|race_count|INTEGER    |                                                  |
-|source    |TEXT       |default ‘oddspro’                                 |
-|updated_at|TIMESTAMPTZ|                                                  |
-
-Indexes: `date`, `code`, `(date, code)`
-
-#### `today_races`
-
-Primary race data. Authoritative source is OddsPro / thedogs_browser. Conflict key: `(date, track, race_num, code)`.
-
-|Column              |Type       |Notes                                      |
-|--------------------|-----------|-------------------------------------------|
-|id                  |UUID PK    |                                           |
-|race_uid            |TEXT       |Unique partial index (where != ‘’)         |
-|oddspro_race_id     |TEXT       |                                           |
-|date                |DATE       |                                           |
-|track               |TEXT       |                                           |
-|state               |TEXT       |                                           |
-|country             |TEXT       |default ‘au’                               |
-|race_num            |INTEGER    |                                           |
-|code                |TEXT       |default ‘GREYHOUND’                        |
-|distance            |TEXT       |                                           |
-|grade               |TEXT       |                                           |
-|jump_time           |TEXT       |HH:MM or ISO datetime                      |
-|prize_money         |TEXT       |                                           |
-|race_name           |TEXT       |                                           |
-|condition           |TEXT       |                                           |
-|status              |TEXT       |default ‘upcoming’ — see race state machine|
-|block_code          |TEXT       |set when status=‘blocked’                  |
-|source              |TEXT       |‘thedogs_browser’ or ‘oddspro’ or ‘claude’ |
-|source_url          |TEXT       |                                           |
-|time_status         |TEXT       |‘PARTIAL’ or ‘CONFIRMED’                   |
-|completeness_score  |INTEGER    |0–100                                      |
-|completeness_quality|TEXT       |‘LOW’/‘MEDIUM’/‘HIGH’                      |
-|race_hash           |TEXT       |content hash for change detection          |
-|lifecycle_state     |TEXT       |‘fetched’/‘normalised’/‘scored’/‘predicted’|
-|runner_count        |INTEGER    |                                           |
-|fetched_at          |TIMESTAMPTZ|                                           |
-|updated_at          |TIMESTAMPTZ|                                           |
-|completed_at        |TIMESTAMPTZ|                                           |
-|normalized_at       |TIMESTAMPTZ|                                           |
-|scored_at           |TIMESTAMPTZ|                                           |
-|packet_built_at     |TIMESTAMPTZ|                                           |
-|ai_reviewed_at      |TIMESTAMPTZ|                                           |
-|bet_logged_at       |TIMESTAMPTZ|                                           |
-|result_captured_at  |TIMESTAMPTZ|                                           |
-|learned_at          |TIMESTAMPTZ|                                           |
-|user_note           |TEXT       |user-written note                          |
-
-Indexes: `date`, `status`, `lifecycle_state`, `(track, race_num)`, `oddspro_race_id`, `race_uid`
-
-#### `today_runners`
-
-Per-runner data. FK to `today_races`. Conflict key: `(race_uid, box_num)`.
-
-|Column           |Type         |Notes                              |
-|-----------------|-------------|-----------------------------------|
-|id               |UUID PK      |                                   |
-|race_id          |UUID FK      |→ today_races(id) ON DELETE CASCADE|
-|race_uid         |TEXT         |                                   |
-|oddspro_race_id  |TEXT         |                                   |
-|date             |DATE         |                                   |
-|track            |TEXT         |                                   |
-|race_num         |INTEGER      |                                   |
-|box_num          |INTEGER      |barrier / box position             |
-|name             |TEXT         |runner name                        |
-|number           |INTEGER      |race number (horses)               |
-|barrier          |INTEGER      |                                   |
-|trainer          |TEXT         |                                   |
-|jockey           |TEXT         |                                   |
-|driver           |TEXT         |harness driver                     |
-|owner            |TEXT         |                                   |
-|weight           |NUMERIC(5,2) |                                   |
-|run_style        |TEXT         |‘RAILER’/‘LEADER’/‘CHASER’/‘WIDE’  |
-|early_speed      |TEXT         |                                   |
-|best_time        |TEXT         |                                   |
-|career           |TEXT         |career stats string                |
-|price            |NUMERIC(10,4)|win odds                           |
-|rating           |NUMERIC(10,4)|                                   |
-|is_fav           |BOOLEAN      |                                   |
-|scratched        |BOOLEAN      |                                   |
-|scratch_reason   |TEXT         |                                   |
-|source_confidence|TEXT         |‘official’/‘provisional’           |
-|raw_hash         |TEXT         |                                   |
-|created_at       |TIMESTAMPTZ  |                                   |
-
-Indexes: `race_id`, `race_uid`, `name`, `(track, race_num)`, `scratched`, `is_fav`
-
-#### `results_log`
-
-Official confirmed results only. Never write provisional/FormFav data here. Conflict key: `(date, track, race_num, code)`.
-
-|Column      |Type        |Notes              |
-|------------|------------|-------------------|
-|id          |UUID PK     |                   |
-|date        |DATE        |                   |
-|track       |TEXT        |                   |
-|race_num    |INTEGER     |                   |
-|code        |TEXT        |default ‘GREYHOUND’|
-|race_uid    |TEXT        |                   |
-|winner      |TEXT        |                   |
-|winner_box  |INTEGER     |                   |
-|win_price   |NUMERIC(8,2)|                   |
-|place_2     |TEXT        |                   |
-|place_3     |TEXT        |                   |
-|margin      |NUMERIC(6,2)|                   |
-|winning_time|NUMERIC(7,3)|                   |
-|source      |TEXT        |default ‘oddspro’  |
-|recorded_at |TIMESTAMPTZ |                   |
-
-#### `race_status`
-
-Per-race status tracking (parallel to today_races.status). Conflict key: `(date, track, race_num, code)`.
-
-|Column                                   |Type       |
-|-----------------------------------------|-----------|
-|id, date, track, race_num, code, race_uid|standard   |
-|status                                   |TEXT       |
-|has_runners, has_scratchings, has_result |BOOLEAN    |
-|jump_time, time_status                   |TEXT       |
-|updated_at                               |TIMESTAMPTZ|
-
-### Section 2: Session and system state
-
-#### `system_state`
-
-Singleton row (id=1). Global engine config.
-
-|Column              |Type         |Default       |
-|--------------------|-------------|--------------|
-|id                  |INTEGER PK   |1             |
-|bankroll            |NUMERIC(10,2)|1000          |
-|current_pl          |NUMERIC(10,2)|0             |
-|bank_mode           |TEXT         |‘STANDARD’    |
-|active_code         |TEXT         |‘GREYHOUND’   |
-|posture             |TEXT         |‘NORMAL’      |
-|sys_state           |TEXT         |‘STABLE’      |
-|variance            |TEXT         |‘NORMAL’      |
-|session_type        |TEXT         |‘Live Betting’|
-|confidence_threshold|NUMERIC(4,2) |0.65          |
-|ev_threshold        |NUMERIC(4,2) |0.08          |
-|staking_mode        |TEXT         |‘KELLY’       |
-|tempo_weight        |NUMERIC(4,2) |1.0           |
-|traffic_penalty     |NUMERIC(4,2) |0.8           |
-|closer_boost        |NUMERIC(4,2) |1.1           |
-|fade_penalty        |NUMERIC(4,2) |0.9           |
-|simulation_depth    |INTEGER      |1000          |
-|updated_at          |TIMESTAMPTZ  |              |
-
-#### `sessions`
-
-Daily betting sessions.
-
-|Column                                                        |Type         |
-|--------------------------------------------------------------|-------------|
-|id UUID PK, date, session_type, account_type                  |standard     |
-|bankroll_start, bankroll_end                                  |NUMERIC(10,2)|
-|bank_mode, active_code, learning_mode, execution_mode, posture|TEXT         |
-|total_bets, wins, losses                                      |INTEGER      |
-|pl, roi                                                       |NUMERIC      |
-|notes                                                         |TEXT         |
-|created_at, ended_at                                          |TIMESTAMPTZ  |
-
-#### `session_history`
-
-Rolled-up session P&L history. FK to `sessions`.
-
-### Section 3: Authentication and user management
-
-#### `users`
-
-Application user accounts (not Supabase auth).
-
-|Column                          |Type        |Notes                                 |
-|--------------------------------|------------|--------------------------------------|
-|id                              |UUID PK     |                                      |
-|username                        |TEXT UNIQUE |                                      |
-|password_hash                   |TEXT        |PBKDF2-SHA256:260000                  |
-|role                            |TEXT        |CHECK IN (‘admin’,‘operator’,‘viewer’)|
-|active                          |BOOLEAN     |                                      |
-|last_login, login_count, last_ip|audit fields|                                      |
-|display_name, email, created_by |TEXT        |                                      |
-
-#### `user_accounts`
-
-Per-user bankroll. One row per user. FK `users.id` UNIQUE.
-
-|Column                                   |Type         |
-|-----------------------------------------|-------------|
-|bankroll, total_pl, session_pl, peak_bank|NUMERIC(12,2)|
-|total_bets, total_wins                   |INTEGER      |
-|settings, alerts                         |JSONB        |
-|admin_notes                              |TEXT         |
-|last_session_reset                       |TIMESTAMPTZ  |
-
-#### `user_permissions`
-
-Per-user permission overrides (granted/revoked arrays on top of role defaults).
-
-#### `user_sessions`
-
-Active JWT tracking. `token_jti` maps 1:1 to JWT `jti` claim. Used for force-logout and session revocation checking.
-
-|Column                                     |Type|
-|-------------------------------------------|----|
-|user_id, token_jti UNIQUE                  |    |
-|ip_address, user_agent                     |TEXT|
-|expires_at, revoked, revoked_at, revoked_by|    |
-
-#### `user_activity`
-
-Searchable per-user action history. `BIGSERIAL` PK for high-volume inserts.
-
-#### `audit_log`
-
-Immutable system-wide audit trail. `BIGSERIAL` PK. Severity CHECK IN (‘INFO’,‘WARN’,‘ERROR’,‘CRITICAL’).
-
-### Section 4: Betting layer
-
-#### `bet_log`
-
-All bet records. FK to `sessions` and `users`.
-
-|Column                                                 |Type         |Notes                                 |
-|-------------------------------------------------------|-------------|--------------------------------------|
-|race_uid, date, track, race_num, code                  |identity     |                                      |
-|runner, box_num, bet_type                              |TEXT/INT     |                                      |
-|odds, stake, ev                                        |NUMERIC      |                                      |
-|ev_status, confidence, edge_type, edge_status, decision|TEXT         |                                      |
-|race_shape, result                                     |TEXT         |result: ‘PENDING’/‘WIN’/‘LOSE’/‘PLACE’|
-|pl                                                     |NUMERIC(10,2)|                                      |
-|error_tag                                              |TEXT         |ETG tag                               |
-|manual_tag_override                                    |BOOLEAN      |                                      |
-|placed_by, signal                                      |TEXT         |                                      |
-|exotic_type                                            |TEXT         |                                      |
-|created_at, settled_at                                 |TIMESTAMPTZ  |                                      |
-
-#### `signals`
-
-Generated race signals. One row per `race_uid` (UNIQUE).
-
-|Column                       |Type        |Notes                                                    |
-|-----------------------------|------------|---------------------------------------------------------|
-|race_uid                     |TEXT UNIQUE |                                                         |
-|signal                       |TEXT        |CHECK IN (‘SNIPER’,‘VALUE’,‘GEM’,‘WATCH’,‘RISK’,‘NO_BET’)|
-|confidence                   |NUMERIC(5,3)|0.0–1.0                                                  |
-|ev                           |NUMERIC(6,3)|expected value                                           |
-|alert_level                  |TEXT        |‘HOT’/‘HIGH’/‘MEDIUM’/‘LOW’/‘NONE’                       |
-|hot_bet                      |BOOLEAN     |                                                         |
-|risk_flags                   |JSONB       |array of flag strings                                    |
-|top_runner, top_box, top_odds|            |                                                         |
-|generated_at                 |TIMESTAMPTZ |                                                         |
-
-#### `exotic_suggestions`
-
-Exotics (quinella, trifecta, first-4) suggestions per race.
-
-### Section 5: Intelligence / AI tables
-
-#### `feature_snapshots`
-
-Serialised feature arrays with full race lineage. Used by backtest (contamination-safe).
-
-|Column                                          |Notes                      |
-|------------------------------------------------|---------------------------|
-|race_uid                                        |                           |
-|features                                        |JSONB — full feature vector|
-|has_sectionals, has_race_shape, has_collision   |INTEGER 0/1                |
-|sectional_metrics, race_shape, collision_metrics|JSONB                      |
-
-#### `prediction_snapshots`
-
-One row per prediction run. Includes phase flags for sectionals/shape/collision/enrichment.
-
-|Column                                                       |Notes                                                       |
-|-------------------------------------------------------------|------------------------------------------------------------|
-|prediction_snapshot_id                                       |TEXT UNIQUE — used as lineage key                           |
-|race_uid, oddspro_race_id                                    |                                                            |
-|model_version                                                |‘baseline_v1’ or ‘v2_feature_engine’ or ‘v2_with_enrichment’|
-|feature_snapshot_id                                          |links to feature_snapshots                                  |
-|runner_count                                                 |                                                            |
-|has_sectionals, has_race_shape, has_collision, has_enrichment|INTEGER 0/1                                                 |
-|source_type                                                  |‘pre_race’ or ‘result’                                      |
-|race_date, track, race_num, code, top_runner                 |context columns for activity feed                           |
-
-#### `prediction_runner_outputs`
-
-Per-runner scores and predicted ranks within one prediction run.
-
-|Column                        |Notes                       |
-|------------------------------|----------------------------|
-|prediction_snapshot_id        |FK (soft)                   |
-|race_uid, runner_name, box_num|                            |
-|predicted_rank                |1 = top pick                |
-|score                         |NUMERIC(10,6) normalised 0–1|
-|model_version                 |                            |
-
-#### `learning_evaluations`
-
-Post-result evaluation records. One row per `prediction_snapshot_id` (UNIQUE).
-
-|Column                         |Notes                                        |
-|-------------------------------|---------------------------------------------|
-|race_uid, oddspro_race_id      |                                             |
-|predicted_winner, actual_winner|                                             |
-|winner_hit, top2_hit, top3_hit |BOOLEAN                                      |
-|predicted_rank_of_winner       |                                             |
-|winner_odds                    |                                             |
-|used_enrichment                |BOOLEAN                                      |
-|disagreement_score             |NUMERIC                                      |
-|formfav_rank, your_rank        |INTEGER                                      |
-|evaluation_source              |‘oddspro’ — FormFav never used for evaluation|
-
-#### `backtest_runs`
-
-High-level backtest run summaries. `run_id` UNIQUE.
-
-|Column                                          |Notes       |
-|------------------------------------------------|------------|
-|date_from, date_to                              |range       |
-|code_filter, track_filter, model_version        |            |
-|total_races, total_runners                      |            |
-|winner_hit_count, top2_hit_count, top3_hit_count|            |
-|hit_rate, top2_rate, top3_rate                  |NUMERIC(8,4)|
-|avg_winner_odds                                 |            |
-
-#### `backtest_run_items`
-
-Per-race results within a backtest run.
-
-### Section 6: Feature engine / sectionals / race shape
-
-#### `sectional_snapshots`
-
-Per-runner OddsPro sectional metrics.
-
-|Column                                          |Notes                 |
-|------------------------------------------------|----------------------|
-|race_uid, oddspro_race_id, box_num, runner_name |                      |
-|early_speed_score, late_speed_score             |NUMERIC               |
-|closing_delta, fatigue_index, acceleration_index|NUMERIC               |
-|sectional_consistency_score                     |NUMERIC               |
-|raw_early_time, raw_mid_time, raw_late_time     |NUMERIC               |
-|raw_all_sections                                |JSONB                 |
-|source                                          |‘oddspro_result’      |
-|source_type                                     |‘pre_race’ or ‘result’|
-
-#### `race_shape_snapshots`
-
-One row per race (UNIQUE on `race_uid`). Race-level shape/tempo analysis.
-
-|Column                                                           |Notes  |
-|-----------------------------------------------------------------|-------|
-|pace_scenario                                                    |TEXT   |
-|early_speed_density, leader_pressure                             |NUMERIC|
-|likely_leader_runner_ids                                         |JSONB  |
-|early_speed_conflict_score, collapse_risk, closer_advantage_score|NUMERIC|
-|is_greyhound                                                     |BOOLEAN|
-|sectionals_used, formfav_enrichment_used                         |BOOLEAN|
-
-### Section 7: Learning engine tables
-
-#### `epr_data`
-
-Edge Performance Registry — per-bet outcome tracking for AEEE.
-
-|Column                                         |Notes        |
-|-----------------------------------------------|-------------|
-|edge_type, code, track, distance, condition    |context      |
-|confidence_tier, ev_at_analysis                |pre-bet state|
-|result, pl                                     |outcome      |
-|execution_mode, meeting_state, session_id, date|             |
-
-#### `aeee_adjustments`
-
-Automatic Edge Expectation Engine adjustments. Applied multipliers are `direction='RAISE'` → threshold × (1+amount) or `direction='LOWER'` → threshold × (1-amount).
-
-|Column                          |Notes                                           |
-|--------------------------------|------------------------------------------------|
-|edge_type, direction, amount    |                                                |
-|reason, roi_trigger, bets_sample|                                                |
-|applied, promoted               |BOOLEAN — promoted + applied = active multiplier|
-
-#### `etg_tags`
-
-Error Tagging Guide — per-bet error classification.
-
-#### `pass_log`
-
-Records why races were passed. `race_uid` UNIQUE.
-
-#### `gpil_patterns`
-
-Global Pattern Intelligence Layer detected patterns.
-
-|Column                  |Notes                            |
-|------------------------|---------------------------------|
-|pattern_type, code      |                                 |
-|bets_sample, roi, status|                                 |
-|mif_modifier            |INTEGER — bet multiplier modifier|
-
-### Section 8: Simulation
-
-#### `simulation_log`
-
-Persists every `/api/simulator/run` result.
-
-|Column                                                                      |Notes        |
-|----------------------------------------------------------------------------|-------------|
-|race_uid, user_id                                                           |             |
-|engine                                                                      |‘monte_carlo’|
-|n_runs, race_code, track, distance_m, condition                             |             |
-|decision, confidence_score, chaos_rating, pace_type, top_runner, top_win_pct|             |
-|results_json                                                                |JSONB        |
-|simulation_summary                                                          |TEXT         |
-
-### Section 9: Logging and support
-
-#### `source_log`
-
-HTTP request log for all data source calls. Written by ingestion paths.
-
-#### `activity_log`
-
-General application activity log.
-
-#### `chat_history`
-
-AI assistant conversation history. `session_id` groups turns.
-
-#### `changelog`
-
-Internal system changelog.
-
-### Section 10: Performance tracking
-
-#### `performance_daily`
-
-Rolled-up daily P&L and strike rate. `date` UNIQUE.
-
------
-
-## Scoring engine (scorer.py)
-
-### E23 — Early speed + pressure score
-
-Classifies runners as `FAST` / `MID` / `SLOW` based on `best_time` vs fastest in field (±0.15 s / ±0.30 s). Assigns `run_style` from box position if not set (`RAILER` box 1–2, `WIDE` box 7–8, `LEADER` if FAST, else `CHASER`). Returns `pressure_score` 0–10.
-
-### E24 — First bend map
-
-Per-track box profiles mapping `box_num → STRONG / NEUTRAL / WEAK / AVOID`. Covers Horsham, Bendigo, Ballarat, Sandown, The Meadows, Cannington, Mandurah, Angle Park + default. Assigns `collision_risk` HIGH/MODERATE/LOW.
-
-### E25 — Race shape + tempo/collapse projection
-
-`classify_pace()` → `SLOW / MODERATE / FAST / HOT` from fast-runner count.
-`project_tempo_collapse()` → `collapse_risk LOW / MODERATE / HIGH`.
-`build_race_shape()` → beneficiary `LEADER` or `CHASER`.
-
-### EV and Kelly
-
-Scoring settings loaded from `system_state` (cached 60 s). AEEE multipliers loaded from `aeee_adjustments` (cached 60 s). Promoted+applied adjustments modify confidence and EV thresholds.
-
------
-
-## Signal system (signals.py)
-
-`generate_signal(scored, settings)` → one signal per race. Never assign two signals to the same race.
-
-### Signal thresholds (defaults)
-
-|Threshold        |Value|
-|-----------------|-----|
-|confidence_sniper|0.80 |
-|confidence_value |0.65 |
-|confidence_gem   |0.55 |
-|ev_sniper        |0.15 |
-|ev_value         |0.08 |
-|ev_gem           |0.04 |
-|risk_cap         |0.45 |
-
-### Signal decision tree
-
-```
-risk_flags ≥ 3  OR  (risk_flags ≥ 2 AND NEGATIVE_EV)   → RISK
-confidence < 0.40 AND ev < 0                              → NO_BET
-confidence ≥ sniper AND ev ≥ sniper AND no flags AND CLEAR → SNIPER
-confidence ≥ value AND ev ≥ value AND flags ≤ 1          → VALUE
-confidence ≥ gem AND ev ≥ gem AND false_favourite         → GEM
-confidence ≥ 0.50 AND ev ≥ 0                             → WATCH
-risk_flags ≥ 2                                           → RISK
-else                                                     → NO_BET
-```
-
-### Risk flags
-
-`HIGH_CHAOS`, `COLLAPSE_RISK`, `FALSE_FAVOURITE`, `CLUSTER_FIELD`, `NEGATIVE_EV`, `CHF_FAIL`
-
-### Alert levels
-
-|Signal           |Level |
-|-----------------|------|
-|SNIPER           |HOT   |
-|VALUE (ev ≥ 0.15)|HIGH  |
-|VALUE, GEM       |MEDIUM|
-|WATCH            |LOW   |
-|RISK, NO_BET     |NONE  |
-
-`hot_bet = true` when `signal == SNIPER` or `signal == VALUE AND ev >= 0.18`.
-
-`save_signal(race_uid, signal_data)` upserts to `signals` table on conflict `race_uid`.
-
-In TEST mode only: `demo_signal(race_num)` returns deterministic fake signal. Blocked in LIVE by `@no_fake_data` decorator.
-
------
-
-## AI predictor (ai/predictor.py)
-
-### Models
-
-**baseline_v1** (default):
-
-- Score = `1 / odds` (implied probability) with small box-position tiebreak
-- Deterministic, no randomness
-- Fully contamination-free
-
-**v2_feature_engine**:
-
-- Weighted multi-signal score (weights below)
-- Normalised to sum 1.0 across field
-- Falls back to baseline if feature columns missing
-
-**v2_with_enrichment** (v2 + FormFav):
-
-- Same as v2 but enrichment signals applied (capped at 0.05 each)
-
-### v2 weights
-
-|Feature                    |Weight|Notes                              |
-|---------------------------|------|-----------------------------------|
-|implied_probability        |0.30  |1/odds                             |
-|early_speed_score          |0.12  |OddsPro sectionals                 |
-|late_speed_score           |0.12  |OddsPro sectionals                 |
-|sectional_consistency_score|0.08  |OddsPro sectionals                 |
-|race_shape_fit             |0.12  |derived from field shape           |
-|enrichment_win_prob        |0.05  |FormFav — non-authoritative, capped|
-|enrichment_class_rating    |0.05  |FormFav — non-authoritative, capped|
-|collision_risk_score       |-0.10 |GREYHOUND only (subtracted)        |
-
-### Multi-code rules
-
-- `collision_risk_score` subtracted for GREYHOUND only
-- Box bias applied for GREYHOUND only
-- Leader pressure boosted for HARNESS
-- Late speed boosted for GALLOPS
-- No default fallback to GREYHOUND
-
-### Entry points
+### `data/horse_collector.py` — Horse Data via Claude API
 
 ```python
-from ai.predictor import predict_race, predict_today, predict_from_snapshot
+"""
+Fetches today's Australian thoroughbred race data via Anthropic Claude API.
+Source: racingaustralia.horse (Claude reads and extracts via API call)
+Returns list of normalised race dicts ready for DB upsert.
 
-result = predict_race("2026-04-10_sandown_3_GREYHOUND")
-# result = {ok, race_uid, prediction_snapshot_id, model_version,
-#           runner_predictions: [{runner_name, box_num, predicted_rank, score}],
-#           created_at, lineage_saved}
+IMPORTANT: anthropic must be in requirements.txt
+"""
+from anthropic import Anthropic
+from config import CLAUDE_MODEL, CLAUDE_API_KEY
 
-result = predict_today()
-# runs predict_race() for all upcoming/open races today
+class HorseCollector:
+    def __init__(self):
+        self.client = Anthropic(api_key=CLAUDE_API_KEY)
+    
+    def discover_venues(self, date: str) -> list[dict]:
+        """Return list of {name, state} venue dicts for today."""
+        # Prompt Claude to list today's gallops meetings from racingaustralia.horse
+        # Cache result to /tmp for rate limit fallback
+        
+    def fetch_venue(self, venue_name: str, date: str) -> list[dict]:
+        """Fetch all races for one venue. Returns normalised race dicts."""
+        # One Claude call per venue
+        # Response is JSON array of races with runners
+        # Fields: track, race_num, distance_m, race_class, race_time,
+        #         track_condition, prize_money, runners[]
+        #
+        # Each runner: name, barrier, weight, jockey, trainer,
+        #              career_starts, career_wins, career_places,
+        #              best_time_distance_match, run_style
+    
+    def fetch_all(self, date: str) -> list[dict]:
+        """Discover venues and fetch all. Returns normalised race list."""
+        # Batch venues in groups of 3 to reduce API calls
+        # On RateLimitError: use cached venues, skip venue detail fetch
+        # Log [HORSE_COLLECT] prefix for all operations
+```
+
+### `data/dogs_collector.py` — Greyhound Data via Playwright
+
+```python
+"""
+Collects today's greyhound race data via headless Playwright browser.
+Source: https://www.thedogs.com.au/racing/{date}?trial=false
+Returns list of normalised race dicts ready for DB upsert.
+
+Playwright must be installed: playwright install chromium
+"""
+from playwright.sync_api import sync_playwright
+
+class DogsCollector:
+    def collect_board(self, date: str) -> list[dict]:
+        """
+        Open board page, extract all meetings and race entries.
+        Returns list of {track, race_num, jump_time, state, url} dicts.
+        On failure: saves screenshot + HTML to /tmp/dp_dogs/, returns []
+        """
+    
+    def capture_race(self, race_url: str) -> str:
+        """
+        Navigate to individual race page, return rendered HTML.
+        Retries up to 3 times on timeout.
+        """
+    
+    def collect_all(self, date: str) -> list[dict]:
+        """Board collection → race capture → parse → normalise. Full pipeline."""
+        # Uses dogs_parser.py for HTML → structured data
+```
+
+### `data/dogs_parser.py` — HTML Parser
+
+```python
+"""
+Parses rendered HTML from thedogs.com.au race pages.
+Pure function: html_string → normalised race dict.
+No external API calls. Missing fields stored as None.
+"""
+from bs4 import BeautifulSoup
+
+def parse_race_page(html: str, meta: dict) -> dict:
+    """
+    Extract race data from rendered HTML.
+    meta contains: track, race_num, jump_time, state from board collection.
+    
+    Returns dict with:
+      race_uid, date, track, state, code='GREYHOUND', race_num,
+      distance, grade, condition, jump_time, runner_count,
+      _runners: list of runner dicts
+    
+    Each runner:
+      box_num, name, trainer, scratched, best_time, run_style,
+      career (starts:wins-places), win_odds, form_json
+    """
+```
+
+### `data/pipeline.py` — Orchestrator
+
+```python
+"""
+Orchestrates all data sweeps. Called by scheduler.
+Two independent pipelines:
+  - horse_sweep()     → HorseCollector → normalise → upsert to DB
+  - dogs_sweep()      → DogsCollector → dogs_parser → upsert to DB
+  - board_rebuild()   → reads DB → rebuilds in-memory board cache
+  - result_check()    → detects jumped races, updates statuses
+
+All functions return {ok: bool, date: str, stored: int, errors: int}
+All use T() for table access. All log with structured prefixes.
+"""
+
+def horse_sweep(date: str | None = None) -> dict:
+    """Horse pipeline: Claude API → normalise → DB upsert."""
+
+def dogs_sweep(date: str | None = None) -> dict:
+    """Dogs pipeline: Playwright → parse → DB upsert."""
+
+def board_rebuild() -> dict:
+    """Read today_races from DB → populate board cache."""
+
+def result_check() -> dict:
+    """Check race times, update statuses for jumped/resulted races."""
+
+def _upsert_race(race: dict) -> bool:
+    """Persist single race + runners. Uses T(). Returns True if written."""
+
+def _normalise_race_uid(code: str, track: str, num: int, date: str) -> str:
+    """Return canonical race_uid: DATE_CODE_TRACK_NUM (lowercase, underscores)."""
+```
+
+### `data/scheduler.py` — Background Scheduler
+
+```python
+"""
+Single background thread. Runs all pipeline sweeps on interval timers.
+Uses threading.Lock per cycle to prevent overlapping runs.
+
+Cycles:
+  horse_sweep      every 10 min (HORSE_SWEEP_INTERVAL)
+  dogs_sweep       every 10 min (DOGS_SWEEP_INTERVAL)
+  board_rebuild    every 90 sec (BOARD_REBUILD_INTERVAL)
+  result_check     every 3 min  (RESULT_CHECK_INTERVAL)
+  eval_backfill    every 1 hr
+
+start_scheduler() → starts daemon thread (called from gunicorn post_fork)
+get_status() → returns {running, last_*_at, last_*_result, last_error}
+"""
 ```
 
 -----
 
-## Learning store (ai/learning_store.py)
+## PHASE 4 — INTELLIGENCE ENGINE
 
-### Rules
-
-- Predictions never overwrite official race/result tables
-- Evaluation always uses official confirmed results only (OddsPro-sourced)
-- No provisional FormFav data may trigger final evaluation
-- Clean lineage: prediction → features → race → official result
-
-### Key functions
+### `intelligence/features.py` — Feature Extraction
 
 ```python
-from ai.learning_store import (
-    save_prediction_snapshot,   # saves snapshot + feature lineage + runner outputs
-    save_sectional_snapshot,    # saves per-runner sectional metrics
-    save_race_shape_snapshot,   # saves race shape dict
-    evaluate_prediction,        # post-result evaluation (OddsPro only)
-    get_stored_prediction,      # retrieve latest prediction for a race
-    backfill_evaluations,       # batch evaluation of all unreviewed predictions
-)
+"""
+Extracts machine-learning-ready features from raw race + runner data.
+Input: race dict + runners list (from DB)
+Output: list of per-runner feature dicts
+
+Features extracted per runner:
+  implied_probability   — 1 / win_odds (OddsPro authoritative)
+  early_speed_score     — derived from best_time vs field
+  late_speed_score      — derived from career form
+  sectional_consistency — career win % stability
+  race_shape_fit        — how runner style matches predicted race shape
+  box_bias_score        — track-specific box advantage (GREYHOUND only)
+  collision_risk_score  — first bend collision probability (GREYHOUND only)
+  barrier_score         — barrier draw quality (GALLOPS only)
+  weight_adj_score      — weight for age / handicap adj (GALLOPS only)
+  form_trajectory       — ACCELERATING / STABLE / PEAKING / DECLINING
+  freshness             — FRESH / NORMAL / TIRED / HIGH_RISK
+  consistency_index     — place% over career
+
+All features 0-1 normalised. Missing data → 0.0 with flag.
+"""
 ```
 
-`save_prediction_snapshot(prediction, features, sectional_metrics, race_shape, collision_metrics)` — writes to `feature_snapshots`, `prediction_snapshots`, `prediction_runner_outputs`.
+### `intelligence/scorer.py` — Multi-Signal Scorer
 
-`evaluate_prediction(race_uid)` — fetches result from `results_log`, evaluates against stored prediction, writes to `learning_evaluations`. Never called if result source is FormFav.
+```python
+"""
+Weighted multi-signal scoring. Produces final ranked runner list.
+
+V2 Weights (configurable from system_state):
+  implied_probability       × 0.30  (market — authoritative)
+  early_speed_score         × 0.12
+  late_speed_score          × 0.12
+  sectional_consistency     × 0.08
+  race_shape_fit            × 0.12
+  collision_risk_score      × -0.10 (subtracted; GREYHOUND only)
+  box_bias_score            × 0.10  (GREYHOUND only)
+  barrier_score             × 0.10  (GALLOPS only)
+
+E39 Filters (must all pass for BET decision):
+  DIF — Data Integrity Filter (min 60/100)
+  TDF — True Dominance Filter (TRUE_DOM or CO_DOM)
+  CHF — Chaos Harmony Filter (max 2 fast runners or HARD_BLOCK)
+  VEF — Value/EV Filter (EV >= configured threshold)
+  MTF — Market Trap Filter (no FALSE_FAV or STEAM)
+
+Functions:
+  score_race(race, runners) → {decision, selection, box, scores, filters, audit}
+  score_runners(features, race_code) → ranked list with scores
+  apply_filters(scored, settings) → {pass: bool, blocks: list}
+"""
+```
+
+### `intelligence/race_shape.py` — Pace Analysis
+
+```python
+"""
+Classifies race tempo and projects outcomes.
+Used by both GREYHOUND and GALLOPS scoring.
+
+pace_type: SLOW / MODERATE / FAST / HOT
+collapse_risk: LOW / MODERATE / HIGH
+beneficiary: LEADER / CHASER / WIDE
+
+Track bias database (greyhounds):
+  cannington, sandown, meadows, angle_park, etc.
+  bias_type: INSIDE / EARLY / NEUTRAL
+  favours: RAILER / LEADER / ANY
+"""
+```
+
+### `intelligence/collision.py` — Greyhound Collision Model
+
+```python
+"""
+GREYHOUND ONLY. Models first-bend collision probability.
+Inputs: box positions, run styles, track profile
+Output: per-runner collision_risk_score (0-1, subtracted in scorer)
+
+Box profiles per track (hardcoded from historical analysis):
+  box 1-2: STRONG (inside advantage)
+  box 3-5: HIGH collision risk
+  box 6-8: WIDE runner advantage
+
+Functions:
+  build_collision_metrics(runners, track) → list of {box_num, collision_risk, box_score}
+  get_track_profile(track) → {bias_type, strength, favours}
+"""
+```
+
+### `intelligence/signals.py` — Signal Generation
+
+```python
+"""
+Converts scored race output to actionable trading signal.
+
+Signal types:
+  BET     — clear edge, positive EV, all E39 filters pass
+  SESSION — moderate confidence, EV marginal, worth watching
+  PASS    — insufficient edge or data
+
+Output includes:
+  signal, decision, confidence_tier, ev, recommended_stake,
+  alert_level (CRITICAL/HIGH/MODERATE/LOW)
+  
+functions:
+  generate_signal(scored, settings) → signal dict
+  generate_signals_for_board(races_scored) → list of signal dicts
+"""
+```
+
+### `intelligence/predictor.py` — Prediction Orchestrator
+
+```python
+"""
+Orchestrates the full intelligence pipeline for a race.
+Called by scheduler (predict_today) and API endpoints.
+
+predict_race(race_uid) → runs features → scorer → signals → saves snapshot
+predict_today() → runs predict_race for all open/upcoming races
+
+Saves to:
+  prediction_snapshots — one row per race
+  scored_races — scoring detail
+  signals — final signal
+
+Never modifies today_races or today_runners (read-only inputs).
+"""
+```
+
+### `intelligence/packet_builder.py` — Claude Packet
+
+```python
+"""
+Builds compact pre-scored packet for Claude AI interpretation.
+Claude receives ONLY this. Never raw data.
+Max 1200 characters.
+
+Format:
+=== DEMONPULSE INTELLIGENCE PACKET ===
+RACE: {track} R{num} | {distance}m | {code} | Jump {time}
+SHAPE: {race_shape_summary}
+PRE-DECISION: {BET/SESSION/PASS} | CONFIDENCE: {tier}
+SELECTION: Box {N} {runner} | {style} | {trainer}
+FILTERS: DIF:{score} TDF:{score} CHF:{score} VEF:{score} MTF:{score}
+TOP 4: {box} {name} {score} | {box} {name} {score} | ...
+SESSION: Bankroll=${amount} | Mode={mode}
+=== END PACKET ===
+"""
+```
+
+### `intelligence/system_prompt.py` — Claude Interpreter
+
+```python
+"""
+System prompt for Claude acting as race intelligence interpreter.
+Claude receives pre-scored packets. Does NOT fetch data. Does NOT score.
+Claude's job: final judgment, explanation, stake recommendation.
+
+Key laws:
+  1. Never fabricate race data
+  2. PASS is valid — never force a bet
+  3. Positive EV required for BET
+  4. No cross-code contamination
+  5. Source trace on every analysis
+  6. Prior race result never influences next selection
+
+Output format:
+  BET: CODE | RACE | SELECTION | BET_TYPE | ODDS | STAKE | CONFIDENCE | EV | EDGE | REASON
+  PASS: DECISION: PASS | REASON: {one line}
+"""
+```
 
 -----
 
-## Backtest engine (ai/backtest_engine.py)
+## PHASE 5 — BETTING MANAGEMENT
 
-### Contamination rules (enforced, not just guidelines)
-
-- No future leakage: feature inputs use only pre-result race/runner/odds data
-- Official results (`results_log`) used ONLY for evaluation
-- FormFav provisional data never used as evaluation source
-- Historical `feature_snapshots` take priority over rebuilding from mutable tables
-
-### Usage
+### `betting/staking.py` — Kelly + EV
 
 ```python
-from ai.backtest_engine import backtest_date_range
+"""
+Staking calculations. All pure functions, no DB calls.
 
-result = backtest_date_range(
-    date_from="2026-01-01",
-    date_to="2026-03-31",
-    code_filter="GREYHOUND",   # optional
-    track_filter="sandown",    # optional substring match
-    model_version="baseline_v1",
-    compare_models=False,      # True = also runs v2 side-by-side
-)
+Functions:
+  calculate_ev(win_prob, decimal_odds) → float
+  kelly_stake(bankroll, win_prob, odds, confidence_tier, bank_mode) → float
+    - ELITE 40% Kelly, max 7% bankroll
+    - HIGH 30% Kelly, max 7%
+    - MODERATE 20% Kelly, max 5%
+    - LOW 10% Kelly, max 3%
+  bank_mode_multiplier(mode) → float
+    - SAFE: 0.60  STANDARD: 1.00  AGGRESSIVE: 1.15
+  ev_threshold(confidence_tier) → float
+    - ELITE: +0.08  HIGH: +0.10  MODERATE: +0.12
+"""
 ```
 
-No-leakage guard: future dates rejected at the API layer (`/api/admin/backtest`, `/api/predictions/backtest`).
-
-### Output
+### `betting/exotics.py` — Exotic Bets
 
 ```python
-{
-  "ok": True,
-  "run_id": "bt_2026-01-01_2026-03-31_abc123",
-  "total_races": 412,
-  "total_runners": 3240,
-  "winner_hit_count": 87,
-  "hit_rate": 0.211,
-  "top2_rate": 0.398,
-  "top3_rate": 0.571,
-  "avg_winner_odds": 4.2,
-  "model_version": "baseline_v1",
-  "model_comparison": {...}  # only when compare_models=True
+"""
+Exotic bet calculators. All pure functions.
+UNIT_COST = 1.00 (all calculations per $1 unit)
+
+Functions:
+  calc_exacta(first, second, odds_first, odds_second, unit) → dict
+  calc_exacta_box(runners, odds, unit) → dict
+  calc_trifecta(runners, odds, unit) → dict
+  calc_trifecta_box(runners, odds, unit) → dict
+  calc_first4_box(runners, odds, unit) → dict
+  calc_multi(legs, unit) → dict
+  auto_suggest(signal, runners, unit) → list[dict]
+    — auto-generates exotic suggestions based on signal output
+"""
+```
+
+### `betting/bet_manager.py` — Bet CRUD
+
+```python
+"""
+Bet placement, settlement, history, P/L tracking.
+All functions require user_id for scoping.
+
+Functions:
+  place_bet(user_id, race_uid, bet_params) → bet_log row
+  settle_bet(bet_id, result, return_amount) → updated bet_log row
+  get_open_bets(user_id) → list
+  get_bet_history(user_id, date_from, date_to) → list
+  get_session_pl(user_id, date) → {total, bets, wins, pending, roi}
+  reset_bank(user_id, new_amount) → system_state update
+
+P/L is always computed from bet_log. Never stored as running total.
+"""
+```
+
+-----
+
+## PHASE 6 — LEARNING ENGINE
+
+### `learning/evaluator.py` — Post-Race Evaluation
+
+```python
+"""
+Runs after results come in. Compares predictions to actuals.
+Writes to learning_evaluations.
+
+Functions:
+  evaluate_prediction(race_uid, result) → evaluation dict
+  backfill_evaluations() → evaluates all un-evaluated snapshots with results
+  get_accuracy_summary(days=30) → {accuracy, total, by_confidence, by_code}
+"""
+```
+
+### `learning/tagger.py` — Loss Analysis
+
+```python
+"""
+Automatically tags losing bets with reason categories (ETG = Edge Type Grading).
+
+Tags:
+  DATA_GAP      — missing key data (best_time, form, etc.)
+  FORM_MISS     — form data suggested wrong
+  MARKET_MOVE   — market moved significantly post-signal
+  CHAOS         — race shape collapsed, chaos scenario
+  BOX_DRAW      — unfavourable box draw overcame edge
+  TRAINER_MOVE  — trainer/jockey change not in data
+
+Functions:
+  auto_tag_loss(bet, race_scored, result) → list of tag strings
+  save_tag(bet_id, race_uid, tag, notes) → etg_tags row
+"""
+```
+
+### `learning/adjustments.py` — AEEE Weight Adjustments
+
+```python
+"""
+AEEE = Adaptive Edge Evaluation Engine.
+Analyses recent performance by edge type and suggests weight adjustments.
+
+Functions:
+  review_adjustments() → list of suggested {edge_type, direction, amount}
+  apply_adjustment(adjustment_id) → updates system_state weights
+  get_active_multipliers() → {edge_type: float} currently active
+  performance_by_edge_type(days=30) → breakdown of results by tag
+"""
+```
+
+### `learning/backtester.py` — Historical Replay
+
+```python
+"""
+Replays historical race data through the current scoring engine.
+Uses results_log as ground truth. Never uses future data.
+
+Functions:
+  run_backtest(date_from, date_to, code=None) → backtest result dict
+  _replay_race(race_uid) → single race simulation
+  
+Returns: {
+  date_from, date_to, total_races, signals_generated,
+  bets_triggered, wins, roi, pl, by_track, by_confidence,
+  by_race_shape, kelly_simulation
+}
+"""
+```
+
+-----
+
+## PHASE 7 — API LAYER
+
+### Blueprint: `api/races.py`
+
+```
+GET  /api/races              → list races (params: date, code, status)
+GET  /api/races/<race_uid>   → single race + runners
+GET  /api/races/board        → today's board (from cache)
+POST /api/races/refresh/<race_uid> → force refresh single race
+```
+
+### Blueprint: `api/predictions.py`
+
+```
+POST /api/predictions/race/<race_uid>  → trigger prediction
+GET  /api/predictions/race/<race_uid>  → stored prediction
+POST /api/predictions/today            → predict all open races
+GET  /api/predictions/today            → all today's predictions
+GET  /api/predictions/performance      → accuracy summary
+```
+
+### Blueprint: `api/bets.py`
+
+```
+POST /api/bets/place          → place bet
+POST /api/bets/settle/<id>    → settle bet
+GET  /api/bets/open           → open bets
+GET  /api/bets/history        → bet history (params: date_from, date_to)
+GET  /api/bets/summary        → today's P/L summary
+POST /api/bets/reset-bank     → reset bankroll
+GET  /api/bets/exotics/suggest/<race_uid> → exotic suggestions
+POST /api/bets/exotics/calculate → calculate exotic bet cost
+```
+
+### Blueprint: `api/analytics.py`
+
+```
+GET /api/analytics/pl          → P/L by period (day/week/month)
+GET /api/analytics/performance → model accuracy, ROI, by-track breakdown
+GET /api/analytics/by-track    → stats grouped by track
+GET /api/analytics/by-code     → GREYHOUND vs GALLOPS comparison
+GET /api/analytics/streaks     → win/loss streak detection
+```
+
+### Blueprint: `api/admin.py` (require_role(“admin”))
+
+```
+POST /api/admin/sweep          → trigger manual data sweep
+POST /api/admin/sweep/horses   → horse pipeline only
+POST /api/admin/sweep/dogs     → dogs pipeline only
+POST /api/admin/rebuild-board  → force board rebuild
+POST /api/admin/predict-today  → force prediction run
+POST /api/admin/backtest       → run backtest (body: date_from, date_to)
+GET  /api/admin/scheduler      → scheduler status
+POST /api/admin/settings       → update system_state settings
+GET  /api/admin/users          → list users
+POST /api/admin/users          → create user
+```
+
+### Blueprint: `api/health.py`
+
+```
+GET /api/health               → {ok, db_connected, scheduler_running, last_sweep_at}
+GET /api/health/detailed      → full system status
+GET /debug                    → human-readable debug page
+```
+
+-----
+
+## PHASE 8 — FRONTEND
+
+### Design System
+
+**Aesthetic: Professional dark terminal. Think Bloomberg + Betfair Pro + Racenet.**
+
+```css
+/* tokens.css — Design system */
+:root {
+  /* Backgrounds */
+  --bg-base:     #0a0c10;    /* deepest background */
+  --bg-surface:  #111318;    /* cards, panels */
+  --bg-elevated: #1a1d26;    /* hover states, modals */
+  --bg-input:    #16192100;  /* input fields */
+
+  /* Borders */
+  --border:      #232838;
+  --border-dim:  #1a1e2a;
+  --border-focus: #3b82f6;
+
+  /* Text */
+  --text:        #e2e8f0;    /* primary */
+  --text-dim:    #64748b;    /* secondary / labels */
+  --text-muted:  #374151;    /* disabled */
+
+  /* Accent colours — racing signals */
+  --green:       #22c55e;    /* BET / WIN */
+  --green-dim:   #166534;
+  --red:         #ef4444;    /* LOSS / HARD_BLOCK */
+  --red-dim:     #7f1d1d;
+  --amber:       #f59e0b;    /* SESSION / WARNING */
+  --amber-dim:   #78350f;
+  --blue:        #3b82f6;    /* INFO / LINK */
+  --blue-dim:    #1e3a5f;
+  --purple:      #a855f7;    /* AI / PREDICTION */
+  --purple-dim:  #4c1d95;
+
+  /* Typography */
+  --font-mono:   'JetBrains Mono', 'Fira Code', monospace;  /* data/numbers */
+  --font-ui:     'Inter', system-ui, sans-serif;             /* labels/body */
+  --font-display: 'DM Sans', 'Inter', sans-serif;            /* headings */
+  
+  /* Spacing */
+  --space-xs: 4px;  --space-sm: 8px;  --space-md: 16px;
+  --space-lg: 24px; --space-xl: 32px;
+
+  /* Radius */
+  --radius-sm: 4px;  --radius-md: 8px;  --radius-lg: 12px;
 }
 ```
 
+### Page: `templates/board.html` — Race Board (Home)
+
+Layout: Full-width race board. Professional race meeting format.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  DEMONPULSE             AEST 14:32:08    ● LIVE    ENV: LIVE    │
+│  [Board] [Live] [Bets] [Analytics] [Learning] [Settings]        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  TODAY'S RACES  ·  Sunday 12 Apr          ○ DOGS  ○ HORSES     │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ GREYHOUND MEETINGS                                        │   │
+│  │                                                           │   │
+│  │  SANDOWN PARK                      VIC   ● Live          │   │
+│  │  R1 14:30 · R2 14:50 · R3 15:10 · R4 15:30 · R5 15:50  │   │
+│  │  ↑ chips showing race status: upcoming/open/resulted     │   │
+│  │                                                           │   │
+│  │  ANGLE PARK                        SA    ↑ 25m           │   │
+│  │  R1 14:35 · R2 14:55 · R3 15:15 · R4 15:35             │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ GALLOPS MEETINGS                                          │   │
+│  │  RANDWICK                          NSW   ↑ 1h 20m        │   │
+│  │  R1 15:00 · R2 15:40 · R3 16:20 ·  ...                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  SIGNALS TODAY:  3 BET  ·  7 SESSION  ·  12 PASS              │
+│  SESSION P/L: +$47.20   ROI: +4.7%                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Race chips: colour-coded by status.
+
+- Grey: upcoming
+- Blue pulse: open (<5 min to jump)
+- Green: resulted
+- Red: abandoned
+- Amber: pending result
+
+Click any race → navigate to `/live?race=<race_uid>`
+
+### Page: `templates/live.html` — Live Race Intelligence View
+
+Layout: Two-column. Left 62%: form guide. Right 38%: intelligence panel.
+
+```
+┌─────────────── LIVE INTELLIGENCE VIEW ──────────────────────────┐
+│  SANDOWN PARK  ·  R5  ·  520m  ·  Grade 5  ·  Jump 15:50      │
+│  [← Prev Race]                              [Next Race →]       │
+├───────────────────────────────────┬─────────────────────────────┤
+│  FORM GUIDE                       │  INTELLIGENCE               │
+│                                   │                             │
+│  Box Runner         Trainer  Odds │  ┌─────────────────────┐   │
+│  ──────────────────────────────── │  │ SIGNAL              │   │
+│  1   TURBO DRIVE    J.Smith  $3.20│  │ ████ BET            │   │
+│      5-3-2 | RAILER | 29.85s      │  │ HIGH CONFIDENCE     │   │
+│      [Career stats mini-bar]      │  │ EV: +0.14           │   │
+│                                   │  └─────────────────────┘   │
+│  2   FAST LANE      M.Jones  $4.50│                             │
+│      10-4-3 | LEADER| 30.10s      │  DECISION: BET WIN         │
+│                                   │  Selection: Box 1           │
+│  3   DARK HORSE     T.Brown  $6.00│  Stake Rec: $42 (4.2%)     │
+│      8-2-3 | CHASER | 30.40s      │                             │
+│  ...                              │  RACE SHAPE                 │
+│                                   │  FAST pace  ·  CHASER adv  │
+│  [AI COMMENTARY TAB]              │  Collapse risk: MODERATE    │
+│  [RECENT STARTS TAB]              │                             │
+│  [EXOTICS TAB]                    │  E39 FILTERS               │
+│                                   │  DIF ██ 82  TDF ██ 76      │
+│                                   │  CHF ██ 70  VEF ██ 68      │
+│                                   │  MTF ██ 80                  │
+│                                   │                             │
+│                                   │  [PLACE BET]               │
+│                                   │  [AI ANALYSIS]             │
+└───────────────────────────────────┴─────────────────────────────┘
+```
+
+Form guide requirements:
+
+- Per-runner row with box draw highlight (coloured by box bias)
+- Career stats bar (starts, win%, place%)
+- Run style badge (RAILER/LEADER/CHASER/WIDE)
+- Best time displayed
+- Odds chip (updates live)
+- Scratched runners greyed out with strikethrough
+- Expandable “Recent Starts” section per runner
+
+Intelligence panel requirements:
+
+- Signal badge: large, colour-coded (green=BET, amber=SESSION, grey=PASS)
+- Confidence tier display
+- EV displayed
+- Race shape summary
+- E39 filter scores as mini progress bars
+- Place Bet button → opens bet modal
+- AI Analysis button → calls Claude with packet
+
+### Page: `templates/bets.html` — Bet Management
+
+Three tabs: Open Bets | Bet Log | Exotics Calculator
+
+```
+SESSION: Sun 12 Apr   BANKROLL: $1,024.50   P/L: +$24.50   ROI: +2.4%
+[SAFE]  [STANDARD]  [AGGRESSIVE]  ←→ bank mode selector
+
+OPEN BETS tab:
+┌──────┬────────────┬─────┬─────────┬───────┬────────┬─────────┐
+│ Race │ Selection  │ Box │ Bet     │ Stake │ Odds   │ E.Return│
+├──────┼────────────┼─────┼─────────┼───────┼────────┼─────────┤
+│ SAN5 │ TURBO DRIV │  1  │ WIN     │ $42   │ $3.20  │ $134.40 │
+│ ANG3 │ FAST LANE  │  2  │ WIN     │ $28   │ $4.50  │ $126.00 │
+└──────┴────────────┴─────┴─────────┴───────┴────────┴─────────┘
+
+BET LOG tab: scrollable history with filters (date, code, result)
+Shows: Race | Selection | Bet | Stake | Odds | Return | P/L | Tag
+
+EXOTICS CALCULATOR tab:
+Exacta / Trifecta / First4 tabs
+Runner selector → calculates cost and return
+Auto-suggest based on current signal
+```
+
+### Page: `templates/analytics.html` — Performance Analytics
+
+```
+P/L CHART:  [Day] [Week] [Month] [Year]  ←→ period selector
+Line chart showing cumulative P/L over time
+
+STATS CARDS ROW:
+┌──────────┬──────────┬──────────┬──────────┬──────────┐
+│ Total P/L│  ROI     │  Win Rate│ Avg Stake│ Bets     │
+│ +$247.50 │  +4.8%   │  34.2%   │  $35.20  │ 142      │
+└──────────┴──────────┴──────────┴──────────┴──────────┘
+
+PERFORMANCE BY CONFIDENCE:
+  ELITE:    W:8/10   ROI:+18.2%  ████████░░
+  HIGH:     W:21/48  ROI:+6.4%   ████░░░░░░
+  MODERATE: W:19/84  ROI:-1.2%   ███░░░░░░░
+
+PERFORMANCE BY TRACK: table sortable by ROI
+EDGE TYPE BREAKDOWN: bar chart by ETG tag category
+```
+
+### Page: `templates/learning.html` — AI Learning Centre
+
+Three tabs: Model Performance | Adjustments | Backtesting
+
+```
+MODEL PERFORMANCE tab:
+  Accuracy chart over rolling 30 days
+  Win/loss heat map by confidence tier
+  Top performing tracks
+  Bottom performing tracks
+
+ADJUSTMENTS tab:
+  Active AEEE adjustments displayed as badges
+  Suggested adjustments with rationale
+  Apply / reject controls (admin only)
+  Weight history log
+
+BACKTESTING tab:
+  Date range selector
+  Code filter (GREYHOUND / GALLOPS / Both)
+  Run Backtest button
+  Results: simulated P/L, ROI, signal accuracy
+  Comparison: current weights vs proposed weights
+```
+
+### `static/js/core.js` — Shared JavaScript
+
+```javascript
+// Authentication: reads JWT from localStorage, attaches to all API calls
+// apiFetch(url, options) — wrapper around fetch() with auth header + error handling
+// countdown(jumpTime) → returns {mins, secs, label} for display
+// formatOdds(decimal) → "$3.20"
+// formatPL(pl) → "+$47.20" or "-$12.00" with colour class
+// pollBoard(interval) — polls /api/races/board on interval, updates DOM
+// showToast(message, type) — BET/SESSION/PASS/ERROR toast notifications
+```
+
 -----
 
-## Simulation engine (simulation/)
+## PHASE 9 — GUNICORN + DEPLOYMENT
 
-Monte Carlo simulation for race outcome modelling.
-
-### Entry point
+### `gunicorn.conf.py`
 
 ```python
-from simulation.core_simulation_engine import SimulationEngine
-from simulation.models import RaceMeta, RunnerProfile, normalize_race_code
+def on_starting(server):
+    import os
+    os.environ["GUNICORN_MANAGED"] = "1"
 
-engine = SimulationEngine()
-guide = engine.run(race_meta, runner_profiles)
-# guide.decision, guide.confidence_rating, guide.chaos_rating,
-# guide.top_runner, guide.simulation_summary, guide.filter_results_panel
+def post_fork(server, worker):
+    try:
+        from data.scheduler import start_scheduler
+        start_scheduler()
+        server.log.info("DemonPulse: scheduler started in worker")
+    except Exception as e:
+        server.log.warning(f"DemonPulse: scheduler start failed: {e}")
 ```
 
-### Flow
-
-1. `RaceShapeEngine.analyse(runners)` — pre-race shape
-1. Select module: `GreyhoundModule` / `ThoroughbredModule` / `HarnessModule`
-1. Run N simulations (100–500, capped by `race_meta.n_sims`)
-1. `SimulationAggregator` → `AggregatedResult`
-1. `FilterEngine` → apply hard block, value, risk, decision filters
-1. `ExpertGuideGenerator` → `ExpertGuide`
-
-### RaceMeta fields
+### `app.py` — Flask App Factory
 
 ```python
-@dataclass
-class RaceMeta:
-    race_uid: str
-    track: str
-    race_code: RaceCode        # RaceCode.GREYHOUND / .THOROUGHBRED / .HARNESS
-    distance_m: int
-    grade: str
-    condition: str
-    field_size: int
-    n_sims: int = 200
+def create_app():
+    app = Flask(__name__)
+    
+    # Register all blueprints
+    from api.races import races_bp
+    from api.predictions import predictions_bp
+    from api.bets import bets_bp
+    from api.analytics import analytics_bp
+    from api.admin import admin_bp
+    from api.auth import auth_bp
+    from api.health import health_bp
+    
+    for bp in [races_bp, predictions_bp, bets_bp, analytics_bp, 
+               admin_bp, auth_bp, health_bp]:
+        app.register_blueprint(bp)
+    
+    # Page routes (return templates)
+    register_page_routes(app)
+    
+    # If not running under gunicorn, start scheduler here
+    if not os.environ.get("GUNICORN_MANAGED"):
+        from data.scheduler import start_scheduler
+        start_scheduler()
+    
+    return app
+
+app = create_app()
 ```
 
-### Filter categories
-
-- `hard_block_filters`: field size, data quality, integrity failures
-- `value_filters`: EV, odds range, market efficiency
-- `risk_filters`: chaos, collapse risk, false favourite
-- `core_decision_filters`: BET / PASS / SESSION decision logic
-- `output_filters`: formatting, confidence tiers
-
------
-
-## Safety layer (safety.py)
-
-### Betting window
-
-`check_betting_window(jump_time_str, anchor_time_str)` → `"VALID"` / `"TOO_EARLY"` / `"TOO_LATE"` / `"UNKNOWN"`
-
-- `TOO_LATE`: < 2 min to jump
-- `TOO_EARLY`: > 90 min to jump
-
-### Recommendation expiry
-
-Recommendations cached in `_recommendations` dict per `race_uid`. Expires after 10 min or when window transitions to `TOO_LATE`.
-
-### Circuit breaker
-
-In-memory. Tracks consecutive failures per edge type. Trips at threshold, logs warning, blocks further bets until reset.
-
------
-
-## API routes
-
-All API routes return `{"ok": true/false, ...}`. JSON only.
-
-### Health (`/api/health`)
-
-|Method|Path                  |Auth|Description                      |
-|------|----------------------|----|---------------------------------|
-|GET   |/api/health           |None|Basic liveness probe             |
-|GET   |/api/health/          |None|Same                             |
-|GET   |/api/health/connectors|None|Claude API + dogs pipeline health|
-|GET   |/api/health/scheduler |None|Scheduler thread status          |
-|GET   |/api/health/live      |None|Full live engine health metrics  |
-
-### Races (`/api/races`)
-
-|Method|Path                          |Auth|Description                       |
-|------|------------------------------|----|----------------------------------|
-|GET   |/api/races                    |None|List races for today (or `?date=`)|
-|GET   |/api/races?status=active      |None|Active races only                 |
-|GET   |/api/races/upcoming           |None|Upcoming races (board alias)      |
-|GET   |/api/races/{race_uid}         |None|Single race + runners             |
-|GET   |/api/races/{race_uid}/analysis|None|Race + runners for analysis       |
-|GET   |/api/races/{race_uid}/result  |None|Settled result                    |
-
-### Board (`/api/board`)
-
-|Method|Path              |Auth|Description             |
-|------|------------------|----|------------------------|
-|GET   |/api/board        |None|Live racing board       |
-|GET   |/api/board/blocked|None|Blocked races for today |
-|GET   |/api/board/ntj    |None|Next-to-jump sorted list|
-
-### Bets (`/api/bets`)
-
-|Method|Path                |Auth|Description                                            |
-|------|--------------------|----|-------------------------------------------------------|
-|GET   |/api/bets/summary   |None|Win rate, P&L, ROI                                     |
-|GET   |/api/bets/history   |None|Last 200 bets                                          |
-|GET   |/api/bets/open      |None|Pending bets                                           |
-|POST  |/api/bets/place     |None|Place a bet `{race_uid, runner, odds, stake, bet_type}`|
-|POST  |/api/bets/settle    |None|Settle `{bet_id, result}` (WIN/LOSE/PLACE)             |
-|POST  |/api/bets/reset-bank|None|Reset bankroll `{amount}`                              |
-
-### Predictions (`/api/predictions`)
-
-|Method|Path                              |Auth|Description                                                   |
-|------|----------------------------------|----|--------------------------------------------------------------|
-|POST  |/api/predictions/race/{race_uid}  |None|Trigger prediction for one race                               |
-|POST  |/api/predictions/today            |None|Trigger predictions for today’s board                         |
-|GET   |/api/predictions/today            |None|Stored predictions + outcomes for today                       |
-|GET   |/api/predictions/race/{race_uid}  |None|Stored prediction for a race                                  |
-|GET   |/api/predictions/performance      |None|Model performance summary                                     |
-|POST  |/api/predictions/backtest         |None|Run backtest `{date_from, date_to, code_filter, track_filter}`|
-|GET   |/api/predictions/backtest/{run_id}|None|Inspect stored backtest run                                   |
-
-### Dogs dashboard (`/api/dogs`)
-
-|Method|Path                             |Auth|Description                              |
-|------|---------------------------------|----|-----------------------------------------|
-|GET   |/api/dogs/board                  |None|Today’s greyhound board from stored races|
-|GET   |/api/dogs/upcoming               |None|Next upcoming greyhound race             |
-|GET   |/api/dogs/race/{race_uid}        |None|Race detail + runners                    |
-|GET   |/api/dogs/health                 |None|Pipeline health / last collection state  |
-|POST  |/api/dogs/collect                |None|Trigger manual board collection          |
-|POST  |/api/dogs/race/{race_uid}/refresh|None|Refresh a single race                    |
-
-### Admin (`/api/admin`) — `@require_role("admin")`
-
-|Method  |Path                            |Description                                |
-|--------|--------------------------------|-------------------------------------------|
-|POST    |/api/admin/sweep                |Trigger full pipeline sweep                |
-|POST    |/api/admin/refresh              |Alias for sweep                            |
-|POST    |/api/admin/results              |Trigger race state check (result detection)|
-|POST    |/api/admin/block                |Block race `{race_uid, block_code}`        |
-|POST    |/api/admin/migrate              |Run DB schema migrations                   |
-|GET     |/api/admin/scheduler            |Scheduler status                           |
-|POST    |/api/admin/predict/race         |Trigger prediction `{race_uid}`            |
-|POST    |/api/admin/predict/today        |Trigger predictions for all today’s races  |
-|POST    |/api/admin/backtest             |Run backtest `{date_from, date_to, ...}`   |
-|GET/POST|/api/admin/users                |List users                                 |
-|POST    |/api/admin/users/create         |Create user                                |
-|POST    |/api/admin/users/{id}/deactivate|Deactivate user                            |
-|POST    |/api/admin/users/{id}/password  |Change password                            |
-|GET     |/api/admin/system-state         |Read system_state                          |
-|POST    |/api/admin/system-state         |Update system_state                        |
-|GET     |/api/admin/audit                |Audit log                                  |
-|GET     |/api/admin/signals              |Recent signals                             |
-|GET     |/api/admin/learning             |Learning evaluation stats                  |
-|GET     |/api/admin/health               |Detailed health metrics                    |
-
-### Auth (`/api/auth`)
-
-|Method|Path            |Description                                                      |
-|------|----------------|-----------------------------------------------------------------|
-|POST  |/api/auth/login |`{username, password}` → `{token, user}` + sets `dp_token` cookie|
-|GET   |/api/auth/me    |Returns current user + permissions                               |
-|POST  |/api/auth/logout|Clears `dp_token` cookie                                         |
-
-### System (`/api/system`)
-
-|Method  |Path                          |Description                              |
-|--------|------------------------------|-----------------------------------------|
-|GET     |/api/system/status            |Env mode, shadow_active, scheduler status|
-|POST/GET|/api/scheduler/watchdog       |Restart dead scheduler thread            |
-|POST    |/api/sweep                    |Trigger full pipeline sweep              |
-|GET     |/api/env                      |Env info                                 |
-|GET     |/api/health                   |App health                               |
-|POST    |/api/ai/commentary            |Claude Haiku commentary `{prompt}`       |
-|GET     |/api/ai/learning/status       |Learning engine status                   |
-|GET     |/api/live/race/{race_uid}     |Live race data + signal + analysis       |
-|POST    |/api/live/watch-sim/{race_uid}|Trigger simulation for live race         |
-|POST    |/api/live/mark-watched        |Record race watched `{race_uid}`         |
-|GET     |/api/home/board               |Home board (delegates to board_service)  |
-|GET     |/api/debug/board-status       |Board build health diagnostics           |
-|GET     |/api/debug/claude-pipeline    |Horse pipeline diagnostics               |
-|GET     |/api/debug/formfav            |Pipeline stats (FormFav removed)         |
-|GET     |/api/smoke-test               |Run smoke tests (DP_ENV=TEST only)       |
-
------
-
-## UI pages
-
-All pages are rendered by Flask (`render_template`). SPA-style, JS fetches API endpoints.
-Dark navy aesthetic matching Sportsbet/Ladbrokes UI. Not terminal red.
-
-|Route       |Template        |Description                              |
-|------------|----------------|-----------------------------------------|
-|/           |redirect → /home|                                         |
-|/home       |home.html       |Home board — next races, signals overview|
-|/live       |live.html       |Live race view — NTJ, analysis, signal   |
-|/simulator  |simulator.html  |Monte Carlo simulator UI                 |
-|/betting    |betting.html    |Bet placement + open bets                |
-|/reports    |reports.html    |P&L, session history, ROI                |
-|/learning   |learning.html   |AI learning status, evaluation stats     |
-|/backtesting|backtesting.html|Backtest runner + results                |
-|/race       |race_view.html  |Single race deep-dive                    |
-|/settings   |settings.html   |System state, thresholds, user prefs     |
-
------
-
-## Health monitoring (services/health_service.py)
-
-Thread-safe in-memory `_state` dict. Updated by scheduler cycles and services. Exposed via `/api/health/live`.
-
-Tracked metrics:
-
-- `last_bootstrap_at/ok/error/count`
-- `last_broad_refresh_at/ok/races/error`
-- `last_near_jump_refresh_at/ok/races/error`
-- `last_result_check_at/ok/error`
-- `result_confirmation_count`
-- `last_formfav_overlay_at/ok`
-- `last_health_snapshot_at`
-- `blocked_race_count`, `stale_race_count`, `board_count`, `stored_race_count_today`
-- `last_prediction_run_at/count`
-- `last_backtest_run_at/id`
-- `last_evaluation_run_at/count`
-- `active_model_version`
-- `last_feature_build_at/count`
-- `last_sectional_extraction_at/count`
-- `last_race_shape_build_at/count`
-- `enrichment_usage_count/total`
-- `disagreement_flagged_count/total`
-- `oddspro_public_mode`, `oddspro_api_key_present`
-
------
-
-## Invariants and coding rules
-
-### Never do these
-
-- Never use `os.getenv("DP_ENV")` directly — always use `from env import env`
-- Never call fake/demo data functions in LIVE mode (guarded by `@no_fake_data`)
-- Never write provisional/FormFav data to `results_log`
-- Never use future dates in backtest (no-leakage rule enforced at API layer)
-- Never downgrade a race from a `FINAL_STATE` (`final`, `paying`, `abandoned`)
-- Never OCR inside DemonPulse — extraction is delegated to external service
-- Never use Claude Vision inside DemonPulse for race screenshots
-- Never file-poll for extraction results — all extraction is sync JSON response
-- Never assign two signals to the same `race_uid`
-- Never write OddsPro/provisional data with `source_confidence='official'` unless confirmed
-- Never call `board_service` or `pipeline` functions outside the scheduler/API boundary without exception handling — they degrade safely and must never crash the process
-
-### Always do these
-
-- Use `T("table_name")` from `db.py` for all table references (respects env prefix)
-- Use `safe_query(lambda: ..., fallback)` for all Supabase calls
-- Log with module-specific prefix: `[DOGS_BOARD]`, `[PIPELINE]`, `[PREDICTOR]`, etc.
-- Return `{"ok": False, "error": "..."}` from all service functions on failure
-- Use `database.py` helpers for race/runner/result CRUD (not raw db.py)
-- Add `updated_at` timestamp on all race/runner upserts
-- Check `race.get("status")` before state transitions — terminal states are immutable
-
-### Adding a feature
-
-1. Data fetch → `collectors/` or `connectors/`
-1. Parsing → `parsers/`
-1. Storage → `database.py` (add helper if new table)
-1. Service logic → `services/`
-1. API route → `api/` blueprint
-1. UI → `templates/` + `static/`
-1. Schema change → `sql/001_canonical_schema.sql` (add `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`)
-1. Update `migrations.py` if backfill needed
-
-### db.py T() table resolution
-
-Tables in `_TESTABLE_TABLES` → `test_{table}` in TEST mode.
-Tables in `_ALWAYS_LIVE_TABLES` (`users`, `audit_log`) → always production name.
-All other tables → production name regardless of mode.
-
-### Race UID format
-
-`{YYYY-MM-DD}_{track_slug}_{race_num}_{CODE}`
-Example: `2026-04-10_sandown-park_3_GREYHOUND`
-
-Track slug is lowercase, spaces replaced with `-`.
-
------
-
-## Deployment (Render)
-
-`render.yaml` and `Procfile` define the service.
+### `requirements.txt`
 
 ```
-# Procfile
-web: gunicorn --config gunicorn.conf.py app:app
+flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+httpx==0.25.2
+anthropic>=0.40.0        # CRITICAL — do not remove
+supabase==2.3.4
+gotrue==2.8.1
+python-dotenv==1.0.1
+beautifulsoup4==4.12.3
+lxml==5.2.2
+pandas==2.2.2
+numpy==1.26.4
+playwright==1.50.0
+playwright-stealth==2.0.3
+pillow==10.4.0
 ```
 
-`gunicorn.conf.py`:
+### `render.yaml`
 
-- Sets `GUNICORN_MANAGED=1` in `on_starting` (prevents scheduler double-start)
-- Starts scheduler in `post_fork` per worker
-- Playwright browser installs handled in build step
-
-`runtime` file pins Python version.
-
-`.github/copilot-setup-steps.yml` configures allowed network hostnames for CI:
-
-- `thedogs.com.au`, `api.anthropic.com`, Supabase project host
+```yaml
+services:
+  - type: web
+    name: demonpulse
+    env: python
+    pythonVersion: "3.11.9"
+    buildCommand: pip install -r requirements.txt && python -m playwright install chromium
+    startCommand: gunicorn app:app --workers 1 --timeout 120 --bind 0.0.0.0:$PORT --preload --config gunicorn.conf.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FLASK_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DP_ENV
+        value: LIVE
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
+```
 
 -----
 
-## Greyhound extraction service handoff contract
+## PHASE 10 — DATA ISSUE RESOLUTION
 
-DemonPulse posts screenshots to an external service and receives structured JSON back synchronously. DemonPulse does **not** do OCR, does **not** call Claude Vision, does **not** poll files.
+The current data pipeline has one structural problem causing empty boards:
+**Horse data relies on Claude API → racingaustralia.horse, but this source may have limited public data.**
+
+Recommended data strategy:
+
+### Option A: OddsPro API (already have key)
 
 ```
-POST {EXTRACTION_SERVICE_URL}/extract/dogs/race
-Content-Type: multipart/form-data
+OddsPro provides: meetings, races, runners, odds for AU racing
+Endpoint: https://oddspro.com.au/api/external/
+Use for: authoritative race card data for BOTH greyhounds and horses
+Replace Claude horse scraper with direct OddsPro API calls
 
-Fields:
-  race_uid    TEXT
-  date        TEXT  (YYYY-MM-DD)
-  track       TEXT
-  race_num    INTEGER
-  [screenshots as file uploads — one or more PNG attachments]
-
-Response 200 JSON:
-{
-  "success": true,
-  "race_uid": "...",
-  "extracted_data": {
-    "race": {
-      "track": "...", "race_num": N, "distance": "...", "grade": "...",
-      "jump_time": "HH:MM", "condition": "...", "prize_money": "..."
-    },
-    "runners": [
-      {
-        "box_num": N, "name": "...", "trainer": "...",
-        "run_style": "...", "best_time": "...", "career": "...",
-        "price": N.NN, "scratched": false
-      }
-    ]
-  },
-  "warnings": [],
-  "errors": []
-}
-
-On failure:
-{
-  "success": false,
-  "race_uid": "...",
-  "extracted_data": null,
-  "warnings": [],
-  "errors": ["reason..."]
-}
+data/oddspro_collector.py:
+  fetch_meetings(date, code) → list of meeting dicts
+  fetch_races(meeting_id) → list of race dicts with runners
+  fetch_odds(race_id) → live odds per runner
 ```
 
-DemonPulse validates `extracted_data` before writing to Supabase. Warnings are logged but do not block writes. Errors cause the race to be skipped for this cycle (retried next collection run).
+### Option B: Keep thedogs.com.au for greyhounds + add a second horse source
+
+```
+Greyhounds: thedogs.com.au (working, keep as-is)
+Horses: racing.com / racenet.com.au via Playwright scraper
+         OR pointsbet/sportsbet public race cards
+         OR OddsPro API
+```
+
+### Option C: Simplified hybrid (recommended for V2 start)
+
+```
+GREYHOUND: thedogs.com.au browser (proven working)
+GALLOPS:   OddsPro API (most reliable, you have the key)
+
+data/pipeline.py dogs_sweep() → unchanged (Playwright)
+data/pipeline.py horse_sweep() → rewrite to use OddsPro API directly
+  1. GET /meetings?date={date}&code=R  → list of today's gallops meetings
+  2. For each meeting: GET /races?meeting_id={id} → race list
+  3. For each race: GET /runners?race_id={id} → runner list with odds
+  4. Normalise → upsert to today_races + today_runners
+```
+
+-----
+
+## COPILOT IMPLEMENTATION ORDER
+
+Work through phases in sequence. Each phase should be fully working before starting the next.
+
+1. **Phase 0+1**: Skeleton + core infrastructure (config, db, env, auth)
+1. **Phase 2**: Full SQL schema deployed to Supabase
+1. **Phase 3**: Data pipeline (start with dogs only, verify to DB, then add horses)
+1. **Phase 4**: Intelligence engine (features → scorer → signals → predictor)
+1. **Phase 5**: Betting management (staking, exotics, bet_manager)
+1. **Phase 6**: Learning engine (evaluator, tagger, adjustments, backtester)
+1. **Phase 7**: Full API layer (all blueprints)
+1. **Phase 8**: Frontend (base template first, then board, then live view)
+1. **Phase 9**: Gunicorn + deployment config
+1. **Phase 10**: Data source resolution (OddsPro integration)
+
+### At each phase, verify with:
+
+```bash
+# Phase 3 check: does data flow to DB?
+curl https://yourapp.onrender.com/api/health/detailed
+
+# Phase 4 check: does scoring work?
+curl https://yourapp.onrender.com/api/predictions/race/{uid}
+
+# Phase 7 check: do all endpoints return valid JSON?
+curl https://yourapp.onrender.com/api/races/board
+```
+
+-----
+
+## KEY CODING RULES FOR COPILOT
+
+1. **Always use `T(table_name)` for all DB table access** — never raw strings
+1. **`anthropic` must be in requirements.txt** — this was missing in v1 and crashed the scheduler
+1. **Scheduler runs in gunicorn `post_fork` only** — never start it twice
+1. **All race_uids follow this exact format**: `{date}_{code}_{track_lower_underscore}_{race_num}`
+1. **AEST timezone for all race dates** — UTC server date ≠ AEST race date
+1. **`safe_query(fn, default)`** wraps every DB call — never let a DB error crash a request
+1. **Greyhound features** (box bias, collision) never apply to Gallops, and vice versa (barrier, weight)
+1. **Predictions never overwrite** today_races or today_runners — read-only inputs
+1. **All module imports inside functions** (lazy imports) to avoid circular dependency issues
+1. **Every API endpoint returns** `{ok: bool, ...}` — never raise exceptions to the client
+
+-----
+
+*End of DemonPulse V2 Rebuild Specification*
+*Generated: April 2026*
